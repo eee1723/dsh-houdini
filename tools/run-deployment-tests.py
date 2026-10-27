@@ -15,7 +15,7 @@ for stream in (sys.stdout, sys.stderr):
     stream.reconfigure(encoding='utf-8', errors='backslashreplace')
 
 ROOT = Path(__file__).resolve().parents[1]
-PURE = ["dsh-test-environment", "dsh-code-analysis", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-worker-limits", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-desktop-client", "dsh-connection-operation", "dsh-launcher-preflight", "dsh-native-hooks", "dsh-frontend-lifetime", "dsh-managed-preview-paths", "dsh-network-layout", "video-runtime-package"]
+PURE = ["dsh-test-environment", "dsh-code-analysis", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-worker-limits", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-desktop-client", "dsh-connection-operation", "dsh-launcher-preflight", "dsh-native-hooks", "dsh-frontend-lifetime", "dsh-managed-preview-paths", "dsh-network-layout", "dsh-connection-diagnostics", "dsh-support-report", "video-runtime-package"]
 HOUDINI = [
            "dsh-bridge-raw-gate", "dsh-execution-runtime", "dsh-bridge-transport", "dsh-request-recovery", "dsh-node-ownership", "dsh-bridge-caught-failure", "dsh-tab-create-failure",
            "dsh-object-parenting", "dsh-layout-flow", "dsh-network-boxes", "dsh-network-notes", "dsh-delete-editor-items", "dsh-handoff-layout", "dsh-scene-network-render-contract", "dsh-multiparm-restoration", "dsh-output-checkpoint", "dsh-viewport-screenshot", "dsh-preview-backend", "dsh-render-color-management", "dsh-render-service-box", "dsh-karma-defaults", "dsh-curve-paths", "dsh-cop-contracts",

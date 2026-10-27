@@ -19,6 +19,8 @@ import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js'
 
 const signal=new AbortController().signal
 const directory=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-node-delivery-'))
+const previousDshHome=process.env.DSH_HOME
+process.env.DSH_HOME=path.join(directory,'home')
 const endpoints=path.join(directory,'endpoints')
 await fs.mkdir(endpoints)
 const servers=[],records=[],agents=[],execs=[],reads=[],events=new Map(),scopes=[]
@@ -87,6 +89,7 @@ try {
     scopes.push(scope)
   }
   const root=new Context()
+  scopes.push(root.fiber)
   root.provide('agents',{get:id=>agents.find(agent=>agent.id===id)})
   let incorrectWindow
   root.provide('sessionQuery',{async readEvent(request) {
@@ -98,7 +101,7 @@ try {
   }})
   const frontend=new HoudiniFrontend(root)
   assert.deepEqual(remoteMethods(frontend).map(method=>method.method),[
-    'videoSettings','videoDiagnostics','capabilities','openNode','supportReport','projectPresence','projectInstallations','prepareBridge',
+    'windowPin','videoSettings','videoDiagnostics','capabilities','openNode','supportReport','projectPresence','projectInstallations','prepareBridge',
     'projectAction','projectLaunchStatus','projectLaunchDetach','projectLaunchResume','desktopIntent','desktopIntentAck'])
   assert.equal(frontend.capabilities().nodeDeliveries,true)
   const coordinates=i=>({sessionId:agents[i].id,eventSeq:20,index:0})
@@ -203,4 +206,5 @@ try {
   await Promise.all(scopes.map(scope=>scope.dispose()))
   await Promise.all(servers.map(server=>new Promise(resolve=>server.close(resolve))))
   await fs.rm(directory,{recursive:true,force:true})
+  if(previousDshHome===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=previousDshHome
 }

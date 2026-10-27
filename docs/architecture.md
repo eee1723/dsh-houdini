@@ -37,6 +37,10 @@ Houdini侧Package/helper由显式组件准备和真正新开Houdini前的同一�
 
 菜单通过插件认证窄通道提交明确意图，由原生工作区/会话接口准备并在前端核对所选任务、preset和现场后确认。`dsh://open`只负责唤起窗口，不携带宿主owner权限；其余接线在插件内完成，没有修改Desktop主程序。标准路径已移除独立Qt工作台与私有运行包，尚欠验收只维护于[H-06](handoff.md#h-06-官方dsh共存与插件边界)。
 
+Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该模式恢复进入前的窗口层级。当前公开客户端没有窗口置顶合同，因此使用Windows窄适配：Host只能定位自己的Desktop父进程及窗口，不接受浏览器提供PID或窗口句柄；复用官方安装已有的Koffi，不带另一份Electron。窗口身份不明确时不操作，插件重载/卸载恢复自己的变更。退出条件是官方提供等价窗口接口，届时替换该适配。
+
+ChatGPT订阅作为独立的标准模型插件提供，使用DSH原生授权会话、凭据存储及模型菜单，与Houdini模式解耦；不为Houdini建立账户平台。Houdini侧仅保留接入、组件维护和离线诊断小窗口。完整会话诊断仍由Desktop提供，本端离线报告只包含明确的组件与连接事实。
+
 ## 职责分层
 
 ### 多Houdini执行端与任务恢复
@@ -87,6 +91,7 @@ DSH负责会话、模型、通用Agent循环与通用交互；插件只增加Hou
 | [desktop-paths.ts](../src/desktop-paths.ts) | 唯一插件运行命名空间、描述符、启动票据与登记路径，不另建DSH home |
 | [desktop-integration.ts](../src/desktop-integration.ts) | 固定认证菜单通道、单次启动票据与原进程回执、显式继续观察和待消费导航；当前连接批次不替代原操作身份，不持有第二份会话历史 |
 | [desktop-process.ts](../src/desktop-process.ts) | 复用DSH公开Win32绑定读取OS进程出生事实；按规范数据根的IPC生命周期互斥，不启动Houdini、不维护可抢删的PID锁 |
+| [desktop-window.ts](../src/desktop-window.ts) | Windows Desktop父窗口的置顶读取、模式租用与原值恢复；仅操作经进程出生事实核对的自身父窗口，不提供通用窗口控制 |
 
 HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-check.py)启动独立hython，
 复制声明库/模块后验证真实回调、菜单、输出与实际依赖路径；不向live运行态开放任意按钮执行。
@@ -123,13 +128,14 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：原生目标选择/取消与旧格式读取，晚到回执不能覆盖新选择；输出当前工程与目标快照，历史本身不证明在线或节点归属 |
 | [src/context.ts](../src/context.ts) | 上下文装配与请求准入；异步准备的按任务文本由原生context provider同步读取，原生/PTC共用能力注册事实，不以当前工具schema判断能力是否存在 |
 | [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
-| [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As从动词回执调用DSH原生目录迁移 |
+| [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As可在原授权项目内跟随原生工作目录，不改会话创建目录或历史位置 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
 | [src/executor-binding.ts](../src/executor-binding.ts) | 原生目标选择/取消的记录和固定开发连接来源；DSH负责持久化，不将历史操作作为明确换目标的门槛 |
 | [src/support-report.ts](../src/support-report.ts) | 精确会话的原生持久读取与诊断投影，沿root Host认证RPC收集，不启动Agent或访问HOM |
-| [dsh_support_report.py](../houdini/python3.11libs/dsh_support_report.py) | 唯一本地脱敏/ZIP收集器；worker收集已有记录，官方页面的预览与下载消费同一份bytes，合同见[故障报告](support-reports.md) |
-| [inspect-support-report.py](../tools/inspect-support-report.py) | 不可信诊断包的限额/清单/哈希检查与离线转义HTML，不解压或执行日志 |
+| [dsh_support_report.py](../houdini/python3.11libs/dsh_support_report.py) | 唯一本地脱敏/ZIP收集器及不可信包检查、转义HTML；会话与离线接入报告分别声明范围，预览和保存消费同一份bytes，合同见[故障报告](support-reports.md) |
+| [dsh_connection_diagnostics.py](../houdini/python3.11libs/dsh_connection_diagnostics.py) | 本端Qt接入诊断与用户明确选择的报告查看/保存；主线程只采集内存白名单，worker生成/检查报告，不探测宿主私有日志或场景 |
+| [inspect-support-report.py](../tools/inspect-support-report.py) | 命令行薄入口，复用同一不可信ZIP检查和离线HTML实现，不解压或执行日志 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；普通详情从原生/嵌套工具回执取原路径，加载警告从原生恢复记录取原路径，跨目录/重启仍可查；不执行HOM |
@@ -164,6 +170,20 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 后续导航取消、实际已选任务和意图消费仍取原生状态，不读取私有启动标记或另建选择缓存。
 入口只消费Host返回的精确session ID；从某个Houdini进入默认创建明确preset的原生对话，继续历史需明确指定原对话。
 不按目录和历史顺序自动找任务；原位重试复用同request ID，用户操作或新意图取消旧导航。
+
+### 独立ChatGPT订阅模型插件
+
+生产入口位于[packages/dsh-chatgpt-subscription](../packages/dsh-chatgpt-subscription/README.md)，单独安装、启用和卸载，通用于宿主其他模式。它不进入Houdini工具scope、发行依赖或默认模型设置。
+
+| 源码 | 维护职责 |
+|---|---|
+| [index.ts](../packages/dsh-chatgpt-subscription/src/index.ts)、[types.ts](../packages/dsh-chatgpt-subscription/src/types.ts) | 标准插件注册、授权/模型公开服务与安全前端Remote合同 |
+| [accounts.ts](../packages/dsh-chatgpt-subscription/src/accounts.ts) | 账户连接、明确选择、目录读取和本次请求固定身份；不接管其他提供方账户 |
+| [oauth.ts](../packages/dsh-chatgpt-subscription/src/oauth.ts) | 官方SiWC安装身份、动态注册、回调与OIDC验证、刷新轮换恢复；无Codex/API-key回退 |
+| [store.ts](../packages/dsh-chatgpt-subscription/src/store.ts) | 复用原生CredentialService保存本插件命名空间；敏感grant经Windows DPAPI加密；账户刷新互斥仅占自身文件锁，宿主凭据事务不等待网络，无独立auth.json或其他账户迁移 |
+| [adapter.ts](../packages/dsh-chatgpt-subscription/src/adapter.ts)、[transport.ts](../packages/dsh-chatgpt-subscription/src/transport.ts) | 组合DSH公开PiAiAdapter及公开消息转换器，维护SiWC窄传输策略、账户绑定与完整终态；不复制编码器、不修改宿主SDK或共享解析 |
+| [errors.ts](../packages/dsh-chatgpt-subscription/src/errors.ts) | 安全错误投影，区分授权、计划权限、目录与实际请求 |
+| [client.js](../packages/dsh-chatgpt-subscription/client.js) | 原生设置薄页面，连接、选择、断开与目录状态；模型选择继续使用DSH原生菜单 |
 
 ## Houdini执行模块
 

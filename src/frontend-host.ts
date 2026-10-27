@@ -11,6 +11,7 @@ import {EXPECTED_EXECUTION_CONTRACT_VERSION} from './generated-verb-contract.js'
 import {DesktopIntegration} from './desktop-integration.js'
 import type {ExecutorController} from './executor-controller.js'
 import {VIDEO_DEFAULTS} from './video-configuration.js'
+import {DesktopWindowController} from './desktop-window.js'
 
 export const name='dsh-houdini-frontend-host'
 
@@ -39,8 +40,33 @@ export const Config = Schema.object({
 })
 
 export class HoudiniFrontend extends TypertRemoteService {
+  private readonly window = new DesktopWindowController()
+  private readonly windowReady:Promise<void>
   constructor(ctx:Context, private readonly config:Config) {
     super(ctx,'houdiniFrontend')
+    this.windowReady=this.window.start()
+    void this.windowReady.catch(error=>ctx.logger.warn('Desktop window restore: '+String(error)))
+    ctx.effect(()=>()=>this.window.dispose())
+  }
+
+  /** Only this Host's verified Desktop parent is addressable; no window/PID
+   * supplied by the browser is accepted. A mode scope owns its own changes. */
+  @Remote
+  async windowPin(input:unknown,signal:AbortSignal) {
+    if(!input||typeof input!=='object'||Array.isArray(input))throw Error('窗口置顶请求无效。')
+    const value=input as {action?:string;owner?:string;pinned?:boolean}
+    if(!['read','reset','activate','set','release'].includes(value.action??'')
+      ||Object.keys(value).some(key=>!['action','owner','pinned'].includes(key))
+      ||((value.action==='read'||value.action==='reset')?(value.owner!==undefined||value.pinned!==undefined)
+        :typeof value.owner!=='string'||!/^[a-f0-9]{32}$/.test(value.owner))
+      ||(value.action==='set'?typeof value.pinned!=='boolean':value.pinned!==undefined))throw Error('窗口置顶请求无效。')
+    await this.windowReady
+    signal.throwIfAborted()
+    if(value.action==='reset')return this.window.reset()
+    if(value.action==='activate')return this.window.activate(value.owner!)
+    if(value.action==='set')return this.window.set(value.owner!,value.pinned!)
+    if(value.action==='release')return this.window.release(value.owner!)
+    return this.window.read()
   }
 
   videoSelection() {

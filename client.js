@@ -176,6 +176,7 @@ window.__ModuleLoader__.load({
       '.dsh-houdini-target-current{margin:0 0 4px}.dsh-houdini-target-current [role="menuitem"],.dsh-houdini-target-unavailable{min-height:48px}.dsh-houdini-target-unavailable{display:flex;align-items:center;gap:8px;padding:7px 10px;box-sizing:border-box}.dsh-houdini-target-section{border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-section>summary{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;min-height:36px;padding:7px 10px;list-style:none;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}.dsh-houdini-target-section>summary::-webkit-details-marker{display:none}.dsh-houdini-target-section>summary::after{content:"›";font-size:16px;line-height:12px}.dsh-houdini-target-section[open]>summary::after{transform:rotate(90deg)}.dsh-houdini-target-section>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-target-section>summary:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}.dsh-houdini-target-info{display:grid;gap:3px;margin:2px 10px 8px;font-size:11px;line-height:1.5}.dsh-houdini-target-info dt{color:var(--dsw-alias-label-tertiary)}.dsh-houdini-target-info dd{margin:0 0 5px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}' +
       '.dsh-houdini-target-group{padding:8px 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-houdini-target-choices{max-height:min(240px,40vh);overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-error{margin:0 10px 8px;color:var(--dsw-alias-label-secondary);font-size:11px}.dsh-houdini-target-error summary{cursor:pointer}.dsh-houdini-target-error pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:11px/1.5 Consolas,monospace}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}@media(pointer:coarse){.dsh-houdini-target-menu [role="menuitem"],.dsh-houdini-target-section>summary{min-height:44px}}' +
       '@media(max-width:540px){.dsh-houdini-project-chip{max-width:calc(100vw - 130px);gap:5px;padding:0 7px}.dsh-houdini-chip-name{max-width:105px}.dsh-houdini-chip-status{font-size:10px;padding-left:5px}}' +
+      '.dsh-houdini-window-pin[aria-pressed="true"]{color:var(--dsw-alias-state-business-primary,#649be8);background:var(--dsw-alias-interactive-bg-hover)}' +
       '.dsh-support-modal{width:min(720px,100%);max-height:100%;gap:16px}' +
       '.dsh-support-content{min-height:0;overflow:hidden;flex:1}' +
       '.dsh-support-content>div:first-child{flex:none}' +
@@ -512,10 +513,107 @@ window.__ModuleLoader__.load({
         registering: "正在连接 Houdini 与 Desktop…", binding: "正在将当前对话连接到 Houdini…" }[ticket.stage] || "正在等待 Houdini 完成连接…";
     }
 
+    // One Native window-mode scope. UI state comes from the OS response; only
+    // explicit button choices are remembered while this client remains open.
+    function createWindowPinUi(connection, changed, failed, options) {
+      options = options || {};
+      var enabled = options.enabled === true, active = false, disposed = false, scope = null, preferred = null;
+      var value = { available: false, busy: enabled, pinned: null }, serial = 0, readySerial = 0, ready = Promise.resolve();
+      var releases = new Set(), releasing = new Set(), retry = null;
+      function publish(next) { value = next; changed(); }
+      function generation() { return connection.generation.getSnapshot(); }
+      function valid(owner, version, attempt) { return !disposed && active && scope === owner && generation() === version && serial === attempt; }
+      async function rpc(action, owner, pinned) {
+        var input = { action: action };
+        if (owner) input.owner = owner;
+        if (typeof pinned === "boolean") input.pinned = pinned;
+        var response = await connection.rpc.call("/api", "houdiniFrontend/windowPin", { args: { input: input } }, AbortSignal.timeout(8000));
+        if (!response.ok) throw new Error(response.error && response.error.message || "未能确认窗口置顶状态。");
+        if (!response.value || typeof response.value.available !== "boolean" || response.value.available && typeof response.value.pinned !== "boolean")
+          throw new Error("窗口置顶状态无效。");
+        return response.value;
+      }
+      function flushReleases() {
+        if (disposed || !generation()) return;
+        releases.forEach(function (owner) {
+          if (releasing.has(owner)) return;
+          releasing.add(owner);
+          rpc("release", owner).then(function () { releases.delete(owner); }).catch(function () {}).finally(function () {
+            releasing.delete(owner);
+            if (!disposed && releases.size && !retry) retry = setTimeout(function () { retry = null; flushReleases(); }, 1500);
+          });
+        });
+      }
+      function release(owner) { if (owner) { releases.add(owner); flushReleases(); } }
+      async function set(owner, pinned, report) {
+        var version = generation(), attempt = ++serial;
+        publish(Object.assign({}, value, { busy: true, operation: "set" }));
+        try {
+          var result = await rpc("set", owner, pinned);
+          if (!valid(owner, version, attempt)) return;
+          preferred = result.pinned;
+          publish(Object.assign({}, result, { busy: false }));
+        } catch (error) {
+          if (!valid(owner, version, attempt)) return;
+          publish({ available: false, pinned: null, busy: false, reason: String(error.message || error) });
+          if (report) failed(String(error.message || error));
+        }
+      }
+      async function acquire() {
+        if (!enabled || disposed || !active || scope || !generation()) return;
+        var owner = (options.owner ? options.owner() : crypto.randomUUID().replace(/-/g, "")), version = generation(), attempt = ++serial;
+        scope = owner; publish({ available: false, pinned: null, busy: true });
+        try {
+          var result = await rpc("activate", owner);
+          if (!valid(owner, version, attempt)) { release(owner); return; }
+          publish(Object.assign({}, result, { busy: false }));
+          if (result.available && typeof preferred === "boolean" && result.pinned !== preferred) await set(owner, preferred, false);
+        } catch (error) {
+          if (!valid(owner, version, attempt)) return;
+          scope = null; release(owner);
+          publish({ available: false, pinned: null, busy: false, reason: String(error.message || error) });
+        }
+      }
+      function reconnect() {
+        if (!enabled || disposed) return;
+        var version = generation(), stamp = ++readySerial, old = scope;
+        scope = null; serial++; if (old) releases.add(old);
+        publish({ available: false, pinned: null, busy: !!version });
+        if (!version) return;
+        // Reconcile even in Standard mode: a renderer reload must not strand
+        // a topmost change owned by its previous JavaScript context.
+        ready = rpc("reset").then(function () {
+          if (disposed || generation() !== version || readySerial !== stamp) return;
+          releases.clear(); return acquire();
+        }).catch(function (error) {
+          if (!disposed && generation() === version && readySerial === stamp)
+            publish({ available: false, pinned: null, busy: false, reason: String(error.message || error) });
+        });
+      }
+      var unsubscribe = enabled ? connection.generation.subscribe(reconnect) : function () {};
+      if (enabled) reconnect();
+      return {
+        snapshot: function () { return value; },
+        enter: function () { active = true; return ready.then(acquire); },
+        leave: function () { active = false; serial++; var old = scope; scope = null; release(old); publish(Object.assign({}, value, { busy: false })); },
+        refresh: async function () {
+          if (!active || disposed || !generation()) return;
+          flushReleases(); if (!scope) return ready.then(acquire); if (value.busy) return;
+          var owner = scope, version = generation(), attempt = ++serial;
+          try { var result = await rpc("read"); if (valid(owner, version, attempt)) publish(Object.assign({}, result, { busy: false })); }
+          catch (error) { if (valid(owner, version, attempt)) publish({ available: false, pinned: null, busy: false, reason: String(error.message || error) }); }
+        },
+        toggle: function () { if (active && scope && value.available && !value.busy && typeof value.pinned === "boolean") return set(scope, !value.pinned, true); },
+        dispose: function () { active = false; serial++; release(scope); scope = null; disposed = true; unsubscribe(); if (retry) clearTimeout(retry); }
+      };
+    }
+
     function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace) {
       var state = { available: false, visible: true, records: {}, observedAt: 0 }, listeners = new Set(), notice = null, serial = 0;
       var refreshPresence = function () {}, dialog = null;
       var launchOwnership = createLaunchOwnership(connection);
+      var nativeWindow = typeof window !== "undefined" && window.dshDesktop && typeof window.dshDesktop.deviceInfo === "function";
+      var windowPin = createWindowPinUi(connection, function () { publish(Object.assign({}, state)); }, notify, { enabled: !!nativeWindow });
       var nativeEmpty = new Map(), nativeSource = uiSession.sessionStatus || { getSnapshot: function () { return nativeEmpty; }, subscribe: function () { return function () {}; } };
       function subscribe(listener) { listeners.add(listener); return function () { listeners.delete(listener); }; }
       function snapshot() { return state; }
@@ -600,6 +698,13 @@ window.__ModuleLoader__.load({
       }
       function Lifecycle() {
         usePresence();
+        React.useEffect(function () {
+          if (!nativeWindow) return;
+          windowPin.enter();
+          function focus() { windowPin.refresh(); }
+          window.addEventListener("focus", focus);
+          return function () { window.removeEventListener("focus", focus); windowPin.leave(); };
+        }, []);
         var selected = React.useSyncExternalStore(uiSession.adapter.current.subscribe, uiSession.adapter.current.getSnapshot);
         React.useEffect(function () {
           if (dialog && (!selected || dialog.sessionId !== selected.key)) { dialog = null; publish(Object.assign({}, state)); }
@@ -797,7 +902,21 @@ window.__ModuleLoader__.load({
         var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
         return row && row.blank && row.projectionValues && row.projectionValues.agentPreset === "houdini" ? React.createElement(Menu, props) : null;
       }
-      return { Mark: decorate(HoudiniProjectMark), Detail: decorate(HoudiniProjectDetail), Label: Label, Blank: Blank, Lifecycle: Lifecycle, dispose: launchOwnership.dispose };
+      function Pin(props) {
+        usePresence();
+        if (!nativeWindow) return null;
+        var pin = windowPin.snapshot(), label = pin.busy ? (pin.operation === "set" ? "正在调整窗口置顶" : "正在读取窗口置顶状态") : !pin.available ? "窗口置顶暂不可用" : pin.pinned ? "取消窗口置顶" : "窗口置顶";
+        return React.createElement(ui.Tooltip, { label: pin.reason ? label + "：" + pin.reason : label }, React.createElement(ui.Button, {
+          variant: "ghost", size: "sm", className: "dsh-houdini-window-pin", style: { width: 28, height: 28, padding: 0, flex: "none" },
+          "aria-label": label, "aria-pressed": typeof pin.pinned === "boolean" ? pin.pinned : undefined, "data-houdini-window-pin": true,
+          disabled: !!pin.busy || !pin.available, onClick: function () { windowPin.toggle(); }
+        }, React.createElement("svg", { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true },
+          React.createElement("path", { d: "M6 2h8l-1 5 3 3v2H4v-2l3-3zM10 12v6", strokeLinecap: "round", strokeLinejoin: "round" }))));
+      }
+      function HeaderPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && !row.blank ? React.createElement(Pin, props) : null; }
+      function BlankPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && row.blank ? React.createElement(Pin, props) : null; }
+      return { Mark: decorate(HoudiniProjectMark), Detail: decorate(HoudiniProjectDetail), Label: Label, Blank: Blank, Pin: HeaderPin, BlankPin: BlankPin, Lifecycle: Lifecycle,
+        dispose: function () { windowPin.dispose(); launchOwnership.dispose(); } };
     }
 
 
@@ -4006,7 +4125,9 @@ function createTraceRuntime(React, catalog, sources, css, createModel, createVie
         var desktop = createHoudiniDesktopUi(scope.get("connection"), scope.get("uiSession"), scope.get("sessions"), scope.get("uiWorkspace"));
         scope.effect(function () { return desktop.dispose; });
         [["conversation.input.left", "houdini-initial-project", desktop.Blank],
+          ["conversation.input.left", "houdini-initial-window-pin", desktop.BlankPin],
           ["conversation.session.header.utilities", "houdini-project-label", desktop.Label],
+          ["conversation.session.header.utilities", "houdini-window-pin", desktop.Pin],
           ["shell.overlay", "houdini-project-feedback", desktop.Lifecycle],
           ["conversation.session.header.utilities", "houdini-support-report", createSupportReporter(scope.get("connection"))],
           ["conversation.view", "houdinitrace", HoudiniTrace]].forEach(function (entry) {

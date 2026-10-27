@@ -357,8 +357,8 @@ export class HoudiniBridge {
       health.error ? `health=${health.error}` : '',
     ].filter(Boolean).join('; ')
     throw new Error(
-      'Houdini 连接版本不一致。请打开「DSH-Houdini → Version & Updates → 高级设置 → 运行诊断」，'
-      + '选择「修复并重启运行环境」后重试。'
+      'Houdini 连接组件版本不一致，未继续执行。请在 Desktop 的 Houdini 现场菜单「管理」中安装或更新组件，'
+      + '保存工程后重开对应 Houdini。需要排查时，可从「DSH-Houdini → Version & Updates → 诊断」导出本端接入报告。'
       + `\n诊断信息：Houdini bridge contract mismatch: ${detail}.`,
     )
   }

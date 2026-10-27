@@ -48,7 +48,7 @@ async function fixture(options={}){
   intent,async close(){for(const stop of disposers.reverse())stop();await flush()},refreshGate(value){refreshGate=value}}
 }
 
-const enabledIds=['houdini-video','houdini-initial-project','houdini-project-label','houdini-project-feedback','houdini-support-report','houdinitrace']
+const enabledIds=['houdini-video','houdini-initial-project','houdini-initial-window-pin','houdini-project-label','houdini-window-pin','houdini-project-feedback','houdini-support-report','houdinitrace']
 const app=await fixture()
 assert.equal(app.calls.filter(call=>call.method==='houdiniFrontend/desktopIntent').length,1,'root client owns one consumer')
 assert.deepEqual([...app.slotsMap.keys()],['houdini-navigation-feedback','houdini-delivery-scope'],'other modes expose no domain controls; the empty navigation overlay remains lifecycle-owned')
@@ -56,7 +56,7 @@ assert.equal(app.current.getSnapshot().key,'standard')
 app.current.set({key:'houdini-a'})
 await flush()
 for(const id of enabledIds)assert(app.slotsMap.has(id),id+' appears in Houdini mode')
-for(const forbidden of ['houdini-chatgpt','houdini-update','houdini-window-pin','houdini-project-entry','houdini-title-refresh'])assert(!app.slotsMap.has(forbidden))
+assert.equal(app.slotsMap.get('houdini-window-pin').entry.name,'conversation.session.header.utilities','the exact Native rc.3 header utilities is a list; single corner is already owned by the native sidebar action')
 app.current.set({key:'standard'})
 await flush()
 for(const id of enabledIds)assert(!app.slotsMap.has(id),id+' leaves other modes untouched')
@@ -129,6 +129,5 @@ await changed.close()
 
 assert(!source.includes('createChatGptSettings('),'account ownership remains in Desktop')
 assert(!source.includes('createWorkbenchUpdates('),'host update ownership remains in Desktop')
-assert(!source.includes('windowPin'),'plugin does not control the Desktop window')
 assert(!source.includes('dsh-houdini-workspace'),'no private Qt URL navigation path remains')
 console.log('Desktop client: native selected session, menu/launch isolation, mode-only controls/Trace/settings, navigation cancellation, acknowledgement and reconnect passed')

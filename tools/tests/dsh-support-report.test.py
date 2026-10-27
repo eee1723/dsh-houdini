@@ -8,6 +8,7 @@ import sys
 import tempfile
 import subprocess
 import zipfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
@@ -16,6 +17,7 @@ import dsh_support_report as reports
 spec = importlib.util.spec_from_file_location('inspect_support', ROOT / 'tools/inspect-support-report.py')
 inspector = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(inspector)
+assert inspector.inspect_report is reports.inspect_report, 'CLI and installed helper must use one inspector'
 
 
 def refused(function):
@@ -86,6 +88,45 @@ with tempfile.TemporaryDirectory(prefix='dsh-support-') as temporary:
     with zipfile.ZipFile(root/'bomb.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr('timeline.jsonl',b'X'*(9*1024*1024))
     refused(lambda:inspector.inspect_report(root/'bomb.zip'))
+    # The offline report must not inherit an old context, scan its logs or ask
+    # a running Host for session data. Only this helper's package metadata is read.
+    read_object = reports.object_file
+    observed = []
+    def metadata_only(filename):
+        observed.append(Path(filename))
+        assert Path(filename) == root / 'package.json', filename
+        return read_object(filename)
+    with patch.dict(os.environ, {'DSH_HOUDINI_MANAGED_CONTEXT': str(root / 'DO_NOT_READ_SECRET.json'),
+                                'DSH_HOUDINI_WORKBENCH_ROOT': str(root / 'DO_NOT_SCAN')}), \
+         patch.object(reports, 'runtime_context', side_effect=AssertionError('offline cannot discover runtime context')), \
+         patch.object(reports, 'object_file', metadata_only):
+        offline = reports.build_connection_report({'houdini_version':'21.0.fixture', 'bridge':{'listening':False}},
+            'actual startup error; token=OFFLINE_SECRET\n<script>alert("test")</script>', root)
+    assert observed == [root / 'package.json']
+    offline_bytes = base64.b64decode(offline['archiveBase64'])
+    offline_manifest, offline_files = reports.inspect_report(io.BytesIO(offline_bytes))
+    assert offline_files == {entry['name']:entry['text'] for entry in offline['files']}
+    assert offline_manifest['session'] is None and not offline_manifest['content_included']
+    assert not offline_manifest['attachments_included']
+    assert set(offline_files) == {'manifest.json','environment.json','timeline.jsonl','issue.md'}
+    assert {'native_host_logs_not_collected','session_history_not_collected','scene_contents_not_collected'} <= set(offline_manifest['missing'])
+    environment = json.loads(offline_files['environment.json'])
+    assert environment['environment']['collector_scope'] == 'offline_connection'
+    assert 'OFFLINE_SECRET' not in json.dumps(offline_files)
+    assert 'actual startup error' in offline_files['timeline.jsonl']
+    html_document = reports.report_html(offline_files)
+    assert '<script>' not in html_document and '&lt;script&gt;' in html_document
+    assert "default-src 'none'" in html_document
+    saved_zip, saved_html = root / 'offline.zip', root / 'offline.HTM'
+    reports.save_reviewed_file(saved_zip, offline_bytes)
+    reports.save_reviewed_file(saved_html, html_document.encode('utf-8'), html_document=True)
+    assert saved_zip.read_bytes() == offline_bytes and saved_html.read_text(encoding='utf-8') == html_document
+    protected = root / 'preserved.hip'
+    protected.write_bytes(b'HIP_SENTINEL')
+    refused(lambda:reports.save_reviewed_file(protected, b'wrong type'))
+    refused(lambda:reports.save_reviewed_file(protected, b'wrong type', html_document=True))
+    assert protected.read_bytes() == b'HIP_SENTINEL'
+    assert not list(root.glob('.offline.*')), 'save may not leave partial files'
     try:
         (root/'linked').symlink_to(root/'.dsh-web.log')
     except OSError:

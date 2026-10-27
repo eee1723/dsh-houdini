@@ -58,11 +58,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Rollb
 
 只有当前选中的 Houdini 对话显示领域交互控件。其他模式没有现场面板；历史执行卡片仍可读取，已经提交的后台执行不因切换界面而取消。多现场、节点修改权限与恢复合同见[现场选择](multi-instance.md)。
 
+在官方Windows Desktop的Houdini模式中可点击「置顶」，便于一边对话一边操作Houdini；空对话显示在输入工具行，已有对话显示在页头。Houdini对话之间切换保留本次使用中的选择，切回其他模式恢复进入前的窗口层级。若无法准确识别本Desktop窗口，按钮会说明原因，不按窗口标题或当前前台窗口猜测。
+
 ## Version & Updates（版本与更新）
 
 Desktop 的应用和账户更新由官方管理；Node 侧插件沿官方插件管理更新。Houdini 菜单中的版本信息、检查与修复只作用于本端 Bridge/helper。已加载版本以当次 Bridge 执行合同为准，不能只查看磁盘文件或包版本。
 
 修复当前 Bridge 必须等待其执行队列空闲，不终止其他 Houdini、不重启 Desktop、不重放未确认代码。Package/菜单变更按提示重开对应 Houdini；本端更新不改变原 HIP 和节点内容。
+
+Desktop无法连接时，可在此窗口选择「诊断…」，生成并查看本端接入报告，或打开已有诊断ZIP；保存位置由用户选择。完整会话报告仍在Desktop标题栏的「报告问题」中导出。两种报告的数据范围和分享方式见[故障报告](support-reports.md)。
 
 ## 教程视频与转录设置
 
@@ -78,9 +82,17 @@ FFmpeg/ffprobe随完整插件包交付，普通用户不用安装到PATH。普�
 
 ## ChatGPT 订阅
 
-当前支持的官方 DSH Desktop 0.2.1-rc.3 没有「ChatGPT 订阅」设置登录入口，新插件也尚未恢复旧适配版的订阅接入。重新安装 Houdini 组件或更换工作区不能解决此缺口；本插件不会清空或自动转换已保存的授权。DeepSeek 登录和已配置的 API 模型继续沿官方设置使用。
+官方 DSH Desktop 0.2.1-rc.3 未内置原ChatGPT订阅设置入口。需要该能力时，另行在原生插件管理安装并启用 **dsh-chatgpt-subscription**；它是独立模型插件，可用于Houdini和其他模式。Houdini连接组件不管理此授权，也不自动读取或转换旧适配版令牌。
 
-原订阅接入所需的登录界面和提供方支持仍待补齐，不能用模型名字可见、按钮出现或另一条 Codex 授权路线代替原功能验收。当前缺口与验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)，技术原因及接入方案见[账户能力边界](dsh-update-compatibility.md#账户能力与入口验收)。
+在「设置 → ChatGPT 订阅」选择 **Continue with ChatGPT**，在系统浏览器完成授权后回到Desktop查看结果。页面分别显示账户连接、计划额度权限和模型目录；主模型继续从DSH原生菜单选择，不自动更换当前或默认模型。多个账户须明确选择；断开账户有确认，撤销应用权限和用量在ChatGPT官方页面管理。
+
+使用真正的Sign in with ChatGPT及官方Responses接口。ChatGPT订阅不等于OpenAI API key或Codex授权，也不自动包含转录、图片生成等其他API的权限。自动化验证采用模拟授权与推理，不证明你的账户已有支持范围或额度；实际登录和首次模型请求分别由用户明确操作。安装与账户说明见[独立插件指南](../packages/dsh-chatgpt-subscription/README.md)，尚欠验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)。
+
+## 网络与代理
+
+当前官方Windows Desktop的Node Host依据启动时的显式代理环境工作；它没有继承Windows系统代理、PAC或WPAD的完整合同。浏览器或Desktop更新器能够联网，不证明模型请求、转录子进程也能使用同一代理。使用代理时，按官方DSH方式在启动前配置HTTP_PROXY/HTTPS_PROXY/NO_PROXY并正常重开Desktop；具体值由所用代理服务提供。PAC地址不能直接充当HTTPS_PROXY。
+
+插件不会读取系统代理后暗中修改整个Host、其他模式或用户环境。系统代理自动接入作为宿主公共网络能力处理，限制与上游方案见[DSH适配](dsh-update-compatibility.md#网络与窗口等宿主能力)。
 
 ## 指定图片模型
 

@@ -214,6 +214,10 @@ with patch.object(launcher.hou, 'ui', SimpleNamespace(displayMessage=lambda *arg
      patch.object(launcher, 'remove_local_components') as remove:
     launcher.show_plugin_info()
     remove.assert_called_once_with()
+with patch.object(launcher.hou, 'ui', SimpleNamespace(displayMessage=lambda *args, **kwargs: 4), create=True), \
+     patch.object(launcher, 'show_connection_diagnostics') as diagnose:
+    launcher.show_plugin_info()
+    diagnose.assert_called_once_with()
 
 # Keep the useful failure reason in the normal dialog; technical context stays
 # intact in details and the support diagnostic, rather than being swallowed.

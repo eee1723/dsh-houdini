@@ -197,8 +197,8 @@ def show_plugin_info():
         'Houdini 连接组件 ' + version + '\n\n'
         '“修复当前连接”只重启这个窗口的连接，工程保持不变。\n'
         '更新或切换组件版本后，请保存并重开这个 Houdini 窗口。',
-        title='DSH-Houdini', buttons=('打开对话', '修复当前连接', '切换组件版本…', '移除本机组件…', '关闭'),
-        default_choice=4, close_choice=4,
+        title='DSH-Houdini', buttons=('打开对话', '修复当前连接', '切换组件版本…', '移除本机组件…', '诊断…', '关闭'),
+        default_choice=5, close_choice=5,
         details='当前加载位置：' + _PROJECT_ROOT + '\n对话、模型和插件更新在 DSH Desktop 中管理。\n组件版本切换在下次打开 Houdini 时生效，不替换当前已加载的 Python 模块。\n移除本机组件会停用菜单登记，保留组件文件和用户数据；完整卸载还需在 Desktop 插件页卸载插件。')
     if selected == 0:
         open_workspace()
@@ -208,6 +208,13 @@ def show_plugin_info():
         select_helper_version()
     elif selected == 3:
         remove_local_components()
+    elif selected == 4:
+        show_connection_diagnostics()
+
+
+def show_connection_diagnostics():
+    from dsh_connection_diagnostics import show
+    return show(sys.modules[__name__])
 
 
 def _begin_helper_maintenance(script_name, state, on_ready):

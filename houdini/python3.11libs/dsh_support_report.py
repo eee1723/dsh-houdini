@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import platform
 import re
 import stat
 import sys
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -147,7 +149,10 @@ def build_report(payload, context=None):
     observations = []
     package_root = Path(context['packageRoot'])
     managed = context.get('managed')
-    environment = {'os': platform.system(), 'os_release': platform.release(), 'python': platform.python_version(),
+    offline = context.get('collectRecordedRuntime', True) is False
+    environment = {'os': sys.platform if offline else platform.system(),
+                   'os_release': 'not_collected' if offline else platform.release(),
+                   'python': '.'.join(map(str, sys.version_info[:3])) if offline else platform.python_version(),
                    'collector_scope': 'host_launch_and_persisted_history', 'live_houdini_probe': 'not_performed',
                    **payload.get('environment', {})}
     try:
@@ -155,7 +160,11 @@ def build_report(payload, context=None):
     except (OSError, ValueError):
         missing.append('package_metadata_unavailable')
     directories = []
-    if managed is not None:
+    if context.get('collectRecordedRuntime', True) is False:
+        # The offline connection report has only an explicit in-memory snapshot.
+        # Never discover legacy runtime directories or official Desktop logs.
+        pass
+    elif managed is not None:
         environment['installation'] = {key: managed.get(key) for key in ('installId', 'version')}
         if managed.get('runtimeDir'):
             directories.append(('current', Path(managed['runtimeDir'])))
@@ -210,7 +219,10 @@ def build_report(payload, context=None):
     summary += '请补充预期结果、实际结果和复现步骤。\n\n'
     summary += '已收集：版本记录、故障时间线' + ('、运行日志' if options.get('includeLogs', True) else '') + '。\n'
     summary += '会话正文：' + ('已选择包含，请人工检查' if options.get('includeContent') else '未包含') + '。图片、附件、HIP/HDA、凭据文件均未收集。\n'
-    summary += '这是历史证据；没有执行 Houdini 查询、重启或恢复。缺失资料见 manifest.json。\n'
+    if environment.get('collector_scope') == 'offline_connection':
+        summary += '这是当前 Houdini 窗口的接入诊断，不是完整会话诊断。只记录加载版本和连接元数据，未查询场景、重启或恢复。缺失资料见 manifest.json。\n'
+    else:
+        summary += '这是历史证据；没有执行 Houdini 查询、重启或恢复。缺失资料见 manifest.json。\n'
     summary += '分享前请检查全部文件。自动脱敏不能保证识别任意文本中的商业内容或秘密。\n'
     files['issue.md'] = summary
     manifest = {'schema': SCHEMA, 'report_id': report_id, 'created_at': datetime.now(timezone.utc).isoformat(),
@@ -229,6 +241,79 @@ def build_report(payload, context=None):
             'files': [{'name': name, 'text': value, 'label': FILE_LABELS.get(name, ('补充记录', '供开发者排查问题。'))[0],
                        'description': FILE_LABELS.get(name, ('补充记录', '供开发者排查问题。'))[1]} for name, value in files.items()],
             'archiveBase64': base64.b64encode(buffer.getvalue()).decode('ascii'), 'summary': summary}
+
+
+def build_connection_report(snapshot, startup_error='', package_root=None):
+    """No Host, history, environment or log discovery; use the same support-v1 bytes."""
+    return build_report({
+        'options': {'includeLogs': False, 'includePrevious': False, 'includeContent': False},
+        'session': None,
+        'environment': {'collector_scope': 'offline_connection',
+                        'live_houdini_probe': 'main_thread_connection_metadata_only',
+                        'connection_snapshot': snapshot},
+        'timeline': ([{'type': 'startup_error', 'error': str(startup_error)}] if startup_error else []),
+        'missing': ['native_host_logs_not_collected', 'session_history_not_collected',
+                    'scene_contents_not_collected'],
+    }, {'packageRoot': str(package_root or Path(__file__).resolve().parents[2]),
+        'managed': None, 'collectRecordedRuntime': False})
+
+
+def inspect_report(filename):
+    """Inspect untrusted support-v1 ZIPs without extraction or executing contents."""
+    with zipfile.ZipFile(filename) as archive:
+        entries = archive.infolist()
+        if len(entries) > 20 or sum(entry.file_size for entry in entries) > 8 * 1024 * 1024:
+            raise ValueError('diagnostic archive exceeds limits')
+        names = [entry.filename for entry in entries]
+        allowed = {'manifest.json', 'environment.json', 'timeline.jsonl', 'session-content.jsonl', 'issue.md',
+                   'logs/current.log', 'logs/previous.log', 'logs/source.log', 'logs/desktop.log'}
+        if len(set(names)) != len(names) or not set(names) <= allowed:
+            raise ValueError('unexpected or duplicate archive entries')
+        if not {'manifest.json', 'environment.json', 'timeline.jsonl', 'issue.md'} <= set(names):
+            raise ValueError('required diagnostic files missing')
+        files = {name: archive.read(name) for name in names}
+    manifest = json.loads(files['manifest.json'])
+    if manifest.get('schema') != SCHEMA:
+        raise ValueError('unsupported support schema')
+    declarations = manifest['files']
+    if len({entry['name'] for entry in declarations}) != len(declarations) or {entry['name'] for entry in declarations} != set(files) - {'manifest.json'}:
+        raise ValueError('manifest file set differs from archive')
+    for entry in declarations:
+        content = files[entry['name']]
+        if len(content) != entry['bytes'] or hashlib.sha256(content).hexdigest() != entry['sha256']:
+            raise ValueError('diagnostic file integrity mismatch')
+    return manifest, {name: value.decode('utf-8') for name, value in files.items()}
+
+
+def report_html(files):
+    """Only escaped text in a local HTML document; no script or remote resources."""
+    body = ''.join('<details open><summary>' + html.escape(name) + '</summary><pre>' + html.escape(text)
+                   + '</pre></details>' for name, text in files.items())
+    return ('<!doctype html><html lang="zh"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" '
+            'content="default-src \'none\'; style-src \'unsafe-inline\'"><title>DSH-Houdini diagnostic report</title>'
+            '<style>body{font:15px/1.6 system-ui;margin:32px;max-width:1100px}'
+            'pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;padding:16px}'
+            'details{margin:16px 0}</style><h1>DSH-Houdini 故障报告</h1>' + body + '</html>')
+
+
+def save_reviewed_file(filename, content, *, html_document=False):
+    """Worker-only save of explicitly selected bytes, published as one complete file."""
+    target = Path(filename)
+    suffixes = {'.html', '.htm'} if html_document else {'.zip'}
+    if not target.is_absolute() or target.suffix.lower() not in suffixes:
+        raise ValueError('请选择以 ' + (' .html 或 .htm' if html_document else ' .zip') + ' 结尾的完整保存路径。')
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix='.' + target.name + '.', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return str(target)
 
 
 if __name__ == '__main__':

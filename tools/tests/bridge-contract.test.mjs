@@ -103,7 +103,7 @@ try {
 
   await assert.rejects(
     new HoudiniBridge(url, 1000).exec('__result__ = 1', owner),
-    /修复并重启运行环境[\s\S]*contract mismatch/,
+    /安装或更新组件[\s\S]*contract mismatch/,
   );
   assert.equal(execCalls, 0, 'mismatch must fail before scene code reaches /exec');
   await assert.rejects(new HoudiniBridge(url,1000).captureUi({target:'ui:fixture'},owner),/contract mismatch/);

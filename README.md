@@ -57,6 +57,8 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 
 Houdini 相关控件随当前对话的 **Houdini 模式** 显示，其他模式继续使用 DSH 原有界面。多现场选择、工作区与工程接续见[现场使用说明](docs/multi-instance.md)。
 
+Windows Desktop的Houdini模式提供 **置顶** 按钮，便于同时操作场景和对话；返回其他模式时恢复原来的窗口层级。ChatGPT订阅可通过[独立模型插件](packages/dsh-chatgpt-subscription/README.md)接入，模型仍从DSH原生菜单选择，与Houdini连接分开管理。
+
 ## 使用示例
 
 可以直接描述目标、要修改的范围和希望保留的内容。例如：

@@ -53,7 +53,7 @@ export class ExecutorController extends TypertRemoteService {
       const requested=data.sessionId??data.bindSessionId
       const key=(value:string)=>process.platform==='win32'?path.normalize(value).toLowerCase():path.normalize(value)
       if(!requested&&record.registration_id!==data.registrationId||!record.hip_path||key(record.hip_path)!==key(data.expectedHip))
-        throw new Error('工程在打开期间发生变化，请从目标 Houdini 重新打开工作台。')
+        throw new Error('工程在连接期间发生变化，请从目标 Houdini 的 Open Workspace 重新接入。')
       // The registered writer is an exact native Session identity. A menu
       // reconnect may reveal that conversation, but never select a different
       // target, adopt ownership, or infer one from the HIP directory/history.
