@@ -2,69 +2,159 @@
 
 <img src="assets/dsh-houdini.png" alt="DSH-Houdini Logo" width="160">
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Houdini 插件，在官方 DSH Desktop 中绑定、打开和操作真实场景，帮助用户制作可编辑、能继续修改的工程与工具。
+**用自然语言构建、检查和维护可编辑的 Houdini 工程。**
 
-**当前处于维护者实测阶段，暂不发布新版。** `main` 已收敛为官方 Desktop 上的标准插件；本次标准插件尚未公开发布到 GitHub Releases 或 npm。测试包由维护者单独提供，[历史 Releases](https://github.com/eee1723/dsh-houdini/releases) 中的独立工作台包不对应当前安装方式。实测与发布待办统一维护在[交接](docs/handoff.md#h-01-标准插件发布与用户加载)。
+dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https://github.com/deepseek-ai/deepseek-harness)。在同一份对话中描述目标，Agent 可以读取场景、创建和修改节点、调整参数、制作工具，并根据实际执行结果继续迭代。
 
-DSH 负责模型、账户、会话、工作区和通用 Agent 任务；插件负责 Houdini 接入、操作工具与领域资料。Houdini 菜单进入同一个 Desktop、对话和现场，不另维护 Qt 聊天工作台或私有 DSH 运行时。领域控件仅在当前对话选择 **Houdini 模式** 时出现，其他模式和默认选择保持原样。
+主要产物保留为原生节点网络、控制参数、关键帧、HDA 和工程文件。你可以查看构建过程、手工编辑结果，也可以继续通过对话提出修改。
 
-## 兼容与试用
+[核心能力](#核心能力) · [快速开始](#快速开始) · [工作原理](#工作原理) · [文档](#文档)
 
-| 项目 | 当前范围 |
+## 核心能力
+
+| 能力 | 可以完成的工作 |
 |---|---|
-| 平台 | Windows x64 |
-| 官方宿主 | DSH 0.2.1-rc.3；以[精确兼容清单](dsh-runtime-compatibility.json)为准 |
-| Houdini | 21.0 / 22.0；实际验证点为 21.0.440 和 22.0.368 |
-| 交付形式 | 包含 Houdini 组件与私有媒体工具的完整 `.tgz` |
-| 发布状态 | 等待维护者实测确认；代码推送和 CI 通过均不代表正式发布 |
+| 场景理解与诊断 | 读取节点、参数、连接和几何信息，检查 Cook 错误与依赖，结合界面截图和预览定位问题。 |
+| 程序化建模 | 使用 SOP、属性、VEX 和 Python 搭建可编辑网络，暴露控制参数，进行局部修改与几何检查。 |
+| HDA 与艺术家工具 | 将流程封装为 HDA，制作参数界面、Shelf、Python Panel、Viewer State 和 Package，组织源码、资源与使用入口。 |
+| 材质、灯光与渲染 | 处理 UV 与贴图，搭建 MaterialX / Solaris / Karma 工作流，配置相机、灯光并生成预览或渲染输出；按需使用 COP 图层与图像处理。 |
+| 参数控制与动画 | 设置参数依赖和关键帧，组织机械层级、绑定与动画网络，观察控制量变化后的实际输出。 |
+| 参考资料辅助 | 使用图文、参考图和视频资料辅助工作；通过配置的模型生成或编辑图片，转录讲解、抽取画面并整理有来源依据的步骤。 |
+| 工程组织与交付 | 整理节点命名、分组、子网、输出和资源路径，保存 HIP、工具源码与相关文件，便于继续修改和复用。 |
+| 长任务与执行接续 | 通过 DSH 后台任务观察渲染或计算，查回原请求结果，在独立 Houdini 进程中构建与验证，并查看执行记录和错误。 |
 
-取得维护者提供的候选包后：
+这些能力可以组合使用：从检查现有网络开始，逐步改成参数化资产，再封装为工具；也可以从参考资料出发，构建场景并制作展示。具体方法由 Agent 根据你的目标、已有工程和当前可用能力选择。
 
-1. 安装兼容的官方 DSH Desktop，并在原生模型设置中配置可用主模型。
-2. 将完整 `.tgz` 保存到本机，在 Desktop 原生插件管理中填入其本地绝对路径安装，无须解压。
-3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`；新装插件默认停用。
-4. 新建或选择 **Houdini 模式** 的对话，从现场控件选择已连接窗口，或选择 Houdini 安装后新建、打开 HIP。
-5. 后续也可从 Houdini 的 **DSH-Houdini → Open Workspace** 快捷进入同一宿主。
+## 快速开始
 
-新开 Houdini 前会自动准备组件。已经打开但没有加载组件、或仍加载旧版组件的窗口，需要用户保存后重开。普通用户不需要安装 Node、编译源码或配置 FFmpeg PATH。推荐下载完整包后本地安装；远程直链及缓存复用仍有[待核对边界](docs/handoff.md#h-01-标准插件发布与用户加载)。完整步骤与卸载方式见[安装说明](docs/setup.md)。
+### 环境要求
 
-旧用户升级时，安装器仅停用能确认属于旧版插件的入口并保存可恢复备份；未知或混合脚本保持原样。旧运行包、凭据、会话、附件和 HIP 保留，历史恢复另行核对。安装磁盘文件、进程已加载版本与用户现场测试分别确认。
-
-## 教程分析与配置
-
-可以直接在 Houdini 对话中说「帮我配置教程分析」，或从 **设置 → 教程视频 → 让 Agent 帮我配置** 开始。Agent 先读当前状态，只补缺少的服务、准确模型和必要参数；页面展示配置状态、凭据是否存在与本机依赖诊断。
-
-API Key 由用户在安全输入框直接录入 DSH 原生凭据服务，不作为聊天或提问答案。已有 DSH 提供方可以明确复用，独立语音服务也可单独配置，无须添加假聊天模型。ASR / STT 在这里是同一项语音转文字能力；主聊天账户不自动代表拥有语音 API 授权。
-
-FFmpeg / ffprobe 随完整包交付，普通 Python 自动从 Houdini 安装定位；只解析教程不必先连接场景。当前支持明确的文件转录协议，实时流、异步服务与本地推理部署按实际能力处理。配置存在不等于转录或画面识别已经验证，详见[教程配置](docs/setup.md#教程视频与转录设置)与[按需引导](skills/houdini-video-tutorial/references/transcription-setup.md)。
-
-## 工具
-
-工具分别负责现场观察、执行、原生界面截图、请求查回、历史资料、图像通道和长任务控制。每个工具为何存在、输入和返回详见[工具说明](docs/tools.md)。
-
-Python能力目录见[动词词表](docs/tool-design.md)。陌生节点可用node_info，准确动词签名可用verb_help；对象父级使用set_object_parent。构造方法与操作顺序由模型根据任务选择。
-
-## 领域资料
-
-| 资料 | 用途 |
+| 项目 | 支持范围 |
 |---|---|
-| [任务拆分](skills/houdini-task-decomposition/SKILL.md) | 按编辑目标和依赖逐模块构建、观察与集成 |
-| [独立执行](skills/houdini-isolated-execution/SKILL.md) | 团队成员按需用一次性hython自验证构建、工程副本和渲染 |
-| [SOP](skills/houdini-sop-workflow/SKILL.md) | 程序化模型、局部修改和几何观察 |
-| [表面外观](skills/houdini-surface-workflow/SKILL.md) | 参考图分析、表面细化程度、UV与统一SOP贴图预览 |
-| [COP（按需能力）](skills/houdini-cop-workflow/SKILL.md) | 程序化贴图和图层；完整材质与教程交付仍待验收 |
-| [工具开发](skills/houdini-tool-development/SKILL.md) | HDA、脚本、界面、回调和交付 |
-| [参数界面](skills/houdini-parameter-ui/SKILL.md) | 共享控制与参数绑定 |
-| [网络交接](skills/houdini-network-handoff/SKILL.md) | 主动节点入口、跨领域分组说明与布局观察 |
-| [Rig与动画](skills/houdini-rig-animation-workflow/SKILL.md) | 动画、骨架和运动 |
-| [Solaris与Karma](skills/houdini-solaris-karma-workflow/SKILL.md) | 材质、USD与正式渲染 |
-| [视频教程](skills/houdini-video-tutorial/SKILL.md) | 资料读取与教学工程 |
-| [Trace分析](skills/houdini-trace-analysis/SKILL.md) | 查看实际请求、工具调用与失败 |
-| [知识维护](skills/houdini-skill-governance/SKILL.md) | 显式维护领域资料 |
+| 操作系统 | Windows x64 |
+| 宿主 | DSH 0.2.1-rc.3；精确版本见[兼容清单](dsh-runtime-compatibility.json) |
+| Houdini | 21.0 / 22.0；构建兼容信息见[安装说明](docs/setup.md) |
+| 模型 | 在 DSH 中配置可用的主聊天模型；图像理解、生图和语音按所用模型与服务的实际能力配置 |
 
-## 开发
+### 安装
 
-长期入口：[文档索引](docs/README.md)、[系统架构](docs/architecture.md)、[维护规范](docs/development.md)。未完成验证见[交接](docs/handoff.md)。
+1. 安装兼容的官方 DSH Desktop 和 Houdini，在 DSH 原生模型设置中配置主模型。
+2. 准备完整的 dsh-houdini `.tgz` 插件包，在 Desktop 原生插件管理中填入本地绝对路径安装，无须解压。
+3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
+
+新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
+
+安装、组件更新、旧入口迁移及卸载详见[安装与使用指南](docs/setup.md)。
+
+### 连接场景
+
+| 入口 | 操作方式 |
+|---|---|
+| 从 DSH Desktop 进入 | 新建或选择 **Houdini 模式** 的对话，在现场控件中绑定已连接窗口，或选择 Houdini 安装后新建场景、打开 HIP。 |
+| 从 Houdini 进入 | 使用 **DSH-Houdini → Open Workspace**，根据当前现场进入同一个 Desktop 中的对应 Houdini 对话。 |
+
+插件在真正新开 Houdini 前自动准备连接组件。已有窗口若尚未加载兼容组件，先在 Desktop 现场控件中选择 **安装 / 更新 Houdini 组件**，再保存并重开对应窗口。每段对话可以明确选择自己的现场；打开其他 HIP 默认使用新进程，保留已有窗口。
+
+Houdini 相关控件随当前对话的 **Houdini 模式** 显示，其他模式继续使用 DSH 原有界面。多现场选择、工作区与工程接续见[现场使用说明](docs/multi-instance.md)。
+
+## 使用示例
+
+可以直接描述目标、要修改的范围和希望保留的内容。例如：
+
+**创建参数化资产**
+
+> 在当前场景中新建一套螺旋楼梯，暴露踏步数、宽度和总高。保留可编辑的 SOP 网络，并检查改变参数后踏步之间的关系。
+
+**检查和修改已有网络**
+
+> 检查我选中的节点链为什么没有几何输出。在这条链内定位并修复问题，保留其他网络，说明改动和检查结果。
+
+**制作可复用工具**
+
+> 把这套生成器封装为 HDA，整理输入输出和参数界面，在新实例中检查，并说明文件位置和加载方式。
+
+**完成材质与展示**
+
+> 在这个已保存的工程中，为选中资产配置 MaterialX 材质、Karma 灯光和相机，输出一张预览，检查材质绑定与渲染错误。
+
+**利用教程资料**
+
+> 分析这个视频中的构建方法，先整理关键步骤、参数和来源时间，再在 Houdini 中分阶段复现，标出原视频中看不清的部分。
+
+任务可以从观察、构建、修改或排错中的任意一步开始。修改现有工程时，请明确对象和范围；交付时可以要求 Agent 展示关键网络、控制参数、实际输出与文件位置。模型提出的方案仍应结合几何、画面和工程检查判断效果。
+
+## 工作原理
+
+DSH 提供对话与通用 Agent 能力，插件将模型的操作连接到真实 Houdini。现场操作的主要链路如下：
+
+```mermaid
+flowchart LR
+    subgraph desktop["DSH Desktop"]
+        A["会话 · 模型 · Agent 任务"] <--> B["dsh-houdini<br/>上下文 · 工具 · 按需技能"]
+    end
+    subgraph houdini["Houdini"]
+        C["Bridge<br/>主线程执行队列"] <--> D["HOM 与操作能力库<br/>节点 · 参数 · 几何 · 场景"]
+    end
+    B <-->|本机 HTTP| C
+```
+
+| 部分 | 职责 |
+|---|---|
+| DSH Desktop | 管理模型、账户、凭据、会话、工作区和通用任务，承载用户与 Agent 的持续交互。 |
+| 插件适配层 | 提供 Houdini 模式、现场上下文、工具与界面，按任务加载领域技能，呈现执行结果。 |
+| Houdini Bridge | 在 Houdini 内接收请求，核对现场身份与操作范围，通过主线程队列执行操作并返回真实结果。 |
+
+Houdini 的 Python API（HOM）只在 Houdini 侧运行。媒体准备在普通 Python 工作进程中执行，独立构建与验证使用一次性 Houdini 进程；它们与当前场景的主线程执行分开。
+
+执行结果、错误、图片和文件返回原对话，支持在实际结果上继续修改。请求响应丢失时可以查回原请求，减少重复操作；长任务由 DSH 跟踪，同一 Houdini 现场中的操作仍按队列串行执行。
+
+详细职责与源码入口见[系统架构](docs/architecture.md)，工具参数见[工具说明](docs/tools.md)与[操作能力目录](docs/tool-design.md)。
+
+## 模型与扩展配置
+
+主聊天模型、账户和凭据统一在 DSH 原生设置中管理。需要看图时使用具备图片输入能力的模型；图片生成或编辑可使用单独配置的图片服务。
+
+语音转录在实际需要时配置。可以对 Agent 说「帮我配置教程分析」，或在 **设置 → 教程视频** 点击 **让 Agent 帮我配置**；Agent 先读取现有状态，再补齐服务、模型和必要参数。API Key 直接在安全输入框录入 DSH 凭据服务，不作为聊天答案。
+
+已有 DSH 提供方可以明确复用，独立语音服务也可按实际接口接入。只做媒体解析不必先连接场景。配置方法、依赖与接口范围见[模型及媒体设置](docs/setup.md#教程视频与转录设置)。
+
+## 文档
+
+| 入口 | 内容 |
+|---|---|
+| [安装与使用](docs/setup.md) | 安装、连接、更新、迁移、模型配置与卸载 |
+| [现场与工程接续](docs/multi-instance.md) | 多窗口、明确绑定、工作区和现场恢复 |
+| [工具说明](docs/tools.md) | 工具职责、参数与返回 |
+| [操作能力目录](docs/tool-design.md) | 节点、参数、几何、资产、观察与渲染操作 |
+| [工程文件与输出](docs/project-files.md) | HIP、图片、资源及输出目录 |
+| [执行记录与诊断](docs/houdini-trace-design.md) | Trace 中的执行、资料与诊断信息 |
+| [故障报告](docs/support-reports.md) | 收集、检查和导出诊断资料 |
+| [文档索引](docs/README.md) | 完整设计、接口与维护说明 |
+
+<details>
+<summary>按需加载的领域技能</summary>
+
+| 领域 | 用途 |
+|---|---|
+| [任务拆分](skills/houdini-task-decomposition/SKILL.md) | 按目标与依赖组织模块、观察和集成 |
+| [独立执行](skills/houdini-isolated-execution/SKILL.md) | 在独立 Houdini 进程中构建与验证 |
+| [SOP](skills/houdini-sop-workflow/SKILL.md) | 程序化建模、曲线与几何操作 |
+| [表面外观](skills/houdini-surface-workflow/SKILL.md) | 参考图、表面细节、UV 与贴图 |
+| [COP](skills/houdini-cop-workflow/SKILL.md) | 按需进行图层与图像处理 |
+| [工具开发](skills/houdini-tool-development/SKILL.md) | HDA、脚本、面板与工具交付 |
+| [参数界面](skills/houdini-parameter-ui/SKILL.md) | 控制参数、界面组织与绑定 |
+| [网络交接](skills/houdini-network-handoff/SKILL.md) | 节点入口、分组、说明与布局 |
+| [Rig 与动画](skills/houdini-rig-animation-workflow/SKILL.md) | 骨架、层级与动画 |
+| [Solaris 与 Karma](skills/houdini-solaris-karma-workflow/SKILL.md) | 材质、USD 与渲染 |
+| [视频教程](skills/houdini-video-tutorial/SKILL.md) | 转录、画面依据与教学工程 |
+| [Trace 分析](skills/houdini-trace-analysis/SKILL.md) | 查看请求、工具调用和失败原因 |
+| [知识维护](skills/houdini-skill-governance/SKILL.md) | 按明确请求维护领域资料 |
+
+</details>
+
+## 开发与反馈
+
+源码构建与检查：
 
 ```powershell
 npm install
@@ -73,6 +163,4 @@ npm run docs:check
 npm test
 ```
 
-开发和自动化测试使用自有 DSH_HOME、profile、缓存与浏览器资料；源码构建不等于用户已安装或进程已加载。验证按实际改动选择，执行内核使用必要的隔离 HOM 回归。隔离官方 Desktop、真实 H21/H22 和原生工具回执的机制检查不替代真实用户配置、厂商账号、教程识别和成品质量验收。
-
-HOM在Houdini主线程串行执行，长任务通过队列提交。请求未知时查回原回执，错误和恢复状态如实返回；几何测量、图像观察与文件保存各自说明范围。
+扩展职责、接口和验证方法见[开发规范](docs/development.md)与[架构代码地图](docs/architecture.md)。问题和建议可以提交到 [GitHub Issues](https://github.com/eee1723/dsh-houdini/issues)；报告时请说明操作目标、版本、现象和复现步骤，并按[故障报告指南](docs/support-reports.md)检查需要分享的内容。
