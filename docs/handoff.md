@@ -11,7 +11,7 @@
 - 状态：待验证
 - 现状：标准bundle只新增Houdini；官方原包承载会话、账户、其他模式和应用更新，独立Qt聊天壳及核心补丁构建已移除。菜单、模式内现场选择、打开/启动与原生导航通过插件窄通道连接；实际消费方及并发/取消反例仍按下述入口验收。
 - 下一步：回访用户默认profile与系统dsh://菜单唤起；独立资料下的原生窗口、工作区和启动中重开不代替这一真实用户路径。用户自己的多窗口、已有模型/账号配置、复杂工程和长期任务仍须正式入口回访。用户默认profile中的插件更新/停用/卸载、旧helper加载及正式发布仍须验收，不将临时数据根中的最终tgz安装通过写成用户已经部署。
-- 已有共享记录：旧私有目录迁移记录仍须单独恢复；先保留原值并核对来源、当前目录事件、原日志位置及详情/附件引用，不自动改header、搬日志或合并整库。没有对用户现有历史执行修复。
+- 已有共享记录：默认资料中6条旧私有Host生成的v4会话头与物理项目目录不一致，阻断官方会话列表及工作区服务；每条仅有一个generation，不能从有损目录名猜回原始cwd。须经用户确认后离线原值暂存异常记录，再回访默认Desktop工作区与其余历史；6条的语义恢复仍须核对原始来源、当前目录事件及详情/附件引用。不自动改header、搬日志或合并整库，当前尚未处理用户原文件。
 - 入口：[Desktop通道](../tools/tests/desktop-integration.test.mjs)、[真实官方组合](../tools/tests/dsh-host-smoke.test.py)、[真实页面](../tools/tests/dsh-client-navigation.mjs)、[本端接入](../tools/tests/dsh-desktop-client.test.py)、[安装](../tools/tests/dsh-install-runtime.test.py)、[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)、[原生插件页面](../tools/tests/dsh-distribution-ui.test.py)、[原生窗口生命周期](../tools/tests/dsh-desktop-window.test.py)。
 - 移除条件：两条实际入口、模式隔离、插件启停、真实H21/H22及已有共享历史处置均有完整消费者证据，未交付部分不再混在源码完成状态中。
 
