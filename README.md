@@ -39,8 +39,14 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 ### 安装
 
 1. 安装兼容的官方 DSH Desktop 和 Houdini，在 DSH 原生模型设置中配置主模型。
-2. 准备完整的 dsh-houdini `.tgz` 插件包，在 Desktop 原生插件管理中填入本地绝对路径安装，无须解压。
+2. 在 Desktop 的 **插件 → 添加插件 → 包名或地址** 中粘贴下方正式包地址，点击 **安装**；也可填入已下载完整 `.tgz` 的本地绝对路径。
 3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
+
+```text
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.1/dsh-houdini-0.1.1.tgz
+```
+
+[正式发布与校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.1)。当前通过 GitHub 完整包直链安装，未上架 npm；直接粘贴地址即可，无须解压或运行脚本。
 
 新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
 

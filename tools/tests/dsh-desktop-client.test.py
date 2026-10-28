@@ -64,7 +64,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-desktop-client-') as temporary:
         descriptor.write_text(json.dumps(record), encoding='utf-8')
         before = descriptor.read_bytes()
         with patch.dict(os.environ, {'DSH_HOME': str(home), 'HTTP_PROXY': 'http://127.0.0.1:1'}, clear=True):
-            assert desktop.connect(timeout=1, activate=False) == record
+            with patch.object(desktop.urllib.request, 'HTTPSHandler', side_effect=AssertionError('Loopback HTTP must not initialize TLS')):
+                assert desktop.connect(timeout=1, activate=False) == record
             payload = {'executorId': 'a' * 32, 'registrationId': 'c' * 32,
                        'expectedHip': str(folder / 'named.hip'), 'requestId': 'd' * 32}
             assert desktop.request(record, 'open-workspace', payload)['sessionId'] == 'fixture-session'

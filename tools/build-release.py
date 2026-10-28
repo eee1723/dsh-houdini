@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -69,8 +70,10 @@ def build(args):
     package = json.loads((plugin / "package.json").read_text(encoding="utf-8"))
     # A built tarball installs without compiling source or resolving another copy
     # of the Host's dependencies. Peer requirements remain the Desktop contract.
-    for name in ("scripts", "devDependencies", "overrides"):
+    for name in ("scripts", "devDependencies", "overrides", "private"):
         package.pop(name, None)
+    package["os"] = ["win32"]
+    package["cpu"] = ["x64"]
     (plugin / "package.json").write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     config = json.loads((ROOT / "deployment/runtime.json").read_text(encoding="utf-8"))
     print("Preparing source-complete tutorial media resources", flush=True)
@@ -80,10 +83,17 @@ def build(args):
     packed_files = {row["path"] for row in packed["files"]}
     if not {"runtime/video/ffmpeg/bin/ffmpeg.exe", "runtime/video/ffmpeg/bin/ffprobe.exe"}.issubset(packed_files):
         raise RuntimeError("Plugin package omitted the required tutorial media executables")
+    artifact = output / packed["filename"]
+    with artifact.open("rb") as stream:
+        sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     result = {"kind": "dsh-plugin-bundle", "version": package["version"],
               "requiresDsh": package["engines"]["dsh"], "runtimeOwnership": "host",
-              "file": str(output / packed["filename"]), "integrity": packed["integrity"],
+              "file": str(artifact), "integrity": packed["integrity"], "sha256": sha256,
+              "installUrl": "https://github.com/eee1723/dsh-houdini/releases/download/v"
+                  + package["version"] + "/" + packed["filename"],
               "mediaVersion": media["version"], "mediaLicense": media["license"]}
+    (output / "release-manifest.json").write_text(json.dumps({**result, "file": artifact.name}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (output / "SHA256SUMS.txt").write_text(sha256 + "  " + artifact.name + "\n", encoding="ascii")
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
 
 

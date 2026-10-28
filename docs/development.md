@@ -85,6 +85,8 @@ npm run docs:check
 
 `docs:check` 只检查生成漂移、文档索引、模块覆盖和 Markdown 链接，不自动修文档。改动生成源后先 build，再检查最终一致性。
 
+正式包由 `python tools/build-release.py --output <目录>` 构建；`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或Release。维护者在验证最终包、获得发布授权后，将该tgz及校验文件作为同一GitHub Release资产发布，再用正式HTTPS地址核对原生插件页的安装、启用与实际Houdini接入；下载地址不可由Draft、源码push或本地成功推断。npm包名分发需要单独的发布账户，不能用未发布包名替代GitHub完整包直链。
+
 [Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。浏览器连接和原故障的现场复现分别判断；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
 
 [权限恢复](../tools/tests/scene-recovery.test.mjs)验证同一保存点写前恢复、新目标不恢复、当前只读回执不抹除旧归属证据；[原工程保持](../tools/tests/scene-recovery-original.test.mjs)验证不自动load/clear/提问丢内容；[原生恢复](../tools/tests/dsh-scene-recovery.test.py)验证真实文件、节点基线、活跃作者与场景代际。真实加载后警告原文/有界投影由[警告边界](../tools/tests/load-warning.test.py)和[跨语言资源读取](../tools/tests/load-warning-resource.test.mjs)验证，不把日志摘要当跨版本兼容结论。

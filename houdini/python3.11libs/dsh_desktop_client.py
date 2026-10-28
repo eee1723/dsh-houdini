@@ -67,7 +67,14 @@ def request(record, action, payload, *, timeout=15):
         headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + record['token']})
     # This is a local authenticated plugin channel. System proxies must not
     # receive its token or decide whether another local application is trusted.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    # Only HTTP loopback is used here. build_opener also constructs an unused
+    # HTTPSHandler/SSL context, which can fail before sending HTTP in a clean
+    # embedded Python environment. Keep the channel independent of system TLS
+    # configuration and proxies while preserving JSON HTTP-error envelopes.
+    opener = urllib.request.OpenerDirector()
+    opener.add_handler(urllib.request.HTTPHandler())
+    opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+    opener.add_handler(urllib.request.HTTPErrorProcessor())
     try:
         response = opener.open(message, timeout=timeout)
     except urllib.error.HTTPError as response_error:
