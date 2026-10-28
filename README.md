@@ -43,10 +43,10 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.1/dsh-houdini-0.1.1.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.2/dsh-houdini-0.1.2.tgz
 ```
 
-[正式发布与校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.1)。当前通过 GitHub 完整包直链安装，未上架 npm；直接粘贴地址即可，无须解压或运行脚本。
+[正式发布与校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.2)。当前通过 GitHub 完整包直链安装，未上架 npm；直接粘贴地址即可，无须解压或运行脚本。
 
 新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
 
@@ -56,12 +56,12 @@ https://github.com/eee1723/dsh-houdini/releases/download/v0.1.1/dsh-houdini-0.1.
 
 | 入口 | 操作方式 |
 |---|---|
-| 从 DSH Desktop 进入 | 新建或选择 **Houdini 模式** 的对话，在现场控件中绑定已连接窗口，或选择 Houdini 安装后新建场景、打开 HIP。 |
-| 从 Houdini 进入 | 使用 **DSH-Houdini → Open Workspace**，根据当前现场进入同一个 Desktop 中的对应 Houdini 对话。 |
+| 从 DSH Desktop 进入 | 新建或选择 **Houdini 模式** 的对话，在工程控件中绑定已连接窗口，或选择 Houdini 安装后新建场景、打开 HIP。 |
+| 从 Houdini 进入 | 使用 **DSH-Houdini → Open Workspace**，根据当前工程进入同一个 Desktop 中的对应 Houdini 对话。 |
 
-插件在真正新开 Houdini 前自动准备连接组件。已有窗口若尚未加载兼容组件，先在 Desktop 现场控件中选择 **安装 / 更新 Houdini 组件**，再保存并重开对应窗口。每段对话可以明确选择自己的现场；打开其他 HIP 默认使用新进程，保留已有窗口。
+插件在真正新开 Houdini 前自动准备连接组件。已有窗口若尚未加载兼容组件，先在 Desktop 工程控件中选择 **安装 / 更新 Houdini 组件**，再保存并重开对应窗口。每段对话可以明确选择自己的工程；打开其他 HIP 默认使用新进程，保留已有窗口。
 
-Houdini 相关控件随当前对话的 **Houdini 模式** 显示，其他模式继续使用 DSH 原有界面。多现场选择、工作区与工程接续见[现场使用说明](docs/multi-instance.md)。
+Houdini 相关控件随当前对话的 **Houdini 模式** 显示，其他模式继续使用 DSH 原有界面。多工程选择、工作区与工程接续见[工程使用说明](docs/multi-instance.md)。
 
 Windows Desktop的Houdini模式提供 **置顶** 按钮，便于同时操作场景和对话；返回其他模式时恢复原来的窗口层级。需要ChatGPT/Codex订阅时，可通过官方插件管理安装社区插件 [dsh-codex-subscription@3.1.8](https://github.com/WSL043/dsh-codex-subscription)；它独立授权和维护，不随Houdini发行包捆绑，模型仍从DSH原生菜单选择。
 
@@ -93,7 +93,7 @@ Windows Desktop的Houdini模式提供 **置顶** 按钮，便于同时操作场�
 
 ## 工作原理
 
-DSH 提供对话与通用 Agent 能力，插件将模型的操作连接到真实 Houdini。现场操作的主要链路如下：
+DSH 提供对话与通用 Agent 能力，插件将模型的操作连接到真实 Houdini。工程操作的主要链路如下：
 
 ```mermaid
 flowchart LR
@@ -109,12 +109,12 @@ flowchart LR
 | 部分 | 职责 |
 |---|---|
 | DSH Desktop | 管理模型、账户、凭据、会话、工作区和通用任务，承载用户与 Agent 的持续交互。 |
-| 插件适配层 | 提供 Houdini 模式、现场上下文、工具与界面，按任务加载领域技能，呈现执行结果。 |
-| Houdini Bridge | 在 Houdini 内接收请求，核对现场身份与操作范围，通过主线程队列执行操作并返回真实结果。 |
+| 插件适配层 | 提供 Houdini 模式、工程上下文、工具与界面，按任务加载领域技能，呈现执行结果。 |
+| Houdini Bridge | 在 Houdini 内接收请求，核对工程身份与操作范围，通过主线程队列执行操作并返回真实结果。 |
 
 Houdini 的 Python API（HOM）只在 Houdini 侧运行。媒体准备在普通 Python 工作进程中执行，独立构建与验证使用一次性 Houdini 进程；它们与当前场景的主线程执行分开。
 
-执行结果、错误、图片和文件返回原对话，支持在实际结果上继续修改。请求响应丢失时可以查回原请求，减少重复操作；长任务由 DSH 跟踪，同一 Houdini 现场中的操作仍按队列串行执行。
+执行结果、错误、图片和文件返回原对话，支持在实际结果上继续修改。请求响应丢失时可以查回原请求，减少重复操作；长任务由 DSH 跟踪，同一 Houdini 工程中的操作仍按队列串行执行。
 
 详细职责与源码入口见[系统架构](docs/architecture.md)，工具参数见[工具说明](docs/tools.md)与[操作能力目录](docs/tool-design.md)。
 
@@ -131,7 +131,7 @@ Houdini 的 Python API（HOM）只在 Houdini 侧运行。媒体准备在普通 
 | 入口 | 内容 |
 |---|---|
 | [安装与使用](docs/setup.md) | 安装、连接、更新、迁移、模型配置与卸载 |
-| [现场与工程接续](docs/multi-instance.md) | 多窗口、明确绑定、工作区和现场恢复 |
+| [多工程与接续](docs/multi-instance.md) | 多窗口、明确绑定、工作区和工程恢复 |
 | [工具说明](docs/tools.md) | 工具职责、参数与返回 |
 | [操作能力目录](docs/tool-design.md) | 节点、参数、几何、资产、观察与渲染操作 |
 | [工程文件与输出](docs/project-files.md) | HIP、图片、资源及输出目录 |

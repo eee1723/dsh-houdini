@@ -193,23 +193,14 @@ def show_plugin_info():
         version = json.loads(manifest.read_text(encoding='utf-8')).get('version', 'unknown')
     except (OSError, ValueError):
         version = 'unknown'
-    selected = hou.ui.displayMessage(
-        'Houdini 连接组件 ' + version + '\n\n'
-        '“修复当前连接”只重启这个窗口的连接，工程保持不变。\n'
-        '更新或切换组件版本后，请保存并重开这个 Houdini 窗口。',
-        title='DSH-Houdini', buttons=('打开对话', '修复当前连接', '切换组件版本…', '移除本机组件…', '诊断…', '关闭'),
-        default_choice=5, close_choice=5,
-        details='当前加载位置：' + _PROJECT_ROOT + '\n对话、模型和插件更新在 DSH Desktop 中管理。\n组件版本切换在下次打开 Houdini 时生效，不替换当前已加载的 Python 模块。\n移除本机组件会停用菜单登记，保留组件文件和用户数据；完整卸载还需在 Desktop 插件页卸载插件。')
-    if selected == 0:
-        open_workspace()
-    elif selected == 1:
-        repair_current_runtime()
-    elif selected == 2:
-        select_helper_version()
-    elif selected == 3:
-        remove_local_components()
-    elif selected == 4:
-        show_connection_diagnostics()
+    from dsh_ui_style import show_component_info
+    return show_component_info(version, _PROJECT_ROOT, {
+        'open': open_workspace,
+        'repair': repair_current_runtime,
+        'diagnose': show_connection_diagnostics,
+        'switch': select_helper_version,
+        'remove': remove_local_components,
+    }, parent=hou.qt.mainWindow())
 
 
 def show_connection_diagnostics():

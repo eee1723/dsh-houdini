@@ -208,16 +208,26 @@ with tempfile.TemporaryDirectory(prefix='helper-removal-') as temporary:
         assert '不可变 helper' in failures[-1]
         assert launcher._HELPER_SWITCH_TIMER is None
 
-# The existing ASCII native menu opens this Chinese information dialog; its new
-# removal button routes to the same explicit action without building another UI.
-with patch.object(launcher.hou, 'ui', SimpleNamespace(displayMessage=lambda *args, **kwargs: 3), create=True), \
-     patch.object(launcher, 'remove_local_components') as remove:
-    launcher.show_plugin_info()
-    remove.assert_called_once_with()
-with patch.object(launcher.hou, 'ui', SimpleNamespace(displayMessage=lambda *args, **kwargs: 4), create=True), \
-     patch.object(launcher, 'show_connection_diagnostics') as diagnose:
-    launcher.show_plugin_info()
-    diagnose.assert_called_once_with()
+# Opening maintenance does not start any action. The selected control delegates
+# to the existing operation, retaining its idle/confirmation/worker boundaries.
+for selected in ('open', 'repair', 'diagnose', 'switch', 'remove'):
+    captured = []
+    info_ui = SimpleNamespace(show_component_info=lambda version, root, actions, parent:
+                              captured.append((version, root, actions, parent)))
+    with patch.object(launcher, 'hou', SimpleNamespace(qt=SimpleNamespace(mainWindow=lambda: None))), \
+         patch.dict(sys.modules, {'dsh_ui_style': info_ui}), \
+         patch.object(launcher, 'open_workspace') as open_workspace, \
+         patch.object(launcher, 'repair_current_runtime') as repair, \
+         patch.object(launcher, 'show_connection_diagnostics') as diagnose, \
+         patch.object(launcher, 'select_helper_version') as switch, \
+         patch.object(launcher, 'remove_local_components') as remove:
+        launcher.show_plugin_info()
+        operations = {'open': open_workspace, 'repair': repair, 'diagnose': diagnose,
+                      'switch': switch, 'remove': remove}
+        assert all(not operation.called for operation in operations.values())
+        captured[0][2][selected]()
+        operations[selected].assert_called_once_with()
+        assert sum(operation.call_count for operation in operations.values()) == 1
 
 # Keep the useful failure reason in the normal dialog; technical context stays
 # intact in details and the support diagnostic, rather than being swallowed.

@@ -154,7 +154,7 @@ export class ExecutorRouter {
     this.signal(exec.signal).throwIfAborted()
     if(!exec.agent||exec.agent.session.id!==exec.agent.id)throw new Error('Houdini runtime selection requires the exact current agent session')
     const target=this.state(exec.agent.session).selectedTarget
-    if(!target)throw new Error('独立执行尚无明确的 Houdini 安装；请指定 houdini_installation，或先选择现场。')
+    if(!target)throw new Error('独立执行尚无明确的 Houdini 安装；请指定 houdini_installation，或先选择工程。')
     const record=await this.directory.recorded(target.executor_id)
     if(!record.runtime)throw new Error('所选 Houdini 的旧登记未记录安装信息；请指定 houdini_installation，或从该 Houdini 重新打开工作区。')
     return {runtime:record.runtime,houdiniVersion:record.houdini_version}
@@ -179,7 +179,7 @@ export class ExecutorRouter {
     const bridge=this.bridge(record,{runtimeId:target.runtime_id,sceneEpoch:target.scene_epoch})
     const health=await bridge.inspectExecutor(bounded)
     if(health.runtimeId!==target.runtime_id||health.houVersion!==record.houdini_version
-      ||health.sceneEpoch!==target.scene_epoch)throw new Error('所选 Houdini 现场已变化，请重新选择目标。')
+      ||health.sceneEpoch!==target.scene_epoch)throw new Error('所选 Houdini 工程已变化，请重新选择目标。')
     const after=await this.directory.find(target.executor_id)
     if(!targetMatchesRecord(target,after)||after.registration_id!==record.registration_id)
       throw new Error('工程在核对期间发生变化，请重新选择目标。')
@@ -196,13 +196,13 @@ export class ExecutorRouter {
   async selectFor(agent:Agent,signal:AbortSignal):Promise<void> {
     const state=this.state(agent.session)
     if(state.selectedTarget)return
-    if(state.selectionRecorded)throw new Error('已解除此对话的现场目标；请明确选择后再操作，不会自动重新绑定。')
-    if(state.identity&&!state.selectionRecorded)throw new Error('这段旧对话尚未选择当前现场，请从工程入口明确选择；历史归属没有改变。')
+    if(state.selectionRecorded)throw new Error('已解除此对话的工程目标；请明确选择后再操作，不会自动重新绑定。')
+    if(state.identity&&!state.selectionRecorded)throw new Error('这段旧对话尚未选择当前工程，请从工程入口明确选择；历史归属没有改变。')
     const candidates=(await this.directory.list()).filter(record=>record.workbench&&record.state==='registered')
-    if(!candidates.length)throw new Error('目前没有可用的 Houdini 现场。请从目标 Houdini 连接 Desktop，或打开一份工程。')
+    if(!candidates.length)throw new Error('目前没有可用的 Houdini 工程。请从目标 Houdini 连接 Desktop，或打开一份工程。')
     const selected=await this.chooseTarget?.(agent.id,candidates,signal)
     const record=candidates.find(candidate=>candidate.executor_id===selected)
-    if(!record)throw new Error('本轮没有选择 Houdini 现场，可以继续讨论；没有执行工程操作。')
+    if(!record)throw new Error('本轮没有选择 Houdini 工程，可以继续讨论；没有执行工程操作。')
     await this.selectTarget(agent,record.executor_id,record.registration_id,signal,record.hip_path!,true)
   }
 
@@ -216,7 +216,7 @@ export class ExecutorRouter {
       try {await selection}finally{if(this.selections.get(agent.session)===selection)this.selections.delete(agent.session)}
     }
     const target=this.state(agent.session).selectedTarget
-    if(!target)throw new Error('请先选择要操作的 Houdini 现场。')
+    if(!target)throw new Error('请先选择要操作的 Houdini 工程。')
     const {record,bridge}=await this.verified(target,signal)
     if(options.write) {
       if(record.task_id&&record.task_id!==agent.id&&!this.idleOwner(record.task_id))
@@ -273,7 +273,7 @@ export class ExecutorRouter {
     expected?:{runtimeId?:string;sceneEpoch?:string;selectionRevision?:number;beforeCommit?:()=>void}):Promise<TargetSnapshot> {
     const checkRevision=()=>{
       if(expected?.selectionRevision!==undefined&&this.state(agent.session).selectionRevision!==expected.selectionRevision)
-        throw new Error('等待启动时现场选择已变化；迟到回执未覆盖新选择。')
+        throw new Error('等待启动时工程选择已变化；迟到回执未覆盖新选择。')
     }
     checkRevision()
     if((agent.status!==undefined&&agent.status!=='idle'&&!atStep)||agent.id!==agent.session.id)

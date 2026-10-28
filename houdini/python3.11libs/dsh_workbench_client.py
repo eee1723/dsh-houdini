@@ -236,7 +236,7 @@ def open_workspace(launcher, *, reload=False, launch_ticket=None):
             launcher._startup_failure(state['error'])
         else:
             hou.ui.setStatusMessage('已打开 Desktop。Houdini 正在执行操作，可在原对话查看进度。' if state.get('busy') else
-                                   'Houdini 已就绪，当前对话的现场选择未改变。可在 Desktop 中继续选择。' if result.get('phase') == 'detached' else
+                                   'Houdini 已就绪，当前对话的工程选择未改变。可在 Desktop 中继续选择。' if result.get('phase') == 'detached' else
                                    'Houdini 已就绪，Desktop 尚未确认连接。请到 Desktop 查看。' if result.get('phase') == 'waiting' else
                                    '当前 Houdini 已连接，可在 Desktop 中继续。')
 

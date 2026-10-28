@@ -36,8 +36,8 @@ export function apply(ctx:Context,config:Config):void {
       const agent=ctx.agents.get(taskId as any),questions=agent?.ctx.get('userQuestions')
       if(!agent||!questions)return
       const labels=candidates.map((record,index)=>(record.hip_is_new?'未保存工程':path.basename(record.hip_path??'工程'))+' · 窗口 '+(index+1))
-      const answer=await questions.ask({agent,signal,questions:[{id:'houdini-target-window',header:'选择现场',
-        question:'这段对话要操作哪一个 Houdini 现场？',multiSelect:false,
+      const answer=await questions.ask({agent,signal,questions:[{id:'houdini-target-window',header:'选择工程',
+        question:'这段对话要操作哪一个 Houdini 工程？',multiSelect:false,
         options:[...candidates.map((record,index)=>({label:labels[index],description:record.hip_path+' · Houdini '+record.houdini_version})),
           {label:'暂不连接',description:'保留当前内容，本轮继续讨论。'}]}]})
       const choice=answer.answers.find(item=>item.id==='houdini-target-window')

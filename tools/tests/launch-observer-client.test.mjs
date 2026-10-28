@@ -76,7 +76,7 @@ assert.match(context.launchTicketMessage({phase:'detached'}),/不会取消启动
  assert.equal(observer.snapshot().ticket.message,'New Host preparing','late old-generation facts cannot replace the latest Host status')
  ticket={...ticket,phase:'detached'};await observer.reconnect();f.target('user-selected-another-target');await observer.resume()
  assert.equal(f.calls.filter(row=>row.name==='projectLaunchResume').length,0,'explicit resume cannot override a newer target choice')
- assert.match(observer.snapshot().error,/重新选择现场/)
+ assert.match(observer.snapshot().error,/重新选择工程/)
  f.close(observer)
 }
 

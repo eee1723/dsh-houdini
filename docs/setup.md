@@ -7,7 +7,7 @@ dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前发行包面向
 标准发行单元是包含 Houdini 和媒体资源的 `.tgz`，通过 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases) 分发。在 Desktop 原生「插件 → 添加插件」中粘贴下方完整地址，即可直接安装指定版本；无需先下载或解压：
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.1/dsh-houdini-0.1.1.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.2/dsh-houdini-0.1.2.tgz
 ```
 
 当前使用 GitHub 正式包直链，未发布 npm 包名。不要只填 `dsh-houdini` 或仓库首页地址；历史独立工作台包和 GitHub 自动生成的 Source code ZIP 也不适用于这条标准插件安装路径。发布页同时提供 SHA256 校验文件；源码 push、tag 或 Draft 本身不等于包已公开可用。
@@ -16,11 +16,11 @@ https://github.com/eee1723/dsh-houdini/releases/download/v0.1.1/dsh-houdini-0.1.
 2. 打开 Desktop 原生「插件 → 添加插件」，在「包名或地址」粘贴上方完整地址并点击「安装」。也可以先从发布页下载完整 `.tgz`，在同一处填入其本地绝对路径。直接安装压缩包，无须解压后寻找 `Install.cmd`，也无须另装 Node。
 3. 安装完成后启用插件。当前宿主的新装插件默认停用，可在安装结果中选择「立即启用」，或在插件列表启用 `dsh-houdini`；安装成功本身不表示 Houdini 模式已经加载。
 4. 在 DSH 原生模型设置中完成供应商或账户配置，为当前对话选择可用主模型。插件复用这些设置。
-5. 新建或选择 Houdini 模式的对话，在现场菜单选择 Houdini 安装，新建场景或打开已有 HIP；已经加载兼容组件的现场也可直接选择绑定。
+5. 新建或选择 Houdini 模式的对话，在工程菜单选择 Houdini 安装，新建场景或打开已有 HIP；已经加载兼容组件的工程也可直接选择绑定。
 
-插件在真正新开 Houdini 前自动准备本端组件，包括登记菜单所需的 Package、检查已确认的旧入口并取得安装回执；准备失败会显示实际原因，不继续新开一个未准备好的窗口。日后普通启动的 Houdini 也通过该 Package 加载菜单。需要单独准备或修复组件时，可使用 Houdini 模式现场菜单的「安装 / 更新 Houdini 组件」。
+插件在真正新开 Houdini 前自动准备本端组件，包括登记菜单所需的 Package、检查已确认的旧入口并取得安装回执；准备失败会显示实际原因，不继续新开一个未准备好的窗口。日后普通启动的 Houdini 也通过该 Package 加载菜单。需要单独准备或修复组件时，可使用 Houdini 模式工程菜单的「安装 / 更新 Houdini 组件」。
 
-普通安装反馈只说明安装或更新结果，以及已打开的Houdini是否需要保存并重开；入口迁移、备份和保留项继续写入安装详情，不作为日常使用提示。真正阻止安装的冲突或失败仍显示实际原因。组件已安装不代表当前窗口已加载或现场已连接。
+普通安装反馈只说明安装或更新结果，以及已打开的Houdini是否需要保存并重开；入口迁移、备份和保留项继续写入安装详情，不作为日常使用提示。真正阻止安装的冲突或失败仍显示实际原因。组件已安装不代表当前窗口已加载或工程已连接。
 
 地址安装由官方宿主的插件管理器下载和验证。完整包包含媒体工具及对应源码，下载时需要等待；网络受限时可下载同一版本的完整包后本地安装。失败时保留实际错误，不使用历史独立工作台入口补装。已验证范围和剩余环境差异见[发行交接](handoff.md#h-01-标准插件发布与用户加载)。
 
@@ -56,23 +56,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Rollb
 
 ## 工作区使用
 
-从 Desktop 选择 Houdini 模式，在对话目标控件中选择已登记现场；也可选已发现的 Houdini 安装，新建或打开现有 HIP。打开其他文件默认使用新进程，不隐式清空已有现场。启动成功、HIP 加载完成、Bridge 连接和任务绑定分别以实际回执确认。
+从 Desktop 选择 Houdini 模式，在对话目标控件中选择已登记工程；也可选已发现的 Houdini 安装，新建或打开现有 HIP。打开其他文件默认使用新进程，不隐式清空已有工程。启动成功、HIP 加载完成、Bridge 连接和任务绑定分别以实际回执确认。
 
-在 Houdini 选择 DSH-Houdini → Open Workspace，菜单取得当前现场身份，启动/确认本端 Bridge，再唤起同一 Desktop 并定位或创建 Houdini 对话。已有明确目标优先；发生歧义才选择。GUI 主线程不等待网络或进程探测。
+在 Houdini 选择 DSH-Houdini → Open Workspace，菜单取得当前工程身份，启动/确认本端 Bridge，再唤起同一 Desktop 并定位或创建 Houdini 对话。已有明确目标优先；发生歧义才选择。GUI 主线程不等待网络或进程探测。
 
 未保存场景使用插件专属临时工作目录，不自动保存 HIP。已有对话切换目标保留其原生工作区与历史；Save As 只更新真实 HIP 事实，原项目内的文件目录可由原生 cd 跟随，跨项目文件权限仍沿 DSH 公开机制处理。工程输出锚定实际 $HIP 与明确目的地，不修改会话创建目录来扩大权限。
 
-只有当前选中的 Houdini 对话显示领域交互控件。其他模式没有现场面板；历史执行卡片仍可读取，已经提交的后台执行不因切换界面而取消。多现场、节点修改权限与恢复合同见[现场选择](multi-instance.md)。
+只有当前选中的 Houdini 对话显示领域交互控件。其他模式没有工程面板；历史执行卡片仍可读取，已经提交的后台执行不因切换界面而取消。多工程、节点修改权限与恢复合同见[工程选择](multi-instance.md)。
 
 在官方Windows Desktop的Houdini模式中可点击「置顶」，便于一边对话一边操作Houdini；空对话显示在输入工具行，已有对话显示在页头。Houdini对话之间切换保留本次使用中的选择，切回其他模式恢复进入前的窗口层级。若无法准确识别本Desktop窗口，按钮会说明原因，不按窗口标题或当前前台窗口猜测。
 
-## Version & Updates（版本与更新）
+## Connection & Support（连接与维护）
 
-Desktop 的应用和账户更新由官方管理；Node 侧插件沿官方插件管理更新。Houdini 菜单中的版本信息、检查与修复只作用于本端 Bridge/helper。已加载版本以当次 Bridge 执行合同为准，不能只查看磁盘文件或包版本。
+Desktop 的应用和账户更新由官方管理；Node 侧插件沿官方插件管理更新。当前验证的 Desktop 0.2.1-rc.3 插件页对第三方插件要求先卸载再安装新版；npm 包名与 GitHub Release 安装链接都遵守这个界面合同，发布到 npm 本身不会增加一键更新。更新插件不需要执行下述「移除本机组件」。
+
+也可先正常退出 Desktop，再用它自带的官方 CLI 直接安装新版，无须先卸载：`<Desktop安装目录>/resources/runtime/cli/bin/dsh.cmd plugin --profile desktop add <完整tgz路径或已发布安装地址>`。此路径通过原生插件管理器替换依赖，继续使用原 profile；不自行编辑配置或依赖目录。已在独立 Desktop profile 中核对 0.1.1 → 0.1.2 的覆盖安装和既有对话文件、配置保留，用户默认资料与其他版本仍按实际环境确认。完成后重新打开 Desktop；已加载旧组件的 Houdini 仍须保存并重开。npm 发布后同一官方入口可使用已发布的包名和精确版本，不能把包名分发等同于运行中的热更新。
+
+Houdini 中手动选择 **DSH-Houdini → Connection & Support...** 才会打开「连接与维护」窗口，正常启动和打开工作区不弹出它。窗口默认提供打开 Desktop 工作区、重新连接和连接诊断；「更多维护选项」中才显示切换已安装组件版本、移除本机组件与当前加载位置。重复打开会复用同一窗口，不阻塞 Houdini 编辑。版本信息与维护只作用于本端 Bridge/helper，不下载 Desktop 插件更新。已加载版本以当次 Bridge 执行合同为准，不能只查看磁盘文件或包版本。
 
 修复当前 Bridge 必须等待其执行队列空闲，不终止其他 Houdini、不重启 Desktop、不重放未确认代码。Package/菜单变更按提示重开对应 Houdini；本端更新不改变原 HIP 和节点内容。
 
-Desktop无法连接时，可在此窗口选择「诊断…」，生成并查看本端接入报告，或打开已有诊断ZIP；保存位置由用户选择。完整会话报告仍在Desktop标题栏的「报告问题」中导出。两种报告的数据范围和分享方式见[故障报告](support-reports.md)。
+Desktop无法连接时，可在此窗口选择「连接诊断…」，生成并查看本端接入报告，或打开已有诊断ZIP；保存位置由用户选择。完整会话报告仍在Desktop标题栏的「报告问题」中导出。两种报告的数据范围和分享方式见[故障报告](support-reports.md)。
 
 ## 教程视频与转录设置
 
@@ -119,7 +123,7 @@ npm run docs:check
 
 ## 卸载与保留数据
 
-需要完整卸载时，先在已安装 helper 的 Houdini 中打开 **DSH-Houdini → Version & Updates...**，选择「移除本机组件…」并确认，再到 Desktop 原生插件管理停用或卸载 `dsh-houdini`。本机组件解除登记后，当前窗口与 Bridge 继续运行，下次启动不再加载菜单；若继续从仍启用插件的 Desktop 新开 Houdini，组件会按正常流程重新准备。无需寻找卸载脚本或清空目录。
+需要完整卸载时，先在已安装 helper 的 Houdini 中打开 **DSH-Houdini → Connection & Support... → 更多维护选项**，选择「移除本机组件…」并确认，再到 Desktop 原生插件管理停用或卸载 `dsh-houdini`。本机组件解除登记后，当前窗口与 Bridge 继续运行，下次启动不再加载菜单；若继续从仍启用插件的 Desktop 新开 Houdini，组件会按正常流程重新准备。无需寻找卸载脚本或清空目录。
 
 高级维护可使用完整插件或已安装 helper 中的 [installer/uninstall.ps1](../installer/uninstall.ps1)，提供只读预览和按报告恢复。卸载不结束正在运行的 Houdini，不删除 HIP、会话、附件、恢复材料或 helper 版本目录，不修改官方 Desktop 安装。保留的旧私有入口不会因卸载新插件而自动重新启用。
 

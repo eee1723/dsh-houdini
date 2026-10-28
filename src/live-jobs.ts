@@ -39,7 +39,7 @@ export class LiveJobs {
     let admitted!:(value:JobHandle)=>void
     const admission=new Promise<JobHandle>(resolve=>{admitted=resolve})
     // DSH checks the owner, controller and concurrency cap BEFORE run().
-    const id=jobs.start({kind:LIVE_JOB_KIND,label:'Houdini · 现场长任务',owner:owner.sessionId,
+    const id=jobs.start({kind:LIVE_JOB_KIND,label:'Houdini · 工程长任务',owner:owner.sessionId,
       toolCall:{callId:exec.callId,rootCallId:exec.rootCallId??exec.callId},outputLimitBytes:16000,
       run:(job:NativeJobHandle)=>{
         if(receiptKey)this.observing.set(receiptKey,job.id)
@@ -103,7 +103,7 @@ export class LiveJobs {
               if(facts?.job_finished===true&&facts.job_result_available===false)value={...recovered,
                 requestReceipt:{...facts,note:'Original execution finished but its result is no longer retained. Outcome unverified; inspect the scene. Do not resubmit.'}}
             }catch{/* The original receipt remains the only recovery route. */}
-            return {status:cancelled?'killed':'failed',detail:'现场任务跟踪已断开；原执行结果须查回',
+            return {status:cancelled?'killed':'failed',detail:'工程任务跟踪已断开；原执行结果须查回',
               result:JSON.stringify({kind:LIVE_JOB_RESULT,job_id:job.id,value,
                 next_action:nextAction((handle.requestReceipt as any)?.request_ref)})}
           }finally{

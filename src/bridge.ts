@@ -327,9 +327,9 @@ export class HoudiniBridge {
         ...(requestKind?{request_kind:requestKind}:{}),...this.expectedTargetBody() }, signal)
       : await this.get<BridgeHealth>('/health', signal)
     if(this.expectedTarget?.runtimeId && health.runtimeId!==this.expectedTarget.runtimeId)
-      throw new Error('所选 Houdini 的运行实例已变化，请重新选择现场。本次没有发送场景操作。')
+      throw new Error('所选 Houdini 的运行实例已变化，请重新选择工程。本次没有发送场景操作。')
     if(this.expectedTarget?.sceneEpoch && health.sceneEpoch!==this.expectedTarget.sceneEpoch)
-      throw new Error('所选 Houdini 已切换或重新加载工程，请重新选择当前现场。本次没有发送场景操作。')
+      throw new Error('所选 Houdini 已切换或重新加载工程，请重新选择当前工程。本次没有发送场景操作。')
     const actual = health.verbCatalog
     if (this.executorId && health.executorId !== this.executorId) {
       throw new Error('当前连接指向另一个 Houdini，本次操作没有发送到工程。请从要操作的 Houdini 中重新打开 Open Workspace；同时开着多个窗口时，请先确认插件由哪个窗口使用。\n技术信息：Houdini executor mismatch: no scene code was submitted. Do not automatically rebind by port/HIP path.')
@@ -357,8 +357,8 @@ export class HoudiniBridge {
       health.error ? `health=${health.error}` : '',
     ].filter(Boolean).join('; ')
     throw new Error(
-      'Houdini 连接组件版本不一致，未继续执行。请在 Desktop 的 Houdini 现场菜单「管理」中安装或更新组件，'
-      + '保存工程后重开对应 Houdini。需要排查时，可从「DSH-Houdini → Version & Updates → 诊断」导出本端接入报告。'
+      'Houdini 连接组件版本不一致，未继续执行。请在 Desktop 的 Houdini 工程菜单中选择「安装 / 更新 Houdini 组件」，'
+      + '保存工程后重开对应 Houdini。需要排查时，可从「DSH-Houdini → Connection & Support → 连接诊断」导出本端接入报告。'
       + `\n诊断信息：Houdini bridge contract mismatch: ${detail}.`,
     )
   }

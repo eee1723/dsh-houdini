@@ -273,6 +273,6 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 ### 发行操作与信任配置
 
-代码推送只运行源码CI；[手动候选构建](../.github/workflows/desktop-plugin.yml)接受现有branch、commit或tag，只以只读仓库权限构建并保存短期Actions产物，不创建tag、Draft/正式Release或发布npm。维护者实测确认前保持发布暂停；未来公开分发须作为单独明确的操作执行，不能由main push或候选构建隐式完成。
+代码推送只运行源码CI；[手动候选构建](../.github/workflows/desktop-plugin.yml)接受现有branch、commit或tag，只以只读仓库权限构建并保存短期Actions产物，不创建tag、Draft/正式Release或发布npm。公开分发须在发行验证通过后，作为维护者明确授权的单独操作执行，不能由main push或候选构建隐式完成。
 
 通过 tools/build-release.py 构建标准tgz，发布前核对完整媒体资源、许可和源码，以及包内没有私有DSH/Node、核心补丁和Qt聊天壳。具体命令参数由脚本 --help 提供；候选构建不等于已发布。完整签名/发布策略属于实际分发渠道，不以旧私有运行包协议代替官方插件安装合同。

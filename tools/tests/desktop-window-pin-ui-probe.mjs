@@ -24,6 +24,17 @@ async function oracle(action='read'){
 async function state(expected,label){return until(async()=>{const value=await oracle();return value.pinned===expected?value:null},label)}
 async function pin(expected){await until('document.querySelectorAll("[data-houdini-window-pin]").length===1&&!document.querySelector("[data-houdini-window-pin]").disabled','one actionable real pin button');await click('document.querySelector("[data-houdini-window-pin]")','Native pin button');await state(expected,'actual OS topmost='+expected);await until(`document.querySelector('[data-houdini-window-pin]')?.getAttribute('aria-pressed')===${JSON.stringify(String(expected))}`,'UI pin truth')}
 async function shot(name){try{const value=await page.call('Page.captureScreenshot',{format:'png'},5000);const file=path.join(path.dirname(config.output),name+'.png');await fs.writeFile(file,Buffer.from(value.data,'base64'));report.screenshots.push(file)}catch(error){report.screenshotError=String(error)}}
+async function pinAppearance(expected){
+ await until(`(()=>{const e=document.querySelector('[data-houdini-window-pin]');return e&&!e.disabled&&e.getAttribute('aria-pressed')===${JSON.stringify(String(expected))}})()`,'settled pin appearance')
+ await page.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:8,y:8})
+ const value=await evaluate(`(()=>{const e=document.querySelector('[data-houdini-window-pin]'),s=getComputedStyle(e),r=e.getBoundingClientRect();return {background:s.backgroundColor,color:s.color,width:r.width,height:r.height,fill:getComputedStyle(e.querySelector('path')).fill,clip:{x:Math.max(0,r.x-220),y:Math.max(0,r.y-35),width:Math.min(440,innerWidth-Math.max(0,r.x-220)),height:100,scale:2}}})()`)
+ assert.equal(value.background,'rgba(0, 0, 0, 0)','resting pin must not expose a native grey button or selected background')
+ assert.equal(value.width,28);assert.equal(value.height,28)
+ assert.equal(value.fill,expected?value.color:'none','confirmed topmost state uses filled/outline icon')
+ const image=await page.call('Page.captureScreenshot',{format:'png',clip:value.clip})
+ const name='pin-'+(expected?'on':'off');await fs.writeFile(path.join(path.dirname(config.output),name+'-detail.png'),Buffer.from(image.data,'base64'))
+ delete value.clip;return value
+}
 async function selectSession(id){const selector='[data-row-key="session:'+id+'"]';for(let n=0;n<12&&!await evaluate('!!document.querySelector('+JSON.stringify(selector)+')');n++){const collapsed=await evaluate('document.querySelector(\'[data-row-key^="workspace:"][aria-expanded="false"]\')?.getAttribute("data-row-key")');if(collapsed)await click('document.querySelector('+JSON.stringify('[data-row-key="'+collapsed+'"]')+')','Native workspace expansion');await sleep(150)}await click('document.querySelector('+JSON.stringify(selector)+')','Native conversation');await until(`(${NATIVE_SELECTION})?.sessionId===${JSON.stringify(id)}`,'selected native conversation '+id)}
 async function journal(){try{return JSON.parse(await fs.readFile(config.recordPath,'utf8'))}catch(error){if(error.code==='ENOENT')return null;throw error}}
 async function checkpoint(name,value){report[name]=value;await fs.writeFile(config.output,JSON.stringify(report,null,2))}
@@ -57,7 +68,13 @@ try {
  await click(`document.querySelector('button[title="选择新任务使用的 Agent 预设"],button[title="Choose the agent preset for your new task"]')||document.querySelector('[data-slot="conversation.hero.agentPreset"] button[aria-haspopup=menu]')||[...document.querySelectorAll('button[aria-haspopup=menu]')].find(e=>/标准|Standard/.test(e.textContent))`,'Native mode picker')
  await click(`[...document.querySelectorAll('[role=menuitem]')].find(e=>/Houdini/.test(e.textContent))`,'Native Houdini mode')
  await until('document.querySelector("[data-houdini-project-label]")&&document.querySelector("[data-houdini-window-pin]")','Houdini blank Pin')
- assert.equal(await evaluate('document.querySelectorAll("[data-houdini-window-pin]").length'),1);await pin(true);report.nativePinButtonTested=true
+ assert.equal(await evaluate('document.querySelectorAll("[data-houdini-window-pin]").length'),1)
+ const offAppearance=await pinAppearance(false);await pin(true);const onAppearance=await pinAppearance(true)
+ assert.equal(offAppearance.color,onAppearance.color,'pin toggling must not flash a different icon colour')
+ await checkpoint('pinAppearance',{off:offAppearance,on:onAppearance});report.nativePinButtonTested=true
+ await click('document.querySelector("[data-houdini-project-label]")','Houdini project menu')
+ await until('document.querySelector(".dsh-houdini-target-heading")?.textContent==="Houdini 工程"','plain project terminology')
+ await shot('project-menu');await click('document.querySelector("[data-houdini-project-label]")','close project menu')
  const blankScope=await journal();assert(blankScope);await checkpoint('blankPin',{sessionId:initial.sessionId,owner:blankScope.owner,os:await oracle()});await shot('pin-blank')
  await rpc('session/selectModel',{request:{sessionId:initial.sessionId,provider:'owned-pin-chat',model:'idle-fixture'}})
  const beforeTransition=report.pinRpc.length

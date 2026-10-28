@@ -152,13 +152,13 @@ for (const details of [undefined,{stored:true,sha256:'fixture'}]) {
 const query = definitions.get('houdini_inspect');
 assert.deepEqual(query.presentCall({ code: '__result__ = find_nodes(root="/obj")' }), {
   card: 'generic',
-  title: '观察现场',
+  title: '观察工程',
   kind: 'read',
   rawInput: '__result__ = find_nodes(root="/obj")',
 });
 assert.equal(
   query.presentResult({ code: '__result__ = []' }, { content: text, isError: true }).title,
-  '观察现场 · 失败',
+  '观察工程 · 失败',
 );
 
 const submit = definitions.get('houdini_job_submit');

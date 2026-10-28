@@ -61,7 +61,7 @@ currentProject={executorId:executor,hipPath:'C:/untitled.hip',hipIsNew:true,need
 assert.match(text(uiContext.HoudiniProjectLabel(props)),/未保存工程/)
 currentProject=null
 assert.equal(uiContext.HoudiniProjectMark(props),null)
-assert.match(text(uiContext.HoudiniProjectLabel(props)),/未绑定现场/)
+assert.match(text(uiContext.HoudiniProjectLabel(props)),/未绑定工程/)
 assert(!fragment.includes('dangerouslySetInnerHTML'))
 const liveView={...view,runtimeId:'8'.repeat(32),target:{executor_id:view.executorId,runtime_id:'8'.repeat(32),scene_epoch:view.sceneEpoch,hip_path:view.hipPath,hip_is_new:false}}
 const live={available:true,observedAt:Date.now(),records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now()}}}

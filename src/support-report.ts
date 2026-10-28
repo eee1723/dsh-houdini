@@ -85,7 +85,7 @@ export async function supportPayload(ctx:Context,input:unknown,signal:AbortSigna
   signal.throwIfAborted()
   const options=supportOptions(input),missing:string[]=[],timeline:Record<string,unknown>[]=[],content:SessionEvent[]=[]
   const persistence=ctx.get('sessionPersistence')
-  if(!persistence)throw new Error('当前无法读取会话，未生成会话诊断包。可从 Houdini 的「DSH-Houdini → Version & Updates → 诊断」导出本端接入报告；该报告不含会话历史。')
+  if(!persistence)throw new Error('当前无法读取会话，未生成会话诊断包。可从 Houdini 的「DSH-Houdini → Connection & Support → 连接诊断」导出本端接入报告；该报告不含会话历史。')
   const sessionId=options.sessionId as Parameters<typeof persistence.open>[0]
   const sessions=ctx.get('sessions'),live=sessions?.get(sessionId)
   if(live) {

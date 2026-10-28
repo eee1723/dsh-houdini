@@ -27,7 +27,7 @@ export class ExecutorController extends TypertRemoteService {
   }
 
   private async agentFor(sessionId:string) {
-    if(this.ctx.workspaceRegistry?.archivedSessionIds.includes(sessionId as any))throw new Error('原对话已归档，未改变其现场目标。')
+    if(this.ctx.workspaceRegistry?.archivedSessionIds.includes(sessionId as any))throw new Error('原对话已归档，未改变其工程目标。')
     const resolved=await this.ctx.sessionController.resolveAgent(sessionId as any)
     if('error' in resolved||!resolved.agent)throw new Error('无法载入指定对话。')
     const agent=resolved.agent
@@ -38,7 +38,7 @@ export class ExecutorController extends TypertRemoteService {
 
   @Remote
   async openWorkspace(input:unknown,signal:AbortSignal,expectedSelectionRevision?:number,beforeCommit?:()=>void) {
-    if(!this.workbench)throw new Error('此 Host 未启用 Houdini 现场接入。')
+    if(!this.workbench)throw new Error('此 Host 未启用 Houdini 工程接入。')
     const data=input as Record<string,string>
     if(!data||typeof data!=='object'||!['executorId,expectedHip,registrationId,requestId','executorId,expectedHip,registrationId,requestId,sessionId',
       'bindSessionId,executorId,expectedHip,registrationId,requestId'].includes(Object.keys(data).sort().join(','))
@@ -49,7 +49,7 @@ export class ExecutorController extends TypertRemoteService {
       if(previous)await previous.catch(()=>{})
       signal.throwIfAborted()
       const record=await this.router.directory.find(data.executorId)
-      if(!record.workbench||!record.workspace_path)throw new Error('此 Houdini 尚未登记完整现场。请在目标 Houdini 中连接 Desktop。')
+      if(!record.workbench||!record.workspace_path)throw new Error('此 Houdini 尚未登记完整的工程连接信息。请在目标 Houdini 中连接 Desktop。')
       const requested=data.sessionId??data.bindSessionId
       const key=(value:string)=>process.platform==='win32'?path.normalize(value).toLowerCase():path.normalize(value)
       if(!requested&&record.registration_id!==data.registrationId||!record.hip_path||key(record.hip_path)!==key(data.expectedHip))
@@ -131,7 +131,7 @@ export class ExecutorController extends TypertRemoteService {
       selectedTarget=binding.selectedTarget
       const record=selectedTarget?records.find(row=>row.executor_id===selectedTarget!.executor_id):undefined
       state=!selectedTarget?{status:'unbound',...(binding.selectionRecorded?{message:'已解除目标，请明确选择后再操作。'}:{})}
-        :!record||record.state==='disconnected'?{status:'unavailable',message:'所选现场已断开，没有自动改用其他窗口。'}
+        :!record||record.state==='disconnected'?{status:'unavailable',message:'所选工程已断开，没有自动改用其他窗口。'}
         :targetMatchesRecord(selectedTarget,record)?{status:'selected'}:{status:'stale',message:'所选窗口的场景已变化，请重新选择。'}
     } catch(error) {state={status:'unbound',message:error instanceof Error?error.message:String(error)}}
     const cwd=agent.session.header.cwd

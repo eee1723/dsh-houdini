@@ -293,7 +293,7 @@ export class DesktopIntegration {
       ||typeof data.expectedHip!=='string'||!path.isAbsolute(data.expectedHip))throw Error('无效的 Houdini 菜单请求。')
     const signature=JSON.stringify([data.executorId,data.registrationId,key(data.expectedHip)])
     const existing=this.menuRequests.get(data.requestId)
-    if(existing){if(existing.signature!==signature)throw Error('同一个菜单请求标识不能指向另一个现场。');return existing.promise}
+    if(existing){if(existing.signature!==signature)throw Error('同一个菜单请求标识不能指向另一个工程。');return existing.promise}
     const pending=(async()=>{const result=await this.targets.openWorkspace(data,this.lifetime.signal) as Omit<DesktopSelection,'source'>
       const selection={...result,source:'menu' as const};this.intents.publish(selection);return selection})()
     this.menuRequests.set(data.requestId,{signature,promise:pending})
@@ -417,7 +417,7 @@ export class DesktopIntegration {
         const process=await this.registeredProcessState(record)
         if(process!=='exited'&&process!=='reused')matches.push(record)
       }
-      if(matches.length>1)throw Error('该工程有多个已登记现场，请直接选择需要绑定的窗口。')
+      if(matches.length>1)throw Error('该工程已在多个 Houdini 窗口中打开，请选择要绑定的窗口。')
       if(matches.length) {
         const record=matches[0]
         if(record.houdini_version!==selected.version)throw Error('该工程已在其他 Houdini 版本打开，请选择原版本或从原窗口接入。')
@@ -519,7 +519,7 @@ export class DesktopIntegration {
     const receipt={executorId:record.executor_id,registrationId:record.registration_id,expectedHip:record.hip_path,
       runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,sceneId:record.scene_id??null}
     if(ticket.receipt&&(this.signature(ticket.receipt)!==this.signature(receipt)||ticket.receipt.runtimeId!==receipt.runtimeId
-      ||ticket.receipt.sceneEpoch!==receipt.sceneEpoch||ticket.receipt.sceneId!==receipt.sceneId))throw new LaunchRejected('原启动的现场代际已变化，未改用后来打开的工程。')
+      ||ticket.receipt.sceneEpoch!==receipt.sceneEpoch||ticket.receipt.sceneId!==receipt.sceneId))throw new LaunchRejected('原启动的工程已重开或切换，未改用后来打开的工程。')
     return receipt
   }
   private async observeReceipt(ticket:Ticket):Promise<LaunchReceipt|undefined> {
@@ -563,7 +563,7 @@ export class DesktopIntegration {
           const selected=state.selectedTarget
           if(!selected||selected.executor_id!==receipt.executorId||selected.runtime_id!==receipt.runtimeId
             ||selected.scene_epoch!==receipt.sceneEpoch||selected.scene_id!==receipt.sceneId)
-            throw new LaunchRejected('等待启动时用户已更改现场，本次迟到回执未覆盖新选择。')
+            throw new LaunchRejected('等待启动时用户已更改工程，本次迟到回执未覆盖新选择。')
           // The exact scene is already selected in the native Session (e.g.
           // commit succeeded just before Host exit). Observe it; never rebind.
           await this.targets.getRouter(this.paths.registry).inspectSelectedTarget(selected,signal)
@@ -579,7 +579,7 @@ export class DesktopIntegration {
           result=await this.targets.openWorkspace({executorId:receipt.executorId,registrationId:receipt.registrationId,
             expectedHip:receipt.expectedHip,requestId:ticket.id,bindSessionId:ticket.sessionId},signal,ticket.selectionRevision,()=>{
               signal.throwIfAborted()
-              if(ticket.phase!=='waiting')throw Error('已停止等待，未提交现场选择。')
+              if(ticket.phase!=='waiting')throw Error('已停止等待，未提交工程选择。')
               runtime.committed=true
             }) as Omit<DesktopSelection,'source'>
         }
@@ -658,11 +658,11 @@ export class DesktopIntegration {
       ||![data.id,data.executorId,data.registrationId].every(value=>typeof value==='string'&&ID.test(value))
       ||typeof data.expectedHip!=='string'||!path.isAbsolute(data.expectedHip))throw Error('无效的启动回执。')
     const ticket=this.tickets.get(data.id)
-    if(!ticket)throw Error('未找到原启动请求，未自动绑定其他现场。')
+    if(!ticket)throw Error('未找到原启动请求，未自动绑定其他工程。')
     const callback=this.signature(data)
-    if(ticket.phase==='ready'){if(ticket.callback!==callback)throw Error('启动回执与已完成的现场不一致。');return ticket.result}
+    if(ticket.phase==='ready'){if(ticket.callback!==callback)throw Error('启动回执与已完成的工程不一致。');return ticket.result}
     const record=await this.targets.getRouter(this.paths.registry).directory.find(data.executorId)
-    if(record.registration_id!==data.registrationId||!record.hip_path||key(record.hip_path)!==key(data.expectedHip))throw Error('启动回执与现场登记不一致。')
+    if(record.registration_id!==data.registrationId||!record.hip_path||key(record.hip_path)!==key(data.expectedHip))throw Error('启动回执与工程登记不一致。')
     ticket.receipt=await this.validateRecord(ticket,record)
     await this.saveTicket(ticket)
     if(ticket.phase==='detached')return {phase:'detached'}

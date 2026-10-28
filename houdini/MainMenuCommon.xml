@@ -27,7 +27,7 @@ dsh_launcher.open_workspace()
       </scriptItem>
 
       <scriptItem id="dsh.version_manager">
-        <label>Version &amp; Updates...</label>
+        <label>Connection &amp; Support...</label>
         <scriptCode><![CDATA[
 import dsh_launcher
 dsh_launcher.show_plugin_info()

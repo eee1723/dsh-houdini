@@ -71,7 +71,116 @@ def show_tool_window(window):
     window.activateWindow()
 
 
+_COMPONENT_INFO = None
 _STARTUP_PROBLEM = None
+
+
+def show_component_info(version, location, actions, parent=None):
+    """Explicit menu-only local maintenance; no status probing or Desktop ownership."""
+    global _COMPONENT_INFO
+    from PySide6 import QtCore, QtWidgets
+    if _COMPONENT_INFO is not None:
+        show_tool_window(_COMPONENT_INFO)
+        return _COMPONENT_INFO
+    dialog = QtWidgets.QDialog(parent)
+    style_dialog(dialog)
+    dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+    dialog.setWindowTitle('DSH-Houdini · 连接与维护')
+    dialog.setFixedWidth(540)
+    layout = QtWidgets.QVBoxLayout(dialog)
+    layout.setContentsMargins(24, 22, 24, 18)
+    layout.setSpacing(16)
+    layout.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
+
+    def label(text, name='summary'):
+        widget = QtWidgets.QLabel(text)
+        widget.setObjectName(name)
+        widget.setTextFormat(QtCore.Qt.PlainText)
+        widget.setWordWrap(True)
+        return widget
+
+    def action(text, key, name=''):
+        button = QtWidgets.QPushButton(text)
+        button.setObjectName(name)
+        button.setAutoDefault(False)
+        def invoke():
+            dialog.close()
+            actions[key]()
+        button.clicked.connect(invoke)
+        return button
+
+    heading = QtWidgets.QHBoxLayout()
+    heading.addWidget(label('连接与维护', 'title'), 1)
+    heading.addWidget(label('连接组件 ' + version, 'caption'))
+    layout.addLayout(heading)
+    layout.addWidget(label('对话、模型和插件更新，都在 DSH Desktop 中管理。'))
+    layout.addWidget(action('打开 Desktop 工作区', 'open', 'primary'))
+
+    layout.addWidget(label('连接遇到问题时', 'name'))
+    repair = QtWidgets.QHBoxLayout()
+    repair_button = action('重新连接', 'repair')
+    repair_button.setFixedWidth(122)
+    repair.addWidget(repair_button)
+    repair.addSpacing(6)
+    repair.addWidget(label('重新建立当前窗口的连接，工程内容保留。', 'caption'), 1)
+    layout.addLayout(repair)
+    diagnose = QtWidgets.QHBoxLayout()
+    diagnose_button = action('连接诊断…', 'diagnose')
+    diagnose_button.setFixedWidth(122)
+    diagnose.addWidget(diagnose_button)
+    diagnose.addSpacing(6)
+    diagnose.addWidget(label('查看接入信息，按需导出诊断报告。', 'caption'), 1)
+    layout.addLayout(diagnose)
+
+    toggle = QtWidgets.QPushButton('更多维护选项  ▸')
+    toggle.setObjectName('quiet')
+    toggle.setAutoDefault(False)
+    toggle.setCheckable(True)
+    toggle.setAccessibleName('展开或收起更多维护选项')
+    layout.addWidget(toggle, 0, QtCore.Qt.AlignLeft)
+    advanced = QtWidgets.QFrame()
+    advanced.setObjectName('advanced')
+    advanced_layout = QtWidgets.QVBoxLayout(advanced)
+    advanced_layout.setContentsMargins(16, 14, 16, 14)
+    advanced_layout.setSpacing(12)
+    advanced_layout.addWidget(label('本机连接组件', 'name'))
+    advanced_layout.addWidget(label('这里仅管理 Houdini 端组件，不用于下载插件更新。\n更新或切换版本后，请保存工程并重开此 Houdini 窗口。', 'caption'))
+    advanced_layout.addWidget(action('切换已安装组件版本…', 'switch'))
+    advanced_layout.addWidget(action('移除本机组件…', 'remove'))
+    advanced_layout.addWidget(label('当前加载位置', 'caption'))
+    path = QtWidgets.QPlainTextEdit(str(location))
+    path.setReadOnly(True)
+    path.setFixedHeight(66)
+    path.setAccessibleName('当前连接组件加载位置')
+    advanced_layout.addWidget(path)
+    advanced.hide()
+    layout.addWidget(advanced)
+    def fit_content():
+        layout.activate()
+        dialog.setFixedHeight(layout.totalHeightForWidth(dialog.width()))
+    def expanded(checked):
+        advanced.setVisible(checked)
+        toggle.setText('收起维护选项  ▾' if checked else '更多维护选项  ▸')
+        fit_content()
+    toggle.toggled.connect(expanded)
+
+    footer = QtWidgets.QHBoxLayout()
+    footer.addStretch()
+    close = QtWidgets.QPushButton('关闭')
+    close.setObjectName('quiet')
+    close.setAutoDefault(False)
+    close.clicked.connect(dialog.close)
+    footer.addWidget(close)
+    layout.addLayout(footer)
+    _COMPONENT_INFO = dialog
+    def disposed():
+        global _COMPONENT_INFO
+        if _COMPONENT_INFO is dialog:
+            _COMPONENT_INFO = None
+    dialog.destroyed.connect(disposed)
+    fit_content()
+    show_tool_window(dialog)
+    return dialog
 
 
 def clear_startup_problem():

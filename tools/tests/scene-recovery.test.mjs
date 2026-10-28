@@ -155,7 +155,7 @@ choiceDuringFlush.duringFlush=async()=>{
   choiceDuringFlush.duringFlush=undefined
   await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).select(choiceDuringFlush.session,null,signal)
 }
-await assert.rejects(choiceDuringFlush.service.restore(choiceDuringFlush.agent,beforeChoice.assessment_id,signal),/现场选择已变化/)
+await assert.rejects(choiceDuringFlush.service.restore(choiceDuringFlush.agent,beforeChoice.assessment_id,signal),/工程选择已变化/)
 assert.equal(choiceDuringFlush.connection.requests.filter(r=>r.action==='activate').length,0)
 assert.equal(foldExecutorState(choiceDuringFlush.session.snapshotEvents()).selectedTarget,null)
 const automatic=await selectedFixture()

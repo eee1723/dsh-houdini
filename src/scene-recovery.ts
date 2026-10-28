@@ -118,7 +118,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
   const bridge=()=>connection
   const persisted=async(agent:Agent)=>{
     if(await ctx.sessions.flush(agent.session)!==true)
-      throw new Error('权限恢复记录尚未可靠保存，本轮未继续激活原节点权限。现场选择和内容保留，可以继续查看或讨论后再试。')
+      throw new Error('权限恢复记录尚未可靠保存，本轮未继续激活原节点权限。工程选择和内容保留，可以继续查看或讨论后再试。')
   }
   const key=(agent:Agent)=>{
     const state=projectedExecutorState(ctx,agent.session)
@@ -197,9 +197,9 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
           &&value.recovery?.operation_id===operation.operation_id
       }
       await persisted(agent)
-      if(!current())throw new Error('保存恢复记录期间现场选择已变化，本轮未激活原节点权限。')
+      if(!current())throw new Error('保存恢复记录期间工程选择已变化，本轮未激活原节点权限。')
       const result=await target.recover('activate',{session_id:agent.id,operation_id:operation.operation_id},signal)
-      if(!current())throw new Error('现场选择已变化，未将旧现场的恢复回执当作当前结果。')
+      if(!current())throw new Error('工程选择已变化，未将旧工程的恢复回执当作当前结果。')
       if(result.status!=='active'||result.operation_id!==operation.operation_id
         ||result.executor_id!==state.identity||result.checkpoint_id!==operation.checkpoint_id)
         throw new Error('恢复激活回执不匹配，未确认原节点权限。')
@@ -253,7 +253,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
       // the same displayed operation must flush again, then activate it once.
       if(state.recovery?.operation_id===assessmentId&&state.identity===target.targetExecutorId) {
         await service.ensure(agent,signal)
-        return {status:'active',message:'当前工程的原节点归属已恢复，本轮继续核对实际现场。'}
+        return {status:'active',message:'当前工程的原节点归属已恢复，本轮继续核对实际工程。'}
       }
       const plan=plans.get(agent)
       if(!plan||plan.id!==assessmentId||plan.state!==key(agent))throw new Error('检查结果已过期，请重新检查工程。')
@@ -294,7 +294,7 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
         await service.ensure(agent,signal)
         plans.delete(agent)
         return {status:'active',restored_nodes:value.restored_nodes,
-          message:'当前工程的原节点归属已恢复，恢复 '+value.restored_nodes+' 个节点的修改归属；本轮继续核对实际现场。'}
+          message:'当前工程的原节点归属已恢复，恢复 '+value.restored_nodes+' 个节点的修改归属；本轮继续核对实际工程。'}
       } finally {running.delete(agent)}
     },
   }

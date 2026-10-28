@@ -6,7 +6,8 @@ window.__ModuleLoader__.load({
     var React = require("react");
 
     function Button(props) {
-      var options = Object.assign({ type: "button", className: "dsh-houdini-button" }, props);
+      var options = Object.assign({ type: "button" }, props);
+      options.className = "dsh-houdini-button" + (props.className ? " " + props.className : "");
       delete options.variant; delete options.size; delete options.icon;
       options["data-variant"] = props.variant || "outline";
       options["data-size"] = props.size || "md";
@@ -176,7 +177,6 @@ window.__ModuleLoader__.load({
       '.dsh-houdini-target-current{margin:0 0 4px}.dsh-houdini-target-current [role="menuitem"],.dsh-houdini-target-unavailable{min-height:48px}.dsh-houdini-target-unavailable{display:flex;align-items:center;gap:8px;padding:7px 10px;box-sizing:border-box}.dsh-houdini-target-section{border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-section>summary{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;min-height:36px;padding:7px 10px;list-style:none;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}.dsh-houdini-target-section>summary::-webkit-details-marker{display:none}.dsh-houdini-target-section>summary::after{content:"›";font-size:16px;line-height:12px}.dsh-houdini-target-section[open]>summary::after{transform:rotate(90deg)}.dsh-houdini-target-section>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-target-section>summary:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}.dsh-houdini-target-info{display:grid;gap:3px;margin:2px 10px 8px;font-size:11px;line-height:1.5}.dsh-houdini-target-info dt{color:var(--dsw-alias-label-tertiary)}.dsh-houdini-target-info dd{margin:0 0 5px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}' +
       '.dsh-houdini-target-group{padding:8px 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-houdini-target-choices{max-height:min(240px,40vh);overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-error{margin:0 10px 8px;color:var(--dsw-alias-label-secondary);font-size:11px}.dsh-houdini-target-error summary{cursor:pointer}.dsh-houdini-target-error pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:11px/1.5 Consolas,monospace}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}@media(pointer:coarse){.dsh-houdini-target-menu [role="menuitem"],.dsh-houdini-target-section>summary{min-height:44px}}' +
       '@media(max-width:540px){.dsh-houdini-project-chip{max-width:calc(100vw - 130px);gap:5px;padding:0 7px}.dsh-houdini-chip-name{max-width:105px}.dsh-houdini-chip-status{font-size:10px;padding-left:5px}}' +
-      '.dsh-houdini-window-pin[aria-pressed="true"]{color:var(--dsw-alias-state-business-primary,#649be8);background:var(--dsw-alias-interactive-bg-hover)}' +
       '.dsh-support-modal{width:min(720px,100%);max-height:100%;gap:16px}' +
       '.dsh-support-content{min-height:0;overflow:hidden;flex:1}' +
       '.dsh-support-content>div:first-child{flex:none}' +
@@ -199,6 +199,7 @@ window.__ModuleLoader__.load({
       '.dsh-support-sharing{border-top:1px solid var(--dsw-alias-border-l3);padding-top:12px;margin-top:16px;font-size:13px;color:var(--dsw-alias-label-secondary)}' +
       '.dsh-support-sharing summary{cursor:pointer;padding:6px 0}.dsh-support-sharing p{margin:8px 0}.dsh-support-sharing a{color:var(--dsw-alias-label-primary);text-decoration:underline}' +
       '.dsh-houdini-tooltip{display:inline-flex}.dsh-houdini-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:5px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}.dsh-houdini-button[data-size="sm"]{min-height:26px;padding:3px 9px;font-size:11px}.dsh-houdini-button[data-variant="primary"]{border-color:var(--dsw-alias-button-primary-fill);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}.dsh-houdini-button[data-variant="ghost"]{border-color:transparent;background:transparent;color:var(--dsw-alias-label-secondary)}.dsh-houdini-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-button[data-variant="primary"]:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}.dsh-houdini-button:focus-visible,.dsh-houdini-menuitem:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:1px}.dsh-houdini-button:disabled{opacity:.5;cursor:default}.dsh-houdini-checkbox{display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-primary);font-size:13px}.dsh-houdini-checkbox input{width:16px;height:16px;margin:0}' +
+      '.dsh-houdini-button.dsh-houdini-window-pin{border-radius:7px;box-shadow:none}.dsh-houdini-window-pin svg{display:block;flex:none}' +
       '.dsh-houdini-menu-root{display:inline-flex;position:relative}.dsh-houdini-menu-surface{position:fixed;z-index:1000;box-sizing:border-box;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent)}.dsh-houdini-menuitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;min-height:34px;padding:7px 10px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}.dsh-houdini-menuitem:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-menuitem:disabled{opacity:.5;cursor:default}' +
       '.dsh-houdini-modal-backdrop{position:fixed;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:24px;background:var(--dsw-alias-overlay-backdrop,#0008)}.dsh-houdini-modal{display:flex;flex-direction:column;width:min(520px,100%);max-height:calc(100vh - 48px);box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent);outline:none}.dsh-houdini-modal-header,.dsh-houdini-modal-footer{display:flex;align-items:center;gap:8px;padding:12px 16px}.dsh-houdini-modal-header{justify-content:space-between;border-bottom:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-modal-header>strong{font-size:15px}.dsh-houdini-modal-footer{justify-content:flex-end;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-modal-body{min-height:0;overflow:auto;padding:14px 16px}' +
       '.dsh-houdini-toast{position:fixed;top:16px;right:16px;z-index:1200;display:flex;align-items:center;gap:10px;max-width:min(440px,calc(100vw - 32px));box-sizing:border-box;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-elevation-prominent);font-size:12px;line-height:1.6}.dsh-houdini-toast>span{min-width:0;overflow-wrap:anywhere}' +
@@ -251,7 +252,7 @@ window.__ModuleLoader__.load({
       var target = houdiniProjectTarget(project) || project || {};
       var isNew = typeof target.hip_is_new === "boolean" ? target.hip_is_new : project && project.hipIsNew;
       return isNew === true ? target.label || project && project.label || "未保存工程" :
-        (target.hip_path || project && project.hipPath || "").replace(/\\/g, "/").split("/").pop() || "Houdini 现场";
+        (target.hip_path || project && project.hipPath || "").replace(/\\/g, "/").split("/").pop() || "Houdini 工程";
     }
 
     function houdiniSameTarget(target, candidate) {
@@ -295,10 +296,10 @@ window.__ModuleLoader__.load({
     function houdiniPresence(project, snapshot, sessionId, nativeStatuses, useCurrentActivity) {
       var target = houdiniProjectTarget(project);
       function status(state, label, detail, presence) { return { state: state, status: presence || (state === "offline" ? "offline" : state === "changed" ? "changed" : "unknown"), label: label, detail: detail || label }; }
-      if (!target) return status("unbound", "未绑定现场", "选择一个已打开的 Houdini；每段对话可以独立选择现场。");
+      if (!target) return status("unbound", "未绑定工程", "选择一个已打开的 Houdini；每段对话可以独立选择工程。");
       if (!snapshot || !snapshot.available || snapshot.visible === false || !snapshot.observedAt || Date.now() - snapshot.observedAt > 12000)
         return status("unknown", "连接待确认", "暂时无法确认连接。可以展开查看其他 Houdini 窗口。");
-      if (project.needsReview) return status("changed", "工程待核对", "当前场景与这段对话选择时不同，请明确选择要继续的现场。");
+      if (project.needsReview) return status("changed", "工程待核对", "当前场景与这段对话选择时不同，请明确选择要继续的工程。");
       var record = snapshot.records[target.executor_id];
       if (!record || !Number.isFinite(record.observedAt) || Date.now() - record.observedAt > 12000)
         return status("unknown", "连接待确认", "尚未收到这个 Houdini 的最新状态，请稍后再试。");
@@ -306,12 +307,12 @@ window.__ModuleLoader__.load({
       if (record.contractMismatch) return status("unknown", "版本待更新", "这个 Houdini 加载的插件版本不一致。请先保存工程，再重新打开这个 Houdini。");
       if (record.status === "changed" || typeof record.sceneId === "string" && record.sceneId.length > 0 &&
         typeof target.scene_id === "string" && target.scene_id.length > 0 && record.sceneId !== target.scene_id)
-        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的现场。");
+        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的工程。");
       if (record.status !== "online") return status("unknown", "连接待确认", "暂时无法确认这个 Houdini 的连接状态。");
       if (!target.scene_epoch || !record.sceneEpoch || !target.runtime_id || !record.runtimeId)
-        return status("unknown", "现场待确认", "现场身份信息尚未完整确认，请重新选择当前窗口。");
+        return status("unknown", "工程待确认", "工程身份信息尚未完整确认，请重新选择当前窗口。");
       if (target.scene_epoch !== record.sceneEpoch || target.runtime_id !== record.runtimeId)
-        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的现场。");
+        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的工程。");
       var nativeCurrent = useCurrentActivity !== false && nativeStatuses && nativeStatuses.get && nativeStatuses.get(sessionId);
       var owner = record.ownerSessionId;
       var nativeOwner = owner && nativeStatuses && nativeStatuses.get && nativeStatuses.get(owner);
@@ -320,10 +321,10 @@ window.__ModuleLoader__.load({
       if (nativeCurrent && nativeCurrent.running === true)
         return status("working", "对话工作中", "当前对话正在处理请求，Houdini 连接正常。", "online");
       if (owner && owner !== sessionId && (activeJobs || nativeOwner && nativeOwner.running === true))
-        return status("occupied", "其他对话工作中", "另一个对话正在使用这个现场；可以绑定查看，修改时会等待其完成。", "online");
+        return status("occupied", "其他对话工作中", "另一个对话正在使用这个工程；可以绑定查看，修改时会等待其完成。", "online");
       if (activeJobs && owner === sessionId)
         return status("working", "对话工作中", "当前对话在 Houdini 中的后台操作尚未完成。", "online");
-      if (bridgeBusy) return status("working", "现场工作中", "Houdini 有操作尚未完成，可以继续查看当前场景。", "online");
+      if (bridgeBusy) return status("working", "工程处理中", "Houdini 有操作尚未完成，可以继续查看当前场景。", "online");
       return status("ready", "已就绪", "连接正常。可以查看场景，或告诉 Agent 你想完成的任务。", "online");
     }
 
@@ -333,7 +334,7 @@ window.__ModuleLoader__.load({
       var status = project && houdiniPresence(project, presence, props.sessionId, statuses);
       var display = houdiniDisplayProject(project, presence);
       return project && React.createElement("span", { className: "dsh-houdini-project-mark", role: "img",
-        "aria-label": "关联现场：" + houdiniProjectName(display) + " · " + status.label,
+        "aria-label": "关联工程：" + houdiniProjectName(display) + " · " + status.label,
         "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-mark": true }, React.createElement(HoudiniProjectIcon));
     }
 
@@ -343,7 +344,7 @@ window.__ModuleLoader__.load({
       if (!project) return null;
       var display = houdiniDisplayProject(project, presence), target = houdiniProjectTarget(display), status = houdiniPresence(project, presence, props.sessionId, statuses);
       return React.createElement("div", { className: "dsh-houdini-project-detail", "data-houdini-project-detail": true },
-        React.createElement("strong", null, "关联现场 · " + houdiniProjectName(display)),
+        React.createElement("strong", null, "关联工程 · " + houdiniProjectName(display)),
         React.createElement("div", null, status.label),
         target && target.hip_path && !target.hip_is_new && React.createElement("div", null, target.hip_path),
         React.createElement("div", null, status.detail));
@@ -357,7 +358,7 @@ window.__ModuleLoader__.load({
         label: (target ? houdiniProjectName(display) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail },
         React.createElement("button", { type: "button", className: "dsh-houdini-project-chip", onClick: props.onProjectMenuClick,
           "aria-haspopup": "menu", "aria-expanded": !!props.projectMenuOpen,
-          "aria-label": "Houdini 现场：" + (target ? houdiniProjectName(display) + " · " : "") + status.label,
+          "aria-label": "Houdini 工程：" + (target ? houdiniProjectName(display) + " · " : "") + status.label,
           "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-label": true },
           React.createElement(HoudiniProjectIcon),
           React.createElement("span", { className: "dsh-houdini-chip-name", "data-houdini-project-name": true }, target ? houdiniProjectName(display) : "Houdini"),
@@ -488,7 +489,7 @@ window.__ModuleLoader__.load({
         var current = operation;
         if (!current || !active(current)) return;
         if (options.target() !== current.target) {
-          emit({ pending: false, error: "当前对话已重新选择现场。请从现场菜单选择原窗口；未覆盖当前选择。" }); return;
+          emit({ pending: false, error: "当前对话已重新选择工程。请从工程菜单选择原窗口；未覆盖当前选择。" }); return;
         }
         ownership.claim(current, current.id || current.requestId);
         emit({ pending: true, error: "", disconnected: false });
@@ -684,7 +685,7 @@ window.__ModuleLoader__.load({
               title: view.submitted ? "不会取消启动或关闭 Houdini，只停止等待本次连接。" : undefined }, view.submitted ? "停止等待" : "取消"),
             React.createElement(Button, { disabled: view.pending || !generation || !hfs || request.action === "open" && !hip.trim(),
               onClick: function () { if (detached) observer.current.resume(); else observer.current.submit(parameters()); } },
-              view.pending ? "等待现场连接…" : detached ? "继续连接原窗口" : same && view.submitted ? "重试本次请求" : request.action === "new" ? "新建并绑定" : "打开并绑定")) },
+              view.pending ? "等待工程连接…" : detached ? "继续连接原窗口" : same && view.submitted ? "重试本次请求" : request.action === "new" ? "新建并绑定" : "打开并绑定")) },
           React.createElement("div", { style: { display: "grid", gap: 16, padding: "8px 0", minWidth: 260, maxWidth: 520 }, "data-houdini-project-dialog": true },
             React.createElement("label", null, "Houdini 版本", React.createElement("select", { style: fieldStyle, value: hfs, disabled: view.pending,
               "aria-label": "Houdini 版本", onChange: function (event) { setHfs(event.target.value); } }, installations.map(function (item) {
@@ -776,7 +777,7 @@ window.__ModuleLoader__.load({
           if (pending.current) pending.current.abort();
           var controller = new AbortController(); pending.current = controller;
           var timeout = setTimeout(function () { controller.abort(); }, method === "prepareBridge" ? 125000 : 10000);
-          set(function (old) { return Object.assign({}, old, { open: true, busy: true, details: "", message: method === "list" ? "正在查看已打开的 Houdini…" : method === "prepareBridge" ? "正在安装或更新 Houdini 组件…" : method === "clear" ? "正在取消绑定…" : "正在选择现场…" }); });
+          set(function (old) { return Object.assign({}, old, { open: true, busy: true, details: "", message: method === "list" ? "正在查看已打开的 Houdini…" : method === "prepareBridge" ? "正在安装或更新 Houdini 组件…" : method === "clear" ? "正在取消绑定…" : "正在选择工程…" }); });
           var input = { sessionId: sessionId };
           if (candidate) Object.assign(input, { executorId: candidate.executor_id, registrationId: candidate.registration_id, expectedHip: candidate.hip_path,
             runtimeId: candidate.runtime_id, sceneEpoch: candidate.scene_epoch });
@@ -789,7 +790,7 @@ window.__ModuleLoader__.load({
             }
             var response = await connection.rpc.call("/api", method === "prepareBridge" ? "houdiniFrontend/prepareBridge" : "houdiniTargets/" + method, { args: { input: input } }, controller.signal);
             if (controller.signal.aborted || current.current !== sessionId || ticket.current !== attempt || connection.generation.getSnapshot() !== generation) return;
-            if (!response.ok) throw new Error(response.error && response.error.message || "没有完成现场选择。");
+            if (!response.ok) throw new Error(response.error && response.error.message || "没有完成工程选择。");
             if (method === "prepareBridge") {
               set(function (old) { return Object.assign({}, old, { busy: false, message: response.value.message || "Houdini 组件已安装，新打开的 Houdini 会加载菜单。" }); });
               return;
@@ -797,13 +798,13 @@ window.__ModuleLoader__.load({
             if (sessions && sessions.refreshProjections) await sessions.refreshProjections(sessionId);
             if (controller.signal.aborted || current.current !== sessionId || ticket.current !== attempt || connection.generation.getSnapshot() !== generation) return;
             set(function (old) { return Object.assign({}, old, { busy: false, open: false, message: "" }); }); refreshPresence();
-            notify(method === "clear" ? "此对话已取消现场绑定。" : "此对话已选择「" + houdiniProjectName(candidate) + "」。");
+            notify(method === "clear" ? "此对话已取消工程绑定。" : "此对话已选择「" + houdiniProjectName(candidate) + "」。");
           } catch (error) {
             if (current.current === sessionId && ticket.current === attempt && connection.generation.getSnapshot() === generation) {
               var reason = String(error.message || error), folded = method === "prepareBridge" || /[\r\n]/.test(reason);
               var summary = controller.signal.aborted ? "等待响应超时，尚未确认操作结果。可以稍后重试。" :
                 method === "prepareBridge" ? "未能确认 Houdini 组件安装完成，请查看原因。" :
-                method === "clear" ? "尚未确认取消绑定结果，请查看原因。" : method === "list" ? "暂时无法读取窗口列表，请查看原因。" : "尚未确认现场选择结果，请查看原因。";
+                method === "clear" ? "尚未确认取消绑定结果，请查看原因。" : method === "list" ? "暂时无法读取窗口列表，请查看原因。" : "尚未确认工程选择结果，请查看原因。";
               set(function (old) { return Object.assign({}, old, { busy: false, message: folded || controller.signal.aborted ? summary : reason, details: folded ? reason : "" }); });
             }
           } finally { clearTimeout(timeout); if (pending.current === controller) pending.current = null; }
@@ -830,7 +831,7 @@ window.__ModuleLoader__.load({
           var label = houdiniProjectName(selected ? display : candidate), details = (selected ? displayTarget.hip_path : candidate.hip_path) || "未保存工程";
           var folders = String(candidate.hip_path || "").replace(/\\/g, "/").split("/"), folder = folders.length > 1 ? folders[folders.length - 2] : "";
           var version = String(candidate.houdini_version || "").split(".")[0];
-          var context = selected ? "当前现场" : [folder, version ? "Houdini " + version : ""].filter(Boolean).join(" · ") || "Houdini 窗口";
+          var context = selected ? "当前工程" : [folder, version ? "Houdini " + version : ""].filter(Boolean).join(" · ") || "Houdini 窗口";
           if (candidate.houdini_version) details += "\nHoudini " + candidate.houdini_version;
           if (candidate.pid) details += "\n进程 " + candidate.pid;
           return React.createElement(ui.MenuItemButton, { key: candidate.executor_id,
@@ -846,7 +847,7 @@ window.__ModuleLoader__.load({
               request("select", candidate);
             } },
             React.createElement("span", { className: "dsh-houdini-target-row", title: details + "\n" + observed.detail, "data-houdini-target": candidate.executor_id, "data-state": observed.state },
-              React.createElement("span", { className: "dsh-houdini-target-title" }, label, selected && React.createElement("span", { "aria-label": "当前已选现场", className: "dsh-houdini-target-selected" }, "✓")),
+              React.createElement("span", { className: "dsh-houdini-target-title" }, label, selected && React.createElement("span", { "aria-label": "当前已选工程", className: "dsh-houdini-target-selected" }, "✓")),
               React.createElement("span", { className: "dsh-houdini-target-meta" }, context, " · ", observed.label)));
         }
         var otherCandidates = rows.filter(function (candidate) { return candidate !== selectedCandidate; });
@@ -870,7 +871,7 @@ window.__ModuleLoader__.load({
         return React.createElement(ui.Menu, { open: value.open, portal: true, compact: true, align: "end", side: "bottom", anchor: anchor,
           listClassName: "dsh-houdini-target-menu", onClose: function () { ticket.current++; if (pending.current) pending.current.abort(); set(function (old) { return Object.assign({}, old, { open: false, busy: false }); }); },
           },
-          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" }, React.createElement("strong", null, "Houdini 现场")),
+          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" }, React.createElement("strong", null, "Houdini 工程")),
           target && React.createElement("div", { className: "dsh-houdini-target-current", "data-houdini-current-scene": true },
             selectedCandidate ? candidateItem(selectedCandidate, 0) : React.createElement("div", { className: "dsh-houdini-target-unavailable", title: status.detail },
               React.createElement(HoudiniTargetStateIcon, { state: status.state }), React.createElement("div", { className: "dsh-houdini-target-row", "data-houdini-selected-snapshot": true },
@@ -889,10 +890,10 @@ window.__ModuleLoader__.load({
             value.message && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" }, value.message),
             value.details && React.createElement("details", { className: "dsh-houdini-target-error" }, React.createElement("summary", null, "查看原因"), React.createElement("pre", null, value.details)),
             value.loaded && !value.busy && !value.message && !target && !rows.length && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" },
-              freshPresence ? "还没有可选现场。在目标 Houdini 中选择 DSH-Houdini → Open Workspace 后，会显示在这里。" : "暂时无法确认现场列表，连接恢复后会自动更新。"),
+              freshPresence ? "还没有可选工程。在目标 Houdini 中选择 DSH-Houdini → Open Workspace 后，会显示在这里。" : "暂时无法确认工程列表，连接恢复后会自动更新。"),
             nativeRunning && React.createElement("p", { className: "dsh-houdini-target-message" }, "对话工作中，完成后可以切换窗口或取消绑定。"),
             otherCandidates.length > 0 && React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "可切换的 Houdini 窗口" },
-              React.createElement("div", { className: "dsh-houdini-target-group", role: "presentation" }, target ? "其他现场" : "可选现场"), otherCandidates.map(candidateItem))));
+              React.createElement("div", { className: "dsh-houdini-target-group", role: "presentation" }, target ? "其他工程" : "可选工程"), otherCandidates.map(candidateItem))));
       }
       function Label(props) {
         var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
@@ -911,7 +912,8 @@ window.__ModuleLoader__.load({
           "aria-label": label, "aria-pressed": typeof pin.pinned === "boolean" ? pin.pinned : undefined, "data-houdini-window-pin": true,
           disabled: !!pin.busy || !pin.available, onClick: function () { windowPin.toggle(); }
         }, React.createElement("svg", { width: 16, height: 16, viewBox: "0 0 20 20", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true },
-          React.createElement("path", { d: "M6 2h8l-1 5 3 3v2H4v-2l3-3zM10 12v6", strokeLinecap: "round", strokeLinejoin: "round" }))));
+          React.createElement("path", { d: "M6 2h8l-1 5 3 3v2H4v-2l3-3z", fill: pin.pinned ? "currentColor" : "none", strokeLinecap: "round", strokeLinejoin: "round" }),
+          React.createElement("path", { d: "M10 12v6", strokeLinecap: "round" }))));
       }
       function HeaderPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && !row.blank ? React.createElement(Pin, props) : null; }
       function BlankPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && row.blank ? React.createElement(Pin, props) : null; }
@@ -1533,7 +1535,7 @@ function nodeDeliveryRows(value) {
         var canSave = !!(generation && facts && facts.writable && draft && currentFacts() && !busy);
         return React.createElement("section", { "data-houdini-video-settings": true, style: { maxWidth: 720, padding: "8px 4px 28px", fontSize: 14, lineHeight: 1.65 } },
           React.createElement("h2", { style: { fontSize: 20, margin: "0 0 8px" } }, "教程视频"),
-          React.createElement("p", { style: { margin: 0, opacity: .8 } }, "配置讲解转文字所需的服务。聊天模型和 Houdini 现场选择保持不变；密钥只在安全输入框中录入。"),
+          React.createElement("p", { style: { margin: 0, opacity: .8 } }, "配置讲解转文字所需的服务。聊天模型和 Houdini 工程选择保持不变；密钥只在安全输入框中录入。"),
           React.createElement("p", { role: "status", "data-houdini-video-status": true, style: { margin: "18px 0 12px", fontWeight: 600 } }, status),
           React.createElement("div", { style: { border: "1px solid var(--dsw-alias-border-l2)", borderRadius: 10, padding: 16 } },
             React.createElement("h3", { style: { margin: 0, fontSize: 15 } }, "转录服务"),
