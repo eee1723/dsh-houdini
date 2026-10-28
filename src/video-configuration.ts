@@ -88,7 +88,8 @@ export async function videoConfiguration(ctx:any) {
   const {credentialRef:_reference,...selectionView}=selected
   const safeSelected={...selectionView,endpoint:displayedEndpoint,
     authentication:['bearer','none'].includes(selected.authentication)?selected.authentication:'[认证方式未接受]'}
-  try {for(const row of configuredProviders(ctx))providers.push({provider:row.provider,display_name:row.displayName})}
+  try {for(const row of configuredProviders(ctx))providers.push({provider:row.provider,display_name:row.displayName,
+    ...row.settingsSource?{settingsSource:{...row.settingsSource}}:{}})}
   catch(error){diagnostics.push((error as Error).message)}
   let service:any=null
   try {
@@ -105,12 +106,12 @@ export async function videoConfiguration(ctx:any) {
 }
 
 export async function configureVideo(ctx:any,input:Record<string,unknown>) {
-  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!Object.hasOwn(FIELDS,key)&&key!=='expected_revision'))
+  if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!Object.hasOwn(FIELDS,key)&&!['expected_revision','expected_provider_revision'].includes(key)))
     throw Error('配置只接受非秘密的服务地址、协议、模型和调度参数；密钥必须在原生凭据输入框录入。')
   if(input.provider&&input.endpoint)throw Error('请选择沿用已有服务商或独立转录端点，不能同时指定两份地址来源。')
   const before=videoSelection(ctx),next={...before},patch:Record<string,unknown>={}
   for(const [field,value] of Object.entries(input)) {
-    if(field==='expected_revision')continue
+    if(['expected_revision','expected_provider_revision'].includes(field))continue
     if(field==='concurrency') {if(!Number.isInteger(value)||Number(value)<1||Number(value)>64)throw Error('并发应为 1..64；默认 2，先用短段确认额度。');next.concurrency=Number(value)}
     else if(field==='requests_per_second') {if(typeof value!=='number'||!Number.isFinite(value)||value<=0||value>100)throw Error('请求速率应大于 0 且不超过 100。');next.requestsPerSecond=value}
     else {if(typeof value!=='string'||value.length>2048)throw Error('配置字段必须是有限长度文字。');(next as any)[field]=value.trim()}
@@ -132,6 +133,11 @@ export async function configureVideo(ctx:any,input:Record<string,unknown>) {
   if(next.endpoint)tutorialEndpoint(next.endpoint)
   if(next.model&&!/^[A-Za-z0-9_.:/-]{1,160}$/.test(next.model))throw Error('转录模型 ID 格式无效。')
   if(!['bearer','none'].includes(next.authentication))throw Error('认证只支持 bearer 或 none。')
+  if(input.expected_provider_revision!==undefined) {
+    if(!Number.isSafeInteger(input.expected_provider_revision)||!next.provider)throw Error('无效的服务商设置版本。')
+    const source=resolveVideoRoute(ctx,next).settingsSource
+    if(!source||source.revision!==input.expected_provider_revision)throw Error('服务商设置已变化，请刷新后重新确认转录配置。')
+  }
   // Store one explicit native reference, never its secret value. Keeping it in
   // the Config also lets DSH's own credential surfaces describe this route.
   if(next.endpoint&&next.protocol)patch.videoCredentialRef=next.authentication==='none'?'':customVideoCredential(tutorialEndpoint(next.endpoint).href,next.protocol)

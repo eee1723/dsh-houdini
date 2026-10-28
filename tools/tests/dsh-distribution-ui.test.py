@@ -282,7 +282,7 @@ try:
     assert server_facts['asrRequests']==0 and not server_facts['errors'],server_facts
     if not args.local_only:assert server_facts['tarballGets']>0,server_facts
     assert server_facts['sentinelAbsentFromModel'],server_facts
-    if not args.remote_only:assert len(server_facts['toolCalls'])>=2,server_facts
+    if not args.remote_only:assert server_facts['chatRequests']==0 and not server_facts['toolCalls'],server_facts
     assert protocol_hash()==baseline and {file:digest(file) for file in immutable}==immutable
     report.update(ok=True,normalExitCode=process.returncode,loopback=server_facts,desktopInstallationAndProtocolUnchanged=True)
     print(('PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native HTTP tarball UI install/disable/re-enable/uninstall' if args.remote_only else

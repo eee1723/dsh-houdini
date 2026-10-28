@@ -41,13 +41,13 @@ let generation={id:1},launchPhase='ready',loseActionReply=false,lastLaunch=null;
 const tickets=new Map(),listeners=new Set(),nativeListeners=new Set(),generationListeners=new Set(),calls=[];
 const viewListeners=new Set(),formListeners=new Set(),credentialEvents=new Set(),opened=[];
 let view='project',videoRevision={revision:1,status:'ready',writable:true},rejectKey=false,losePrompt=false,secretOnly=true;
-let videoFacts={revision:1,selected:{model:'fixture-asr',protocol:'openai-transcriptions'},defaults:{concurrency:2,requestsPerSecond:1},diagnostics:[],
+let videoFacts={revision:1,selected:{provider:'',model:'fixture-asr',protocol:'openai-transcriptions',endpoint:'http://127.0.0.1:9876/v1/audio/transcriptions',authentication:'bearer',concurrency:2,requestsPerSecond:1},defaults:{concurrency:2,requestsPerSecond:1},diagnostics:[],writable:true,
 service:{displayName:'本机转录',model:'fixture-asr',protocol:'openai-transcriptions',endpoint:'http://127.0.0.1:9876/v1/audio/transcriptions',
 authentication:'bearer',credentialRef:'DSH_HOUDINI_ASR_FIXTURE_API_KEY',credential:{configured:false,writable:true},dataLocation:'loopback',support:'unverified'},
 adapters:[{id:'openai-transcriptions',label:'OpenAI 兼容文件转录'}]};
 function notifyView(){viewListeners.forEach(fn=>fn());}
 function closeVideo(){view='project';notifyView();}
-function updateVideo(patch){videoFacts={...videoFacts,service:{...videoFacts.service,...patch}};videoRevision={...videoRevision,revision:videoRevision.revision+1};videoFacts.revision=videoRevision.revision;formListeners.forEach(fn=>fn());}
+function updateVideo(patch){videoFacts={...videoFacts,selected:{...videoFacts.selected,...patch.endpoint?{endpoint:patch.endpoint}:{}},service:{...videoFacts.service,...patch}};videoRevision={...videoRevision,revision:videoRevision.revision+1};videoFacts.revision=videoRevision.revision;formListeners.forEach(fn=>fn());}
 const ids={executor:'a'.repeat(32),runtime:'b'.repeat(32),epoch:'c'.repeat(32),registration:'d'.repeat(32)};
 const rows=[{executor_id:ids.executor,runtime_id:ids.runtime,scene_epoch:ids.epoch,registration_id:ids.registration,scene_id:'e'.repeat(32),
 hip_path:'C:/项目/旋转船体/船体.hip',hip_is_new:false,workspace_path:'C:/项目/旋转船体',houdini_version:'22.0.368',pid:8234,state:'registered',same_workspace:true,workbench:true},
@@ -60,6 +60,11 @@ status:mode==='offline'?'offline':'online',observedAt:Date.now(),candidate:row,o
 const connection={generation:{getSnapshot:()=>generation,subscribe:fn=>{generationListeners.add(fn);return()=>generationListeners.delete(fn)}},rpc:{call:async(_channel,method,payload)=>{calls.push({method,input:payload.args?.input,request:payload.args?.request,keyRef:payload.args?.ref});
 if(method==='houdiniFrontend/videoSettings')return{ok:true,value:structuredClone(videoFacts)};
 if(method==='houdiniFrontend/videoDiagnostics')return{ok:true,value:{dependencies:[],note:'仅检查夹具依赖'}};
+if(method==='houdiniFrontend/videoConfigure'){
+ const input=payload.args.input;Object.assign(videoFacts.selected,{provider:input.provider,endpoint:input.endpoint,protocol:input.protocol,model:input.model,authentication:input.authentication,concurrency:input.concurrency,requestsPerSecond:input.requests_per_second});
+ Object.assign(videoFacts.service,{provider:input.provider||null,model:input.model,protocol:input.protocol,endpoint:input.endpoint,authentication:input.authentication});
+ videoFacts.revision=++videoRevision.revision;return{ok:true,value:structuredClone(videoFacts)};
+}
 if(method==='credentials/set'){
  secretOnly=secretOnly&&Object.keys(payload.args).sort().join(',')==='ref,value'&&payload.args.value==='fixture-only-private-key';
  if(rejectKey)return{ok:false,error:{message:'Native credentials: reference is read-only'}};
@@ -89,11 +94,10 @@ return{ok:true,value:{}};}}};
 const selection={key:session};
 const owner={sessionStatus:{getSnapshot:()=>native,subscribe:fn=>{nativeListeners.add(fn);return()=>nativeListeners.delete(fn)}},adapter:{current:{getSnapshot:()=>selection,subscribe:()=>()=>{}}}};
 const workbench=createUi(connection,owner,{refreshProjections:async()=>publish(),list:{getSnapshot:()=>projection,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}}});
-const video=factories.createVideoSettings(connection,{get:()=>({getSnapshot:()=>videoRevision,subscribe:fn=>{formListeners.add(fn);return()=>formListeners.delete(fn)}})},owner,
-{list:{getSnapshot:()=>projection,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}}},
-{openSession:id=>{opened.push(id);closeVideo();}},{$on:(name,fn)=>{if(name!=='credentials/reference-updated')throw Error(name);credentialEvents.add(fn);return()=>credentialEvents.delete(fn);}});
+const video=factories.createVideoSettings(connection,{get:()=>({getSnapshot:()=>videoRevision,subscribe:fn=>{formListeners.add(fn);return()=>formListeners.delete(fn)}})},
+{$on:(name,fn)=>{if(name!=='credentials/reference-updated')throw Error(name);credentialEvents.add(fn);return()=>credentialEvents.delete(fn);}});
 const props={sessionId:session,useSessions:selector=>React.useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn)},()=>selector(projection))};
-function App(){const preset=props.useSessions(state=>state.byId[session].projectionValues.agentPreset);const active=React.useSyncExternalStore(fn=>{viewListeners.add(fn);return()=>viewListeners.delete(fn)},()=>view);return React.createElement(React.Fragment,null,preset==='houdini'&&React.createElement(workbench.Lifecycle),React.createElement('div',{className:'fixture-toolbar'},React.createElement('span',null,'旋转船体'),React.createElement(workbench.Label,props)),preset==='houdini'&&active==='video'&&React.createElement(sdk['@deepseek-ai/dsh-client-ui-primitives'].Modal,{open:true,onClose:closeVideo,title:'设置',closeLabel:'关闭设置',shortcutModal:'settings',className:'fixture-settings-modal'},React.createElement(video,{close:closeVideo})));}
+function App(){const preset=props.useSessions(state=>state.byId[session].projectionValues.agentPreset);const active=React.useSyncExternalStore(fn=>{viewListeners.add(fn);return()=>viewListeners.delete(fn)},()=>view);return React.createElement(React.Fragment,null,preset==='houdini'&&React.createElement(workbench.Lifecycle),React.createElement('div',{className:'fixture-toolbar'},React.createElement('span',null,'旋转船体'),React.createElement(workbench.Label,props)),active==='video'&&React.createElement(sdk['@deepseek-ai/dsh-client-ui-primitives'].Modal,{open:true,onClose:closeVideo,title:'设置',closeLabel:'关闭设置',shortcutModal:'settings',className:'fixture-settings-modal'},React.createElement(video,{close:closeVideo})));}
 sdk['react-dom/client'].createRoot(document.querySelector('#fixture')).render(React.createElement(App));
 const initialRow={...rows[0]},initialOther={...rows[1]};
 window.fixture={calls,onlyCurrent(value){onlyCurrent=value;document.dispatchEvent(new Event('visibilitychange'));},reverse(value){reverseRows=value;document.dispatchEvent(new Event('visibilitychange'));},otherScene(){rows[1]={...rows[1],hip_path:'D:/岩石实验/changed.hip',scene_epoch:'5'.repeat(32)};document.dispatchEvent(new Event('visibilitychange'));},restoreOther(){rows[1]={...initialOther};document.dispatchEvent(new Event('visibilitychange'));},failPrepare(value){prepareFailure=value;},holdPrepare(){prepareGate=new Promise(resolve=>releasePrepare=resolve);},releasePrepare(){prepareGate=null;releasePrepare?.();releasePrepare=null;},selection:()=>({hip:selected?.hip_path,isNew:selected?.hip_is_new,cwd:projection.byId[session].cwd}),
@@ -290,12 +294,12 @@ try{
  await evaluate('fixture.preset("standard")');await until('!document.querySelector("[data-houdini-project-label]")&&!document.querySelector("[data-houdini-project-dialog]")')
  await screenshot('standard-mode-clean')
  await evaluate('fixture.preset("houdini")');await until('document.querySelector("[data-houdini-project-label]")')
- // Real public SDK modal layers: configuration is a status page and secret
- // drafts stay inside the nested password control until credentials/set.
+ // Real public SDK modal layers: deterministic configuration and write-only secrets.
  await call('Emulation.setDeviceMetricsOverride',{width:1080,height:900,deviceScaleFactor:1,mobile:false})
  await evaluate('fixture.dark(false);fixture.videoOpen()');await until('document.querySelector("[data-houdini-video-status]")?.textContent.includes("等待安全录入")')
- await primaryContrast('[data-houdini-video-guide]','light-guide')
- assert.equal(await evaluate('document.querySelectorAll("[data-houdini-video-settings] input,[data-houdini-video-settings] select").length'),0)
+ await primaryContrast('[data-houdini-video-save-config]','light-save-config')
+ assert(await evaluate('document.querySelectorAll("[data-houdini-video-settings] input,[data-houdini-video-settings] select").length>0'))
+ assert.equal(await evaluate('document.querySelector("[data-houdini-video-guide]")===null'),true)
  await screenshot('tutorial-status')
  await click('[data-houdini-video-key]');await until('document.querySelector("[data-houdini-video-credential] input")===document.activeElement')
  assert.equal(await evaluate('document.activeElement.type'), 'password')
@@ -317,7 +321,7 @@ try{
  assert.equal(await evaluate('fixture.calls.filter(row=>row.method==="session/prompt").length'),0)
  await evaluate('fixture.rejectKey(false);document.querySelector("[data-houdini-video-credential] input").focus()')
  await call('Input.insertText',{text:'fixture-only-private-key'});await click('[data-houdini-video-save-key]')
- await until('!document.querySelector("[data-houdini-video-credential]")&&document.querySelector("[data-houdini-video-status]")?.textContent.includes("服务配置已保存")')
+ await until('!document.querySelector("[data-houdini-video-credential]")&&document.querySelector("[data-houdini-video-status]")?.textContent.includes("配置已保存，实际效果以试转录为准")')
  assert.equal(await evaluate('fixture.secretOnly()'),true,'only write-only native credentials receive the fake secret')
  assert.equal(await evaluate('JSON.stringify(fixture.calls).includes("fixture-only-private-key")'),false)
  await screenshot('tutorial-key-configured')
@@ -331,18 +335,17 @@ try{
  assert.equal(await evaluate('document.activeElement.value'),'','cancelled secret drafts are discarded')
  await evaluate('fixture.videoUpdate({endpoint:"http://127.0.0.1:9877/v1/audio/transcriptions",credentialRef:"DSH_HOUDINI_ASR_NEW_API_KEY"})')
  await until('!document.querySelector("[data-houdini-video-credential]")&&document.querySelector("[data-houdini-video-settings]").textContent.includes("9877")')
- await evaluate('fixture.losePrompt()');await click('[data-houdini-video-guide]')
- await until('document.querySelector("[data-houdini-video-guide]")?.textContent.includes("重试引导请求")')
- const firstPrompt=await evaluate('fixture.calls.find(row=>row.method==="session/prompt").request')
- assert.equal(firstPrompt.sessionId,'chat-a');assert.equal(firstPrompt.mode,'queue')
- await click('[data-houdini-video-guide]');await until('!document.querySelector("[data-houdini-video-settings]")&&fixture.opened.length===1')
- assert.deepEqual(await evaluate('fixture.calls.filter(row=>row.method==="session/prompt").map(row=>row.request.requestId)'),[firstPrompt.requestId,firstPrompt.requestId])
- assert.deepEqual(await evaluate('fixture.opened'),['chat-a'])
- await evaluate('fixture.videoOpen()');await until('document.querySelector("[data-houdini-video-settings]")')
- await evaluate('fixture.preset("standard")');await until('!document.querySelector("[data-houdini-video-settings]")')
+ await click('[data-houdini-video-model]')
+ await call('Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2})
+ await call('Input.insertText',{text:'direct-asr'});await click('[data-houdini-video-save-config]')
+ await until('document.querySelector("[data-houdini-video-settings]").textContent.includes("配置已保存")')
+ const direct=await evaluate('fixture.calls.find(row=>row.method==="houdiniFrontend/videoConfigure").input')
+ assert.equal(direct.model,'direct-asr');assert.equal(direct.expected_revision,2)
+ assert.equal(await evaluate('fixture.calls.filter(row=>row.method==="session/prompt").length'),0,'direct settings never invoke an Agent')
+ await evaluate('fixture.preset("standard")');await until('document.querySelector("[data-houdini-video-settings]")')
  await evaluate('fixture.videoClose();fixture.preset("houdini")');await until('document.querySelector("[data-houdini-project-label]")')
  const calls=await evaluate('fixture.calls');assert.equal(calls.filter(row=>row.method==='houdiniTargets/select').length,pressCalls.length);assert.equal(calls.filter(row=>row.method==='houdiniTargets/clear').length,1)
- await fs.writeFile(path.join(output,'result.json'),JSON.stringify({ok:true,exactSdk:sdkVersion,pluginControls:true,realReact:true,stableFixedActions:true,newAvailableWhileLoading:true,candidateActivityIsolation:true,lateLaunchTicketDetached:true,modeIsolation:true,tutorial:{statusOnly:true,nativePrompt:true,sameRequestRetry:true,nativeCredentialModal:true,secretOnlyInCredentials:true,nestedEscape:true,storedKeyNeverRead:true,changedServiceClosesOldDraft:true,primaryColors},loadingRect,compactDisclosures:true,hiddenActionsSkipped:true,oneCurrentScene:true,sceneChangeCannotRetarget:true,nativeChangedRowClickDispatched:pressCalls.length===2,select:pressCalls.length,clear:1,states:['unbound','ready','working','occupied','changed','offline','unknown'],screenshots:(await fs.readdir(output)).filter(name=>name.endsWith('.png'))},null,2))
+ await fs.writeFile(path.join(output,'result.json'),JSON.stringify({ok:true,exactSdk:sdkVersion,pluginControls:true,realReact:true,stableFixedActions:true,newAvailableWhileLoading:true,candidateActivityIsolation:true,lateLaunchTicketDetached:true,modeIsolation:true,tutorial:{directConfiguration:true,nativeCredentialModal:true,secretOnlyInCredentials:true,nestedEscape:true,storedKeyNeverRead:true,changedServiceClosesOldDraft:true,allModeSettings:true,primaryColors},loadingRect,compactDisclosures:true,hiddenActionsSkipped:true,oneCurrentScene:true,sceneChangeCannotRetarget:true,nativeChangedRowClickDispatched:pressCalls.length===2,select:pressCalls.length,clear:1,states:['unbound','ready','working','occupied','changed','offline','unknown'],screenshots:(await fs.readdir(output)).filter(name=>name.endsWith('.png'))},null,2))
  console.log('PASS exact DSH React + plugin controls: selection/clear, states and narrow dark layout: '+output)
 } catch(error){if(socket?.readyState===1){try{await screenshot('failure');await fs.writeFile(path.join(output,'failure.txt'),await evaluate('document.body.innerText'))}catch{}}throw error}
 finally{if(socket?.readyState===1){try{await call('Browser.close')}catch{}socket.close()}for(let n=0;n<50&&browser.exitCode===null;n++)await sleep(100);if(browser.exitCode===null)browser.kill();server.close()}

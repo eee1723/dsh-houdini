@@ -39,9 +39,14 @@ assert.equal(selection.endpoint,'');assert.equal(status.service.credentialRef,'S
 assert.equal(status.service.endpoint,'https://speech.example/v1/chat/completions')
 assert.equal(status.service.credential.configured,true)
 assert.deepEqual(status.service.settingsSource,{ns:'llm-native',revision:4})
+assert.deepEqual(status.routes[0].settingsSource,{ns:'llm-native',revision:4})
 assert.deepEqual(status,JSON.parse(JSON.stringify(status)),'provider-backed configuration must also be lossless JSON')
 assert.equal(catalogReads,0);assert.equal(resolves,0);assert.ok(describes>0)
 assert(!writes.some(patch=>Object.keys(patch).some(key=>/llm|chat|modelProvider/i.test(key))))
+const providerGuardWrites=writes.length;providerRevision++
+await assert.rejects(configureVideo(ctx,{model:'another-asr',expected_provider_revision:4}),/服务商设置已变化/)
+assert.equal(writes.length,providerGuardWrites,'a stale provider revision cannot commit a new endpoint')
+providerRevision--
 selection={...selection,provider:'',endpoint:'https://user:'+secret+'@speech.example/asr?api_key='+secret,credentialRef:secret}
 status=await videoConfiguration(ctx)
 assert(!JSON.stringify(status).includes(secret),'invalid old/raw settings never echo URL credentials or a misfiled key reference')

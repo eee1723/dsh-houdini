@@ -12,7 +12,7 @@
 - 现状：标准bundle只新增Houdini；官方原包承载会话、账户、其他模式和应用更新，独立Qt聊天壳及核心补丁构建已移除。菜单、模式内现场选择、打开/启动与原生导航通过插件窄通道连接；实际消费方及并发/取消反例仍按下述入口验收。
 - 下一步：回访用户默认profile与系统dsh://菜单唤起；独立资料下的原生窗口、工作区和启动中重开不代替这一真实用户路径。用户自己的多窗口、已有模型/账号配置、复杂工程和长期任务仍须正式入口回访。用户默认profile中的插件更新/停用/卸载、旧helper加载及正式发布仍须验收，不将临时数据根中的最终tgz安装通过写成用户已经部署。
 - 已有共享记录：6条旧私有Host生成的v4会话头与物理项目目录不一致；已按用户确认在Desktop退出后完整备份并原值暂存至默认数据根的recovery目录，工作区入口已由用户回访确认恢复。暂存清单与字节备份保留，6条暂不在侧栏显示；每条仅有一个generation，不能从有损目录名猜回原始cwd。仍须单独核对原始来源、当前目录事件及详情/附件引用后恢复这些历史，不自动改header或合并整库，不将其余会话头可列出当作全部旧正文已完成迁移。
-- 订阅验收：独立标准模型插件已实现SiWC、原生授权/凭据、薄设置页及Responses适配；用户默认profile中的双插件组合、真实账户登录/计划权限/目录和首次真实推理仍须分别核对。隔离Native组合、Mock OAuth、模拟服务端流和DPAPI重开不证明用户账户可用；不读取或迁移既有用户令牌，不用Codex路线替代。
+- 外部模型验收：自有GPT订阅已停止维护，当前可选社区`dsh-codex-subscription@3.1.8`已通过官方CLI安装并在实际Desktop profile启用；原生页面显示1个组件运行中，Codex设置可打开，标准/Houdini等preset仍可选。下一步由用户亲自完成授权，再核对账户目录（包括GPT-6.1 Terra是否返回）、简单文本、函数工具、图片输入和真实Houdini任务；不读取或迁移旧授权，不把安装或目录可见写成真实推理成功。随包rc4 home-paths与宿主rc3已在同一临时DSH_HOME下核对路径一致，其他真实请求和长期组合仍按实际结果判断。
 - 系统代理缺口：旧适配版的Windows系统代理/PAC/WPAD自动继承，在官方Node Host尚无等价合同。保持原生显式代理环境，按[窄上游方案](dsh-update-compatibility.md#网络与窗口等宿主能力)补齐；不从Houdini插件暗中设置进程级代理。正式分发前须说明这一限制，并在用户实际网络上核对模型与转录路由。
 - 入口：[Desktop通道](../tools/tests/desktop-integration.test.mjs)、[真实官方组合](../tools/tests/dsh-host-smoke.test.py)、[真实页面](../tools/tests/dsh-client-navigation.mjs)、[本端接入](../tools/tests/dsh-desktop-client.test.py)、[安装](../tools/tests/dsh-install-runtime.test.py)、[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)、[原生插件页面](../tools/tests/dsh-distribution-ui.test.py)、[原生窗口生命周期](../tools/tests/dsh-desktop-window.test.py)。
 - 移除条件：两条实际入口、模式隔离、插件启停、真实H21/H22及已有共享历史处置均有完整消费者证据，未交付部分不再混在源码完成状态中。

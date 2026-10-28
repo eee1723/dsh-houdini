@@ -141,15 +141,19 @@ try{
  report.houdiniModeSelectedByNativeUi=true;report.sessionId=selected.sessionId
  await rpc('session/selectModel',{request:{sessionId:selected.sessionId,provider:'owned-distribution-chat',model:'scripted-chat'}})
  await tutorial();await shot('tutorial-before-configuration')
- report.primaryColors={guide:await primaryColor('[data-houdini-video-guide]')}
- await click('document.querySelector("[data-houdini-video-guide]")','Guide in actual Native session')
- const configured=await until(async()=>{const status=await rpc('houdiniFrontend/videoSettings');return status.service?.endpoint===config.asrEndpoint?status:null},'actual Agent configuration tool committed')
+ report.primaryColors={saveConfig:await primaryColor('[data-houdini-video-save-config]')}
+ await click('document.querySelector("[data-houdini-video-endpoint]")','Native transcription endpoint input')
+ await key('a','KeyA',65,2);await cdp.call('Input.insertText',{text:config.asrEndpoint})
+ await click('document.querySelector("[data-houdini-video-model]")','Native transcription model input')
+ await key('a','KeyA',65,2);await cdp.call('Input.insertText',{text:'owned-asr-id'})
+ await click('document.querySelector("[data-houdini-video-save-config]")','Direct native configuration save')
+ const configured=await until(async()=>{const status=await rpc('houdiniFrontend/videoSettings');return status.service?.endpoint===config.asrEndpoint?status:null},'direct native configuration committed')
  assert.equal(configured.service.model,'owned-asr-id');assert.equal(configured.defaults.concurrency,2);assert.equal(configured.defaults.requestsPerSecond,1)
  assert.equal(configured.service.credential.configured,false)
- await until(async()=>{const list=await rpc('session/list',{_request:{}});return list.items.find(row=>row.sessionId===selected.sessionId)?.running===false},'local scripted Agent idle')
- await nativeHistory(selected.sessionId)
- await tutorial();await shot('tutorial-real-loopback-config')
- assert.equal(await evaluate('document.querySelectorAll("[data-houdini-video-settings] input,[data-houdini-video-settings] select").length'),0)
+ assert.equal(report.uiMethods['session/prompt']??0,0,'deterministic settings must not invoke an Agent')
+ await shot('tutorial-real-loopback-config')
+ assert.equal(await evaluate('document.querySelector("[data-houdini-video-endpoint]").value'),config.asrEndpoint)
+ assert.equal(await evaluate('document.querySelector("[data-houdini-video-model]").value'),'owned-asr-id')
  await click('document.querySelector("[data-houdini-video-key]")','Native secure credential action')
  await until('document.querySelector("[data-houdini-video-credential] input")===document.activeElement','actual password focus')
  assert.equal(await evaluate('document.activeElement.type'),'password')
@@ -173,25 +177,11 @@ try{
  await key('Escape','Escape',27)
  await until('!document.querySelector("[data-houdini-video-credential]")&&document.querySelector("[data-houdini-video-settings]")','nested Escape keeps status page')
  await shot('tutorial-real-configured')
- await click('document.querySelector("[data-houdini-video-guide]")','Agent rechecks only credential presence')
- const history=await until(async()=>{
-  const value=await nativeHistory(selected.sessionId)
-  const observed=value.records.some(row=>{
-   const event=row.event
-   if(event.type==='tool/result')return event.data.meta?.canonical?.service?.credential?.configured===true
-   if(event.type==='tool/ptc-dispatch'&&event.data.name==='video_models'&&!event.data.isError){
-    try{return JSON.parse(event.data.content.find(block=>block.type==='text').text).service?.credential?.configured===true}catch{return false}
-   }
-   return false
-  })
-  return observed?value:null
- },'real Agent tool reads configured=true without receiving the secret')
- await until(async()=>{const list=await rpc('session/list',{_request:{}});return list.items.find(row=>row.sessionId===selected.sessionId)?.running===false},'second local Agent check idle')
- assert.equal(history.hasMore,false);assert(!JSON.stringify(history).includes(config.sentinel),'canonical native messages/tools must never contain the key')
- const toolRecords=history.records.filter(row=>['tool/result','tool/ptc-dispatch'].includes(row.event.type))
- assert(toolRecords.length>=2,'must inspect real configuration and discovery tool results')
- report.tutorial={actualAgentToolConfiguration:true,actualNativeCredentialConfigured:true,storedKeyNeverReadBack:true,
-  nativeHistoryAndToolsSecretFree:true,canonicalToolRecords:toolRecords.length,chatModelSeparateFromAsr:true}
+ const history=await nativeHistory(selected.sessionId)
+ assert.equal(history.hasMore,false);assert(!JSON.stringify(history).includes(config.sentinel),'native history must never contain the key')
+ assert.equal(report.uiMethods['session/prompt']??0,0,'configuration and credential presence checks must not invoke an Agent')
+ report.tutorial={directNativeConfiguration:true,actualNativeCredentialConfigured:true,storedKeyNeverReadBack:true,
+  configurationWithoutAgent:true,nativeHistorySecretFree:true,chatModelSeparateFromAsr:true}
  }
  if(config.remoteOnly){
   await click(`document.querySelector('[data-row-key="session:${initial.sessionId}"]')`,'Native original default blank')
@@ -229,7 +219,7 @@ try{
  if(!config.remoteOnly){
   assert(report.secretTransport>0,'Native credential RPC must actually be observed, not inferred from a fixture')
   assert(!report.secretReturned&&!report.secretWrongChannel&&!report.secretInConsole,'secret crossed an unexpected Native channel')
-  assert((report.uiMethods['credentials/set']||0)>=1&&(report.uiMethods['session/prompt']||0)>=2)
+  assert((report.uiMethods['credentials/set']||0)>=1&&(report.uiMethods['session/prompt']||0)===0,'direct configuration and credential presence must not invoke an Agent')
  }
  assert((report.uiMethods['pluginManager/installBundle']||0)>=1&&(report.uiMethods['pluginManager/setBundleEnabled']||0)>=1)
  report.ok=true

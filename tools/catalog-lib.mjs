@@ -1,6 +1,6 @@
 // 词表目录解析：docs/tool-design.md（唯一真相源）→ 按域分组的动词清单。
-// tools/trace-report.mjs（复盘报告）与 tools/gen-client-catalog.mjs（构建期
-// 注入 client.js）共用本模块——解析规则只维护这里，改一处两边同步。
+// tools/trace-report.mjs（复盘报告）与 tools/gen-verb-contract.mjs（Host 执行合同）
+// 共用本模块——解析规则只维护这里，改一处两边同步。
 import fs from 'node:fs';
 
 export function loadCatalog(docFile) {

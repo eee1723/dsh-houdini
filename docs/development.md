@@ -46,7 +46,7 @@ Houdini交互控件按当前选中会话的原生preset投影显示；切换到�
 | 内容 | 维护位置 | 派生或验证入口 |
 |---|---|---|
 | Host 工具职责与参数 | [tool-catalog](../src/tool-catalog.ts)、[tools](../src/tools.ts) | gen-tool-docs 生成 docs 工具表；工具注册与前端共用目录 |
-| Houdini 动词签名、执行版本 | [工具设计](tool-design.md)，实现同步 helpers/Bridge | gen-client-catalog 生成 Host 契约和客户端目录；verb-contract 回归 |
+| Houdini 动词签名、执行版本 | [工具设计](tool-design.md)，实现同步 helpers/Bridge | gen-verb-contract 生成 Host 执行合同；verb-contract 回归 |
 | 动词按需结构与例子 | [verb-operation-contracts.json](../houdini/verb-operation-contracts.json)，签名仍来自运行函数 | gen-verb-contract-docs生成[结构合同](verb-contracts.md)，verb_help按需返回；说明不参与执行校验 |
 | 工程图像目录角色 | [project-layout.json](../houdini/project-layout.json)，Host/Houdini同源读取 | gen-project-layout-docs生成[工程文件目录表](project-files.md)，构建与docs:check校验同步 |
 | 节点操作知识 | [node-operation-contracts.json](../houdini/node-operation-contracts.json) | gen-node-card-docs 生成[节点卡](node-operation-cards.md)；node-knowledge 验实际参数和几何 |
@@ -69,7 +69,7 @@ Desktop正常退出验收使用已配置自有模型、实际显示的主窗口�
 
 注册界面slot前核对精确宿主中的实际消费点、props及list/single类型；不以更高order抢占已有原生single操作。空对话变为有内容对话时分别确认入口仍可见，注册成功不能代替页面消费。
 
-窗口置顶使用[状态机回归](../tools/tests/desktop-window.test.mjs)、[客户端租用](../tools/tests/window-pin-client.test.mjs)和[原生Desktop消费检查](../tools/tests/dsh-window-pin-native.test.py)，核对Houdini/普通模式、空对话/页头、renderer替换、卸载与原层级恢复。只对自有Desktop进程做OS检查；不通过通用Remote接受PID或窗口句柄。独立订阅插件的[测试入口](../packages/dsh-chatgpt-subscription/package.json)分别核对模拟OAuth/Responses、原生凭据和UI；真实账户授权、目录及真实推理须分开报告，不能以模拟令牌或按钮出现替代。
+窗口置顶使用[状态机回归](../tools/tests/desktop-window.test.mjs)、[客户端租用](../tools/tests/window-pin-client.test.mjs)和[原生Desktop消费检查](../tools/tests/dsh-window-pin-native.test.py)，核对Houdini/普通模式、空对话/页头、renderer替换、卸载与原层级恢复。只对自有Desktop进程做OS检查；不通过通用Remote接受PID或窗口句柄。第三方模型插件不由本仓库构建或维护。选用固定版本时须分别核对发布包来源、官方CLI安装、真实Desktop加载、其他模式与依赖解析；真实账户授权、模型目录及真实推理另行报告，不能以文档、模拟令牌、按钮出现或隔离加载替代。
 
 原生Houdini冷启动使用独立的240秒验收预算，可用`--native-startup-timeout`显式指定；前端、RPC及其他等待预算不随之扩大，也不改产品的启动行为。`--profile-native-startup`为测试创建的原生进程启用[SideFX启动性能记录](https://www.sidefx.com/docs/houdini/ref/commandline.html)，将性能文件、GUI就绪／连接／实际前端选中时间及等待反馈留在隔离目录；最终结果必须同时核对完整断言、退出码与自有进程清理，不能用单条工具成功代替整条入口通过。
 
@@ -79,7 +79,7 @@ npm run build
 npm run docs:check
 ```
 
-只用 npm。build 刷新节点卡、动词结构合同、唯一Houdini preset、工具文档、客户端目录和Trace资源指纹，再编译TypeScript。`lib/`、生成区、`presets/houdini/cordis.patch.yml`不手改。
+只用 npm。build 刷新节点卡、动词结构合同、Host动词合同、唯一Houdini preset、工具文档和节点交付客户端，再编译TypeScript。`lib/`、生成区、`presets/houdini/cordis.patch.yml`不手改。
 
 角色在 persona.md 维护；生成组合继承所支持DSH的标准插件，仅增量注册Houdini，保留其他preset与用户默认选择。插件以 DSH 0.2 的 `bundle.patch` 装载配置：根级bare package `dsh-houdini`承载前端，preset内`dsh-houdini/agent`提供工具和原生context producer。DSH客户端模块图识别bare package，不能以preset scope或包子路径导入成功替代根客户端注册。客户端使用DSH的conversation/trajectory注册接口。
 
@@ -193,7 +193,7 @@ Karma创建默认由[dsh-karma-defaults](../tools/tests/dsh-karma-defaults.test.
 
 HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/dsh-hda-lifecycle.test.py)；Sticky Note的归属、局部维护、Raw Gate和失败恢复用[dsh-network-notes](../tools/tests/dsh-network-notes.test.py)；已有pane/Qt窗口/停靠面板发现、精确裁框、当前内容与用户状态保持用[dsh-ui-surfaces-gui](../tools/tests/dsh-ui-surfaces-gui.test.py)，包含真实HTTP发现→目标截图→同票据恢复。[headless拒绝](../tools/tests/dsh-ui-capture.test.py)与[HTTP边界](../tools/tests/dsh-bridge-transport.test.py)分别核对无GUI、旧node/view/尺寸输入与请求事实。界面测试在自有GUI检查实际目标与图像，生成文件存在不代替人工识图，不连接用户live或改用户HIP。
 
-跨层修改应验证消费方最终取得的状态，局部函数返回或静态配置存在不足以证明链路可用。入口/preset/client改动用精确DSH的实际模块图确认根前端与工具scope，再由真实页面确认内容视图和选中任务；工作区切换同时核对DSH store中的session、preset、cwd及workspace成员。入口可用空会话验启动，但Trace页需要普通有内容会话验收。Host组合检查的`--context-loop`使用自有HTTP Bridge夹具与脚本化模型适配器，核对真实DSH最终请求中的错误、未决回执、后台任务和上下文更新；可用`--outcome-fixture`接入隔离HOM导出的真实回执，核对捕获的操作异常、fallback和验证状态。不调用收费模型或用户Houdini。相关入口为[Host组合](../tools/tests/dsh-host-smoke.test.py)和[真实页面导航](../tools/tests/dsh-client-navigation.mjs)。
+跨层修改应验证消费方最终取得的状态，局部函数返回或静态配置存在不足以证明链路可用。入口/preset/client改动用精确DSH的实际模块图确认根前端与工具scope，再由真实页面确认内容视图和选中任务；工作区切换同时核对DSH store中的session、preset、cwd及workspace成员。入口可用空会话验启动，但原生轨迹页需要普通有内容会话验收。Host组合检查的`--context-loop`使用自有HTTP Bridge夹具与脚本化模型适配器，核对真实DSH最终请求中的错误、未决回执、后台任务和上下文更新；可用`--outcome-fixture`接入隔离HOM导出的真实回执，核对捕获的操作异常、fallback和验证状态。不调用收费模型或用户Houdini。相关入口为[Host组合](../tools/tests/dsh-host-smoke.test.py)和[真实页面导航](../tools/tests/dsh-client-navigation.mjs)。
 
 从MSIX打包的开发宿主运行GUI验收时，测试CLI先调用`reexec_unpacked_test_cli()`。继承宿主包身份会使Windows使用打包程序DLL搜索规则，即使PATH含HFS/bin也可能找不到Qt helper依赖。此入口使用Windows桌面应用启动属性，并在继续前核对新进程没有包身份；保留标准输入输出、退出码及自有进程树清理，不修改用户安装、机器环境、令牌或Chromium沙箱。普通桌面CLI原地继续。实现与回归分别在[测试环境](../tools/houdini_test_environment.py)与[隔离回归](../tools/tests/dsh-test-environment.test.py)。依据为[Windows DLL搜索规则](https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order)和[桌面应用进程属性](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)。
 

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import {generatedNodeDeliveryFactory} from '../gen-trace-client.mjs';
+import {generatedNodeDeliveryFactory} from '../gen-node-delivery-client.mjs';
 import {frontendArtifacts} from './modeling-trial-ui-artifacts.mjs';
 import {attachImages} from '../../lib/image-output.js';
 

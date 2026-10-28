@@ -57,7 +57,7 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 
 Houdini 相关控件随当前对话的 **Houdini 模式** 显示，其他模式继续使用 DSH 原有界面。多现场选择、工作区与工程接续见[现场使用说明](docs/multi-instance.md)。
 
-Windows Desktop的Houdini模式提供 **置顶** 按钮，便于同时操作场景和对话；返回其他模式时恢复原来的窗口层级。ChatGPT订阅可通过[独立模型插件](packages/dsh-chatgpt-subscription/README.md)接入，模型仍从DSH原生菜单选择，与Houdini连接分开管理。
+Windows Desktop的Houdini模式提供 **置顶** 按钮，便于同时操作场景和对话；返回其他模式时恢复原来的窗口层级。需要ChatGPT/Codex订阅时，可通过官方插件管理安装社区插件 [dsh-codex-subscription@3.1.8](https://github.com/WSL043/dsh-codex-subscription)；它独立授权和维护，不随Houdini发行包捆绑，模型仍从DSH原生菜单选择。
 
 ## 使用示例
 
@@ -116,7 +116,7 @@ Houdini 的 Python API（HOM）只在 Houdini 侧运行。媒体准备在普通 
 
 主聊天模型、账户和凭据统一在 DSH 原生设置中管理。需要看图时使用具备图片输入能力的模型；图片生成或编辑可使用单独配置的图片服务。
 
-语音转录在实际需要时配置。可以对 Agent 说「帮我配置教程分析」，或在 **设置 → 教程视频** 点击 **让 Agent 帮我配置**；Agent 先读取现有状态，再补齐服务、模型和必要参数。API Key 直接在安全输入框录入 DSH 凭据服务，不作为聊天答案。
+语音转录在实际需要时配置。在任意模式的 **设置 → 教程视频** 选择地址来源、实际协议和准确模型，确认调度后直接保存，无须先发起模型对话；对话中也可让 Agent 使用同一份配置。API Key 直接在安全输入框录入 DSH 凭据服务，不作为聊天答案。
 
 已有 DSH 提供方可以明确复用，独立语音服务也可按实际接口接入。只做媒体解析不必先连接场景。配置方法、依赖与接口范围见[模型及媒体设置](docs/setup.md#教程视频与转录设置)。
 

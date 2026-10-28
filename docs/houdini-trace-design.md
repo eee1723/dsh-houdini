@@ -1,216 +1,78 @@
 # Houdini Trace 设计与维护契约
 
-## 职责与实现边界
+## 唯一展示与诊断边界
 
-本页是 Houdini Trace 信息架构、展示语义、内容来源和同步规则的唯一维护位置。
-用户入口为中文「执行记录」。目标是让用户在一个Houdini Trace页面查看插件工具与动词、当前任务实际使用及简单统计，
-并能从操作追溯当时的提示词、能力和证据。不另设重复的Houdini工具页面。
-动词定义仍由[工具设计](tool-design.md)维护，领域方法仍由[skills](../skills/)维护；
-本页不复制提示词正文、动词目录或技能 recipe。
+DSH 原生「轨迹」和工具结果卡是会话内通用调用详情的唯一入口。插件不再注册另一套执行记录视图，也不把完整 persona、skill、工具 schema 或提示词镜像进客户端。Houdini 只补充自身需要的节点交付和现场状态；通用会话、工具展示、草稿及模式切换由 DSH 负责。
 
-本页规定展示契约，不是已部署功能清单。[client.js](../client.js)遵循DSH的客户端CJS factory合同，
-一个插件包交付一个client bundle。构建嵌入独立的[回包解析与初始化](../client/trace-runtime.js)、
-[轨迹投影](../client/trace-model.js)、[Trace组件](../client/trace-view.js)及[样式](../client/trace-view.css)。
-普通入口注册视图；首次打开Trace才初始化目录、来源索引、投影和渲染组件，后续复用。
-这是单bundle内的按需初始化，代码仍随同一个bundle下载，不增加静态资源服务或网络拆包通道。
-投影消费公开trajectory snapshot，集中处理请求/调用关联、回放去重、状态和统计；组件负责阅读与交互。
-记录、资料和诊断已接入请求System/schema/usage、运行中与已返回调用、上下文/技能目录与读取事件。
-逐段运行provenance、注册但隐藏的工具集合、最终messages可见集合及技能正文保留状态尚未由该公开快照提供。
-这些字段标为未采集；当前构建来源目录独立展示，不填充历史缺口。
-交互设计原型和 tools/out 中的源码摘录程序不是生产数据通道，也不证明 live 已加载。
+诊断分为两条路径，不建立第二份执行事实：
 
-## 页面与阅读层级
+- 在线：DSH 原生会话、trajectory、jobs 与 `src/execution-facts.ts` 的增量投影提供执行事实；`src/dsh-adapter.ts` 是原生/嵌套回执及 live job 解码唯一源。
+- 离线：先运行 [trace 提取 skill](../skills/houdini-trace-analysis/SKILL.md) 的 `extract-trace-evidence.mjs`，再运行 [trace-report](../tools/trace-report.mjs)。它们读取原生 Session 日志，用于分析工具选择、重复工作、失败、视觉证据和完成差距，不进入 Agent 的生产提示词。
 
-| 一级入口 | 内容 | 展示要求 |
+`tools/out` 中的报告、截图和试验材料是过程证据，不是另一套生产数据通道。构建成功、UI 注册或本地 HTML 均不证明 live 已加载。
+
+## 原生轨迹与节点交付
+
+通用工具调用使用 DSH 的 `presentCall`、`presentResult`、`presentationMeta` 和原生视图。参数、执行证据、错误及完整原值按原生折叠和详情限额展示；模型可见文本、canonical 回执和展示投影分别处理，不能为了展示重新执行 Python 或重新解释领域结论。
+
+Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js) 提供：
+
+- 只读取成功 `present_nodes` 动词的真实回执，不依赖 `__result__` 包装、节点名称或自报路径。
+- 使用 DSH 公开 Conversation 与回复尾部插槽；原生和 PTC 子调用消费同一 canonical 解码。普通 `job_output` 只沿 `liveJobResult` 恢复原执行，不伪造新的 Houdini 操作。
+- 节点持久标识、原交付 HIP、控制声明和重开/改名行为由 Bridge 执行事实决定。点击经 `src/node-delivery.ts` 按当前 Agent 的原执行绑定查回；浏览器不接收任意 PID、窗口或节点写入权限。
+- 不同 HIP、缺失或重复标识、失败导航明确拒绝；旧卡片不会把后续同名节点或另一个现场当作交付目标。
+
+[生成器](../tools/gen-node-delivery-client.mjs) 仅嵌入同源 live-job 解码、节点记录提取和卡片工厂。它不再生成工具目录、提示词来源或独立 Trace 页面。节点卡与文件交付并列，文件本体仍由 DSH `present` 负责。
+
+## 上下文与提示词事实
+
+离线阅读可以关联实际 System、schema、usage、消息、技能和资源读取记录；当前源码、进程实际加载与历史请求内容是三个不同事实。不得用当前文件补写历史正文，也不得以配置中的插件清单证明某段提示词已生效。
+
+| 内容 | 权威来源 / 注册入口 | 必须保留的区别 |
 |---|---|---|
-| 执行记录 | 实际操作、结果与错误 | 默认页；按调用发起顺序呈现，可筛选Houdini操作和需要关注的记录 |
-| 能力资料 | 工具与技能 | 二级导航查看职责、动词目录、当前任务使用及资源读取 |
-| 高级诊断 | 提示词与上下文、执行统计 | 按请求读取实际System/schema/usage；分析依据和原始数据按需展开 |
+| DSH 身份及其他系统段 | Host 最终组装/模型请求 | 开关、作用域遮蔽、顺序、覆盖与最终生效情况 |
+| Houdini persona | [persona.md](../presets/houdini/persona.md) 和生成 preset | 手写来源、生成声明与本次实际生效内容 |
+| 执行硬边界 | [src/index.ts](../src/index.ts) 的 `dsh-houdini:guidance` | 稳定工具路由和不可补救约束，不复制领域 recipe |
+| 现场摘要与恢复 | [src/context.ts](../src/context.ts)、[src/execution-state.ts](../src/execution-state.ts) | 一次消息绑定观察与未决事实；不是现场通过证书或第二份完成账本 |
+| 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)、`houdini_resource` | 按需原文与已消费状态；不向每次请求自动追加副本 |
+| 工具、技能与参考正文 | 最终 schema/messages、读取和压缩记录 | 已注册、已返回、仍保留、已压缩与未采集分别表达 |
+| 当前动词与节点交付合同 | [工具设计](tool-design.md)、[节点记录](../src/node-delivery-record.ts) | 当前维护源不能替代历史请求中的版本 |
 
-页面使用不透明石墨色背景、细边框、圆角和克制暖橙重点；删除全局水印、常驻类型图例、逐行token计数和原始调用ID。打开记录页时仅在当前DSH内容区域隐藏原生composer的常规输入框及任务浮层，保留审批、澄清和计划确认接管界面；返回对话恢复原生草稿和操作。通过DSH稳定语义属性限定布局，不修改依赖包、不匹配编译哈希类名、不建立第二份输入状态。真实浏览器验证视图往返、窄窗口和草稿保留。
+没有最终 messages 可见集合时明确未采集。看到符合规则的动作不证明某 skill 促成，也不证明全部规则已遵守；资源文件存在不等于进入上下文，正文读取不等于视觉理解或任务验收。
 
-执行过程顶部只保留当前 agent 状态、当前调用、最近事件时间及必要的验证状态。
-没有收到事件不推断 agent 在思考；连接中断和状态未知必须明确，不能让旧状态持续显示为正在运行。
-详细分析不占用执行过程的主体空间，分析结论区分观察事实与待验证推测。
+## 构建与版本同步
 
-调用列表先显示操作摘要、目标节点/路径、执行结果与耗时。参数、执行证据、请求usage及原始数据默认折叠；实际错误直接显示。
-执行记录采用两行摘要：首行序号/动作/状态/耗时，次行工具名/目标。
-完整标题与目标在详情中阅读，关联请求usage在技术详情中查看。筛选、上一页/下一页、页码直达和“最新”
-固定在内容区顶部，不随列表或详情滚走；每页最多50条。两栏独立滚动，查看旧页不被新事件强制跳走。
-“最新”的滚动定位仅在初次进入或明确点击时执行一次，普通快照重渲染不写scrollTop。
-滚轮向上、拖动滚动条或触摸离开底部时固定当前页，避免新记录跨页打断阅读。
-批次完成、动词异常和验证关注分别显示；捕获只读异常后继续fallback仍可保留批次成功，但不能显示成所有子操作成功。`outcome`取自Bridge同一回执；旧记录仅从直接动词ledger读取操作异常，不猜未记录的验证范围。明确提交、失败、回滚、排队和执行中仍各自标识；未知响应、未执行、回执过期或不可取得不显示成功。后台提交、轮询和取消按真实jobId关联，历史文本回执与canonical使用同一状态含义。工具成功不证明任务验证通过。
-“需要关注”是历史调用筛选，包含工具/Gate失败、子操作失败、检查failed/warning/unverified和需查回的结果；不表示当前工程未解决的问题数，也不评价成品质量。列表区分检查未通过、有警告、未验证；详情展示同一回执的计数、动词、已记录目标与原因。检查状态只读取生产者的outcome/check_status，不按语义字段、错误关键词或后续成功猜测。只有汇总而无明细时说明缺口；后续修复不改写历史。失败用红色，警告用暖橙，未验证用中性色并保留文字。
-窄窗口只显示列表或选中详情，提供固定“返回步骤列表”；不要把长详情堆在列表下方。
-摘要来自实际参数和返回证据；请求意图、观察结果与最终提交效果分别表达。
-一个模型请求可以产生多个调用，一个调用可以执行多个动词，一个动词可以创建多个节点。
-层级按请求 → 工具调用 → 动词 → 节点/检查展开，不能把批量节点数冒充工具调用数。
+| 内容 | 唯一维护源与派生入口 |
+|---|---|
+| 动词名称、目录摘要和执行版本 | [工具设计](tool-design.md) → [gen-verb-contract](../tools/gen-verb-contract.mjs) → `src/generated-verb-contract.ts` |
+| 动词完整结构与例子 | `houdini/verb-operation-contracts.json` → `gen-verb-contract-docs` → [verb-contracts](verb-contracts.md)；运行时由 `verb_help` 读取 |
+| 节点操作知识 | `houdini/node-operation-contracts.json` → `gen-node-card-docs` → [节点操作卡](node-operation-cards.md) |
+| 节点交付客户端 | [节点记录](../src/node-delivery-record.ts)、[卡片工厂](../client/node-delivery.js)、live-job 解码 → [生成器](../tools/gen-node-delivery-client.mjs) |
+| Houdini preset | [persona.md](../presets/houdini/persona.md) → `gen-agent-presets`；保留 DSH 标准能力，不替换其他 preset 或默认选择 |
 
-详情使用固定的结构：
+`npm run build` 生成上述 Host/客户端合同；`npm run docs:check` 验证漂移。加载新构建不等于运行中的 Desktop 或 Houdini 已更新，实际版本按[安装更新](setup.md)和[兼容设计](dsh-update-compatibility.md)核对，不为更新 UI 重启用户 live。
 
-- 创建：节点、类型、输入连接、显式输出、最终事务状态。
-- 设参：节点、参数、修改前/后值；未采集旧值时明确缺失，不用默认值或后续现场值代替。
-- 检查：目标、frame、范围、方法、通过/失败/未验证项；检查通过不能扩大为任务完成。
-- 渲染：产物、取景、帧、像素/裁面检查、原生附件传递与当前模型的视觉判断分别显示。
-- 失败：失败位置、原因、场景影响、回滚范围、后续修正调用；不能把所有拒绝都标为 Raw Gate。
-- 动词失败记录可以仅有error/summary而无result；详情分别展示错误、返回与补充证据，缺失返回明确标记，
-  不转为null或成功。null/false/0/空字符串仍保留真实值，打开失败详情和返回列表不得撤下Trace视图。
-- 原始请求、完整返回、stdout/stderr放在末层折叠；保留格式和来源，未知结构提供通用键值/列表展示。
+## 离线关联和计数契约
 
-视觉编码轻量且一致：底色、文字和边框跟随DSH深浅主题，暖橙表示选中项，错误单独标红并附文字，不依赖颜色表达状态。类型保留文字名称，不使用常驻彩色分类图例。状态色使用静态颜色，主题与选中变化不做延迟动画。
+[时序归一](../tools/normalized-trace-steps.mjs)、[会话解析](../tools/trace-session-lib.mjs)与 `execution-facts` 使用公开 Session 事件和 canonical 回执。请求按 turn/step、调用按 callId/jobId 关联；优先使用明确的 resultSeq 和原始回执，不用相邻时间或目录名称猜归属。并发返回不改变调用发起顺序；pending、unknown、结果过期与失败分别保留，不能自动重试或冒充成功。
 
-## 提示词的完整构成
+- 一次模型请求可有多个工具调用，一次调用可执行多个动词，一个动词可创建多个节点，分母不能混用。
+- `processOutcome` 区分送达结果与子进程真实退出；stdout 的错误字样不是退出事实，没有退出证据保持 unknown。
+- 模型 usage 按请求去重；同请求的多个工具不重复累计输入/输出，缺失用量不补零。缓存及推理字段按提供方定义，不重复相加。
+- 原始 provider/model/reasoningEffort/maxTokens、实际 HTTP 字段、模型报告用量和语义效果分别判断；缺少推理档保持未知，不回填为 off。
+- `rawUsage` 区分 Gate 拦截、只读候选、疑似/未知副作用和成功裸修改；`no_scene_change` 不排除文件或 Python 外部副作用。`exec` 含动词率不是修改意图覆盖率。
+- 历史结果、图片和关系检查不扩大语义范围。新图只替代已知同视图记录；图像传输、像素变化、模型自述和最终视觉通过分别保留，未成功语义识图就是未验证。
+- 重试分析只比较去重后的失败调用和回滚工作量；正常重复生成不算失败重试，字符数不冒充 token 或费用。
+- 原生工具失败、动词异常、验证 failed/warning/unverified 分开统计。后续修复不改写历史，后续成功也不抹掉前序失败。
 
-按最终模型请求保留来源、角色/字段、注册名、顺序、作用域、版本/内容 hash、正文和采集状态。
-字符数、token估算和模型实际 usage 分开；当前模板的路径、大小和摘要与历史请求正文分别标识。
-构建来源索引不能宣称为请求快照。
+具体证据判据由 [trace 分析 skill](../skills/houdini-trace-analysis/SKILL.md) 和 [证据回归](../tools/tests/trace-evidence-helpers.test.mjs)维护；不要在 UI 或报告中另写一套规则猜测成功。
 
-| 内容 | 权威来源 / 注册入口 | 需要保留的区别 |
-|---|---|---|
-| DSH身份、默认persona及其他系统段 | Host最终组装/模型请求；DSH SystemPrompt注册表 | 开关、作用域遮蔽、顺序、complete覆盖与最终生效情况 |
-| Houdini persona | [persona.md](../presets/houdini/persona.md)生成preset，经persona插件挂载 | 手写来源、生成preset路径与本次实际生效内容；不能只按磁盘文件断言已加载 |
-| 插件系统段 | [src/index.ts](../src/index.ts)的dsh-houdini:guidance | 一个注册段内可分主题阅读；阅读分组不冒充额外注册段 |
-| 消息指代现场摘要 | [src/context.ts](../src/context.ts)的dsh-houdini:scene-context | 按需采集一次的独立plugin消息；绑定消息/时间，选择不构成目标或授权；历史整包snapshot按当时来源展示 |
-| 执行提醒与恢复 | [src/execution-state.ts](../src/execution-state.ts)、[src/context.ts](../src/context.ts)的execution-state | 只在未决请求、活动任务或结果不可取得时提醒；已送达的同步错误留在原工具结果；消费执行历史事实，普通成功回包不追加，不是现场通过证书 |
-| 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)，由houdini_resource按需读取 | 用户/澄清/计划区分，不向每次请求自动追加来源副本 |
-| 工具定义 | [src/tools.ts](../src/tools.ts)与平台其他提供方，最终可见schema集合 | schema是独立请求组成；工具限制不会自动证明对应guidance也被删除 |
-| 项目指令与其他上下文 | 实际上下文提供方及最终消息 | 来源、角色、顺序；不凭插件名称猜正文或注入位置 |
-| 用户/assistant/tool历史、技能与参考正文 | 最终messages及读取/压缩/裁剪记录 | 已读取、仍保留、已压缩与已裁剪分别表达 |
+## 验证入口
 
-实际System按身份/运行环境、Houdini persona、插件执行规则、通用工具、长期目标/多agent、交付展示分类；未知内容单列。分类与来源片段均默认折叠，点击展开完整历史正文，保留原始序号及完整System原序视图。
-公开快照未提供逐段运行provenance时，来源文件仅标为文本规则匹配提示，不声称验证了历史版本或真实注册边界。不得以当前模板补写历史内容。
-当前构建来源清单只保存路径、文件大小、内容摘要和用于阅读分组的短段落前缀，不内联完整persona、
-guidance、SKILL.md、references或scripts正文。来源页展示当前定义位置，并从所选历史System定位实际片段。
-技能文本资源的大小与摘要按LF换行计算，避免不同Git检出的换行格式造成来源漂移；其他资源按原始字节计算。
-历史System和成功读取返回允许展开完整已采集正文；System原文保留最终组装顺序。
-Tools与Context按公开请求和上下文记录展示；最终Messages可见集合未采集时明确缺口，不拼装替代快照。
-配置中的插件清单只证明配置存在，不能代替实际贡献段清单；未采集、未注册、禁用、被覆盖不能混用。
-插件不得为了展示而绕过作用域重新组装另一个agent的提示词；应消费该请求自身的最终公开记录。
+- [节点交付客户端回归](../tools/tests/node-delivery-client.test.mjs)：原生/PTC 回执、历史重放、选中任务和失败导航。
+- [真实页面导航](../tools/tests/dsh-client-navigation.mjs)：原生轨迹往返、草稿保持、现场选择及其他模式不受额外界面影响。
+- [时序测试](../tools/tests/normalized-trace-steps.test.mjs)、[会话解析测试](../tools/tests/trace-session-lib.test.mjs)、[请求审计](../tools/tests/trace-request-telemetry.test.mjs)：关联、去重、usage 和未知状态。
+- [副作用分类](../tools/tests/trace-raw-effects.test.mjs)、[进程结果](../tools/tests/trace-process-outcome.test.mjs)、[证据测试](../tools/tests/trace-evidence-helpers.test.mjs)：执行范围与诊断口径。
+- `npm run docs:check`：文档索引、模块覆盖、生成合同和链接；`npm test` 中的动词合同检查 Host/Bridge 名称与执行版本一致。
 
-## 工具与动词设计视图
-
-命令工具的送达结果与子进程退出分别记录。`processOutcome`优先使用结构化退出字段，否则只识别DSH命令工具明确的尾部退出/超时/停止/信号标记；stdout中的错误字样不是失败证据。`processFailures`与`processInterruptions`分开统计，没有退出事实保持unknown。前端、HTML报告与证据提取使用同源规则；原生调用和PTC子调用使用同一语义。验证见[进程结果回归](../tools/tests/trace-process-outcome.test.mjs)。
-
-动词是稳定的操作意图接口，域只是导航，不是权限分类。工具入口展示职责和执行限制；动词目录
-按实际来源分组、计数，包含兼容项标识，不硬编码总数。签名与语义不确定时以运行时verb_help核对。
-
-动词详情应覆盖意图、签名、参数/默认值、返回、操作影响、错误/恢复、执行入口、相关能力和调用证据。
-这些字段须取自权威契约或同源派生数据；不能在前端手抄第二份动词说明。
-源码未提供结构化参数/返回边界时保留目录原文与缺失标识，不能通过名称或领域猜写权限。
-新增返回字段用通用结构展示；需要更好的领域呈现时维护相应renderer和验证，不能声称任意新语义都会自动理解。
-
-设计原则页只解释各层职责：preset管身份，guidance管跨域稳定约束，skill管领域方法，动词/guard管
-操作与执行边界，节点卡管节点知识。具体定义链接[工具设计](tool-design.md)及[执行契约](execution-contract.md)。
-
-## 技能读取与使用证据
-
-可发现目录来自当前作用域的历史注册记录；当前包资源索引从[随包注册](../src/skill.ts)及真实资源文件生成。
-索引保存资源路径、字节数和hash，不携带资源正文。正文展示来自历史skill调用、用户技能注入和实际资源读取，
-不以当前文件内容替换历史返回。agents元数据等文件不能仅因存在就算进入模型上下文。
-
-至少区分：已注册、模型可发现、正文已返回、参考资源已读取、本次上下文保留状态、对应行为证据。
-无读取事件只能说未见读取，记录不完整不能断言未使用。直接文件读取使用此前skill工具返回的
-资源目录和read的实际绝对路径关联；仅文件名、未解析相对路径或有歧义目录不归因。
-历史资源版本未采集时明确标注，不将当前包同路径内容冒充读取时版本。
-看到符合某条规则的动作不证明由该技能促成，也不证明全部规则已遵守。
-手动加载使用DSH原生`/技能名`，Trace只说明入口与读取事实。技能目录浏览不加载正文；
-比较有无技能指导应使用新会话，不能把禁用注册说成已清除历史正文。
-
-## 内容同步与版本
-
-同步按三种事实分别维护：当前源码定义、进程实际加载的能力、历史请求当时的内容。
-内容来源更新后，在按部署流程加载的进程中生成新快照；旧请求保留原版本，不被新文件覆盖。
-历史正文由请求与读取记录保存；当前构建hash只标识来源文件，不能恢复或认证历史正文。
-
-| 更新内容 | 当前通道 | Trace维护契约 |
-|---|---|---|
-| 动词名称、领域、目录签名和描述 | [catalog-lib](../tools/catalog-lib.mjs)解析tool-design；[生成器](../tools/gen-client-catalog.mjs)随build刷新client目录和Host契约 | 已有构建同步；UI加载更新包后生效。历史调用显示事实时需区分当时版本与当前目录 |
-| 节点卡 | [JSON源](../houdini/node-operation-contracts.json)生成[文档](node-operation-cards.md)，运行时返回相关证据 | Trace消费对应调用返回，不能拿最新卡替代过去返回 |
-| 工具schema与可见性 | 工具注册与每次请求的最终schema集合 | 已消费公开请求快照；新增工具不要求再维护前端名单。隐藏但已注册集合未采集 |
-| skill正文与资源 | src/skill.ts在模块加载时读取注册SKILL.md，并注册resourceBase | 改文件不热更新已经加载的正文；新增随包skill还需加入注册清单。当前资源索引由gen-trace-client随build刷新，读取正文与状态来自历史记录 |
-| preset / guidance | persona.md生成preset后挂载，guidance参与SystemPrompt组装 | 实际System从请求快照读取；gen-trace-client只生成当前来源身份与短匹配前缀，修改来源后重建 |
-| 动态上下文、读取事件、模型usage | 实际请求、工具结果、上下文及usage事件 | 已通过公开快照关联；最终messages可见集合未采集，历史存在不证明仍在上下文 |
-
-构建更新不等于正在运行的Host或WebView已经加载。具体同步、重载与重启边界遵循
-[安装更新](setup.md)和[兼容设计](dsh-update-compatibility.md)，不能为更新Trace擅自重启用户live。
-设计原型中的示例数据、源码摘录和手写展示样例不得成为生产同步机制。
-
-## 调用关联与计数
-
-Trace适配公开事件/快照，按session/agent、请求标识、callId、jobId及事件顺序关联，不依赖
-未声明的Session内部字段。具体字段使用Host提供的公开契约，不能把展示模型当成现有事件API。
-[轨迹投影](../client/trace-model.js)按每份公开快照建立一次请求和调用索引：请求按turn/step分组，
-优先匹配resultSeq，再取调用之前最近的已完成请求或当时最后请求；不以相邻时间猜归属。
-callId索引用于并行调用、父子调用和选中详情关联，UI直接消费投影；回包区块由runtime解析一次并复用。
-[时序归一](../tools/normalized-trace-steps.mjs)与[会话解析](../tools/trace-session-lib.mjs)
-提供离线结果配对、回放去重和异常结果诊断；客户端投影与离线归一变更时需核对两端口径。
-并发结果按原调用更新，不因返回乱序改写调用顺序；缺失结果保留pending/unknown，不能当成功或自动重试。
-
-模型usage按请求去重。同一次请求的多个工具共享输入/输出usage，不均分或重复累计为各工具独占消耗。
-
-离线请求记录保留当时header中的provider/model/reasoningEffort/maxTokens及适配器回放记录的API；缺少的推理档保持未知，不记为off，也不以当前配置回填历史。不复制任意配置对象或headers。配置声明、实际HTTP字段、模型报告用量和语义效果分开判断；相同模型名不是完整的对照条件。
-原生tool/result的meta.canonical保留完整Bridge返回（仍受Bridge原本限额约束）；UI和离线normalizer
-优先使用它恢复精确动词参数、结果和证据，resultText仍是实际模型文本，不将展开metadata算入模型字符成本。
-result_ref分页读取单独计为Host详情读取，不计新HOM调用/裸探针。旧事件仍按原文本解析；只有文件引用而无
-canonical metadata时标referenced_artifact_only，不能把压缩占位当作参数/证据缺失的确定事实。
-工具参数/返回文本长度可独立估算并标注tokenizer/口径；工具返回不是模型输出，进入后续请求时可能被压缩或裁剪。
-没有usage显示未采集，不能显示0；缓存、推理token字段是否包含在总量内以提供方定义为准，不重复相加。
-离线提取器和HTML报告复用collectRequestTelemetry：兼容旧assistant/chunk usage与V3 assistant/message.usage
-（含interrupted结算），按turn/step保留最新累计usage，混合记录不重复累计，缺失用量不补零，区分重复与更新，
-记录字段覆盖和算术不一致；逐轮上游错误不被后续completed覆盖，不混入工具失败计数。
-原始请求取首次工具前最早的用户消息；恢复口令不替换它。目标变更和compaction只报告已记录事件，
-不由它们推断完整输入保留状态。验证入口为[请求审计回归](../tools/tests/trace-request-telemetry.test.mjs)。
-
-分析分别记录目录广度、调用含动词率、动词密度、只读query守卫范围、Gate拦截、裸修改候选、疑似/未知副作用及回滚工作量。
-工具失败次数、动词异常次数、返回验证的失败/警告/未验证次数使用各自分母，不把一次捕获异常同时算成新的验证失败；历史回读不增加原执行次数。
-客户端投影集中生成统计，UI只组织指标标签和展示值，不再次扫描请求归属或重新解释副作用。
-客户端分析、离线evidence与HTML共用evidence-helpers的classifyRawEffect/collectVerbAdoption；生成器嵌入同源函数，
-不各自按方法名前缀推导只读。canonical rawUsage优先，blocked/read_only_blocked包含外部复制等疑似操作；
-仅成功query且无副作用候选计rawReadOnlyCalls。动态exec保留unknown，no_scene_change不排除文件/Python全局副作用。
-成功exec含动词率包含测试与动态函数，不解释成mutation-intent覆盖率；result_ref/request_ref/source_ref回读排除在新HOM调用外。
-兼容字段execUsedForReadOnly保持空数组，execWithoutVerbEvidence按effect列出无动词exec，停止从“未检出修改”推定只读。
-Gate统计不是完整副作用审计，零裸修改候选不证明没有修改。验证见[副作用分类回归](../tools/tests/trace-raw-effects.test.mjs)。
-离线retryWork基于已去重调用，分别给出提交/失败/已应用回滚代码字符和被回滚的成功build ledger条目。
-近重复只在有界窗口比较失败调用后的相同行多重集，给出步骤定位和差异片段；输出分析阈值及跳过范围。
-相似度不证明代码语义等价或确定浪费，成功模块的正常重复生成不计为失败重试；字符数不冒充token或节省量。
-不把目录命中或工具成功当作实体关系/视觉/任务正确性的证明。Trace证据提取遵循
-[trace分析skill](../skills/houdini-trace-analysis/SKILL.md)，先提取证据再生成报告。
-skill catalog优先读取历史消息的`source.kind=skill-catalog`、`form=catalog`及`entries[].name`，旧格式才解析文本；数量只说明当时曝光，不说明已加载。
-质量契约证据纳入用户原话和按question id关联的成功澄清回答；只读被选选项描述及实际custom文本，
-不拿问题标题或未选项当已确认要求。首次修改后的澄清保留来源，但不倒填初始契约。
-手写关系probe只作为候选：需代码中的几何读取和实际输出中的关系标签/数值，允许结果字典后统一输出；
-构建注释、嵌入源码、硬写数值、失败/回滚/恢复不确定调用不证明有效测量，候选不认证实体范围或阈值正确。
-视觉新鲜度以生成步骤为起点，按明确输出路径/relay映射关联读图，直到轨迹结束追查后续修改；重读旧图
-不刷新其生成版本。已知目标变化标stale，影响不明或恢复未确认标unverified，未关联图片不强猜来源。
-最终视觉通过措辞与已关联旧视图冲突只产生范围复核提示，不做艺术判决；修改后新图仅替代已知同视图记录，
-不推导完整视角覆盖。失败的后续读图不能覆盖此前已成功访问但过期的证据。
-manualReview并列保留读图返回、后续模型解读和最终声明，语义冲突、艺术正确性和未知probe范围由人工复核，
-不扩关键词来自动裁定。原生图片证据关联其tool result后的下一条assistant消息序号与短摘录，
-仍保持`semanticStatus=unverified`；审计者须查看原图、描述及目标后判定，不把模型自述自动记为成功inspection。
-taskSources仅记录index发现与原文分页返回；部分页、失败和缺返回分别标识，未回读不等于未消费
-（原消息可能已在上下文中），回读也不证明理解或验收义务完整。
-上述判据由[证据回归](../tools/tests/trace-evidence-helpers.test.mjs)验证。
-
-## 验证与维护入口
-
-当前自动验证入口：
-
-- `npm run docs:check`：文档索引、docs/skills/evaluation链接、模块覆盖、节点卡及Trace来源生成一致性。
-- [verb-contract测试](../tools/tests/verb-contract.test.mjs)：目录名称、Host生成契约和Bridge注册/执行版本一致。
-- [client-session-hint测试](../tools/tests/client-session-hint.test.mjs)：client注册与公开trajectory读取适配。
-- [时序测试](../tools/tests/normalized-trace-steps.test.mjs)、[会话解析测试](../tools/tests/trace-session-lib.test.mjs)、
-  [证据测试](../tools/tests/trace-evidence-helpers.test.mjs)：结果关联、去重和证据口径。
-
-[Trace回归](../tools/tests/trace-view.test.mjs)检查公开快照关联、历史System、usage去重与分桶、
-回放去重、看板交互及来源索引漂移。`node tools/gen-trace-client.mjs --check`只读验证runtime、投影、组件和来源索引生成一致。
-相应数据通道与renderer的验收必须包含：
-
-- 修改同源定义后，新目录/新请求反映更新；旧请求保留旧内容；移除、重命名与未知工具均有可解释状态。
-- skill正文读取、reference读取、压缩/裁剪分别可追溯；不能由已注册推断已读取。
-- System段遮蔽/禁用、变量替换和工具可见性变化按最终请求反映；缺失历史快照不回填当前文件。
-- 一请求多调用、并发乱序、执行中/取消、重复回放、部分失败与回滚不重复计数或误报提交。
-- tokens缺失、共享请求、缓存和估算不混计；结构通过与视觉未验证可同时存在。
-- 不展开原始代码就能指出创建节点、参数变化、失败位置与最终保留的修改；未知返回仍能清楚阅读。
-- 五个看板之间保留步骤/请求关联；类型配色和状态分离，深浅主题、窄窗口与键盘可用。
-
-实现/契约变更时就地更新本页；不追加阶段计划、会话日志或测试结果，也不把领域说明复制进本页。
+实现或合同变更时就地更新本页，不追加阶段计划、会话流水或单次结果。

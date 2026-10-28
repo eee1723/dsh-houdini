@@ -54,19 +54,6 @@ try {
  }else{
  const initial=await evaluate(NATIVE_SELECTION);assert.equal(initial.agentPreset,'standard');assert.equal(await evaluate('document.querySelectorAll("[data-houdini-window-pin]").length'),0)
  const baseline=(await oracle()).pinned;assert.equal(baseline,false,'fresh test Native window baseline must be false')
- if(config.companion){
-  const bundle=(await rpc('pluginManager/listBundles')).find(row=>row.name==='dsh-chatgpt-subscription');assert(bundle?.installed&&bundle.enabled)
-  await click(`document.querySelector('button[data-signed-out][aria-haspopup=menu]')`,'Native account/More menu')
-  await click(`[...document.querySelectorAll('[role=menuitem]')].find(e=>/^(设置|Settings)/.test(e.textContent.trim()))`,'Native Settings')
-  await until('document.querySelector("[data-shortcut-modal=settings]")','Native Settings modal')
-  await click(`[...document.querySelector('[data-shortcut-modal=settings]').querySelectorAll('button')].find(e=>e.textContent.trim()==='ChatGPT 订阅')`,'independent native settings.section')
-  await until('document.querySelector("[data-chatgpt-subscription-settings]")?.innerText.includes("未连接")','real unauthenticated subscription status')
-  assert.equal(await evaluate('!!document.querySelector("[data-chatgpt-subscription-settings] [role=alert]")'),false)
-  report.companionNativeSettings={installedVersion:bundle.version,sectionVisibleInStandardMode:true,actualDisconnectedStatus:true,loginStarted:false,cloudModelCalled:false};await shot('independent-subscription-native-settings')
-  await page.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await page.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27})
-  await until('!document.querySelector("[data-shortcut-modal=settings]")','Native Settings closed without login')
- }
-
  await click(`document.querySelector('button[title="选择新任务使用的 Agent 预设"],button[title="Choose the agent preset for your new task"]')||document.querySelector('[data-slot="conversation.hero.agentPreset"] button[aria-haspopup=menu]')||[...document.querySelectorAll('button[aria-haspopup=menu]')].find(e=>/标准|Standard/.test(e.textContent))`,'Native mode picker')
  await click(`[...document.querySelectorAll('[role=menuitem]')].find(e=>/Houdini/.test(e.textContent))`,'Native Houdini mode')
  await until('document.querySelector("[data-houdini-project-label]")&&document.querySelector("[data-houdini-window-pin]")','Houdini blank Pin')

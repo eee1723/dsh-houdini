@@ -10,7 +10,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION} from './generated-verb-contract.js'
 import {DesktopIntegration} from './desktop-integration.js'
 import type {ExecutorController} from './executor-controller.js'
-import {VIDEO_DEFAULTS} from './video-configuration.js'
+import {VIDEO_DEFAULTS,configureVideo} from './video-configuration.js'
 import {DesktopWindowController} from './desktop-window.js'
 
 export const name='dsh-houdini-frontend-host'
@@ -78,6 +78,9 @@ export class HoudiniFrontend extends TypertRemoteService {
 
   @Remote
   videoSettings() {return videoModels(this.ctx)}
+
+  @Remote
+  videoConfigure(input:unknown) {return configureVideo(this.ctx,input as Record<string,unknown>)}
 
   @Remote
   async videoDiagnostics() {

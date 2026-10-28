@@ -64,7 +64,7 @@ if (!sessionFile || !fs.existsSync(sessionFile)) {
 }
 
 // ---------- catalog from tool-design.md ----------
-// 解析逻辑在 tools/catalog-lib.mjs（与 gen-client-catalog.mjs 共用）。
+// 解析逻辑在 tools/catalog-lib.mjs（与 gen-verb-contract.mjs 共用）。
 
 // ---------- parse trace ----------
 const loadedSession = loadSessionEvents(sessionFile);

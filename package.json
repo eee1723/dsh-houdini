@@ -1,6 +1,6 @@
 {
   "name": "dsh-houdini",
-  "version": "0.1.1-rc.3",
+  "version": "0.1.1-rc.4",
   "private": true,
   "description": "DeepSeek Harness plugin that lets the agent control SideFX Houdini",
   "type": "module",
@@ -53,9 +53,9 @@
     "runtime/video"
   ],
   "scripts": {
-    "build": "npm run docs:generate && node tools/gen-client-catalog.mjs && node tools/gen-trace-client.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
+    "build": "npm run docs:generate && node tools/gen-verb-contract.mjs && node tools/gen-node-delivery-client.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",
     "docs:generate": "node tools/gen-project-layout-docs.mjs && node tools/gen-node-card-docs.mjs && node tools/gen-verb-contract-docs.mjs && node tools/gen-agent-presets.mjs && node tools/gen-tool-docs.mjs",
-    "docs:check": "node tools/gen-project-layout-docs.mjs --check && node tools/gen-tool-docs.mjs --check && node tools/gen-node-card-docs.mjs --check && node tools/gen-verb-contract-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-trace-client.mjs --check && node tools/tests/docs-contract.test.mjs",
+    "docs:check": "node tools/gen-project-layout-docs.mjs --check && node tools/gen-tool-docs.mjs --check && node tools/gen-node-card-docs.mjs --check && node tools/gen-verb-contract-docs.mjs --check && node tools/gen-agent-presets.mjs --check && node tools/gen-verb-contract.mjs --check && node tools/gen-node-delivery-client.mjs --check && node tools/tests/docs-contract.test.mjs",
     "test": "npm run build && node tools/run-node-tests.mjs",
     "prepare": "npm run build",
     "runtime:prepare": "node tools/prepare-dsh-runtime.mjs"

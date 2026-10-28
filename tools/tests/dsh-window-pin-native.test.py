@@ -10,7 +10,7 @@ reexec_unpacked_test_cli()
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
 from dsh_deployment import _process_started
 
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ui',action='store_true');parser.add_argument('--artifact',type=Path);parser.add_argument('--source-snapshot',action='store_true');parser.add_argument('--companion-artifact',type=Path);parser.add_argument('--expected-integrity');args=parser.parse_args()
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--ui',action='store_true');parser.add_argument('--artifact',type=Path);parser.add_argument('--source-snapshot',action='store_true');parser.add_argument('--expected-integrity');args=parser.parse_args()
 if args.artifact:assert args.ui,'--artifact is only used by --ui'
 desktop=Path('D:/dshdesktop');electron=desktop/'DeepSeek Harness.exe'
 fixture=Path(tempfile.mkdtemp(prefix='dsh-native-pin-'));print('Owned Native pin fixture:',fixture,flush=True)
@@ -159,9 +159,6 @@ await fs.writeFile(file+'.tmp',JSON.stringify(facts));await fs.rename(file+'.tmp
         install=run([electron,'--expose-internals',desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js','plugin','--profile','desktop','add',artifact,'--store-dir',fixture/'package-manager/store'],timeout=240)
         report['buildApprovalRequested']=b'ERR_PNPM_IGNORED_BUILDS' in install.stdout+install.stderr
         assert not report['buildApprovalRequested']
-        if args.companion_artifact:
-            companion=args.companion_artifact.resolve(strict=True);report['companionArtifactSha256']=digest(companion)
-            run([electron,'--expose-internals',desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js','plugin','--profile','desktop','add',companion,'--store-dir',fixture/'package-manager/store'],timeout=240)
         env.pop('ELECTRON_RUN_AS_NODE',None)
         installed=profile/'node_modules/dsh-houdini'
         report['installedClientSha256']=digest(installed/'client.js');report['installedWindowSha256']=digest(installed/'lib/desktop-window.js')
@@ -206,7 +203,7 @@ try{const value=await call('Runtime.evaluate',{expression:body,returnByValue:tru
         port=wait(browser_port,'own renderer CDP')
         (fixture/'conversation').mkdir()
         ui_input=fixture/'ui-input.json';ui_output=fixture/'ui-result.json'
-        ui_input.write_text(json.dumps({'port':port,'mainInspector':url,'mainPid':process.pid,'pluginPackage':str(plugin/'package.json'),'recordPath':str(Path(env['DSH_HOME'])/'dsh-houdini/window-pins'/(str(process.pid)+'.json')),'conversation':str(fixture/'conversation'),'companion':bool(args.companion_artifact),'output':str(ui_output)}),encoding='utf-8')
+        ui_input.write_text(json.dumps({'port':port,'mainInspector':url,'mainPid':process.pid,'pluginPackage':str(plugin/'package.json'),'recordPath':str(Path(env['DSH_HOME'])/'dsh-houdini/window-pins'/(str(process.pid)+'.json')),'conversation':str(fixture/'conversation'),'output':str(ui_output)}),encoding='utf-8')
         ui_run=subprocess.run([shutil.which('node'),str(ROOT/'tools/tests/desktop-window-pin-ui-probe.mjs'),str(ui_input)],cwd=fixture,env=env,capture_output=True,timeout=240)
         if ui_output.exists():report['ui']=json.loads(ui_output.read_text(encoding='utf-8'))
         assert ui_run.returncode==0,(ui_run.stdout+ui_run.stderr).decode('utf-8',errors='replace')

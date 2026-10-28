@@ -32,7 +32,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 ## 命令与入口
 
 - 构建：npm install && npm run build，只用npm，不运行pnpm。生成器刷新节点卡与动词结构文档、
-  唯一preset声明、工具说明、client.js目录和src/generated-verb-contract.ts，再由tsc输出lib；不手改生成区或lib。
+  唯一preset声明、工具说明、Host动词合同和节点交付客户端，再由tsc输出lib；不手改生成区或lib。
 - 文档门：npm run docs:check；完整Node回归：npm test。日常按受影响能力选择检查；涉及执行内核时用隔离hython覆盖raw-gate、node-ownership、caught-failure、tab-create-failure、object-parenting和scene/network/render。
   正式发布前覆盖H21/H22；纯文档、前端或模块整理不机械触发整套HOM/GUI/模型评测。方法见docs/development.md，结果不写成docs流水账。
 - Houdini原生菜单标签仅使用ASCII英文（中文在部分安装中无法显示）；Qt窗口与网页界面使用中文。

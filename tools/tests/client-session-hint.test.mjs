@@ -48,10 +48,10 @@ async function fixture(options={}){
   intent,async close(){for(const stop of disposers.reverse())stop();await flush()},refreshGate(value){refreshGate=value}}
 }
 
-const enabledIds=['houdini-video','houdini-initial-project','houdini-initial-window-pin','houdini-project-label','houdini-window-pin','houdini-project-feedback','houdini-support-report','houdinitrace']
+const enabledIds=['houdini-initial-project','houdini-initial-window-pin','houdini-project-label','houdini-window-pin','houdini-project-feedback','houdini-support-report']
 const app=await fixture()
 assert.equal(app.calls.filter(call=>call.method==='houdiniFrontend/desktopIntent').length,1,'root client owns one consumer')
-assert.deepEqual([...app.slotsMap.keys()],['houdini-navigation-feedback','houdini-delivery-scope'],'other modes expose no domain controls; the empty navigation overlay remains lifecycle-owned')
+assert.deepEqual([...app.slotsMap.keys()],['houdini-navigation-feedback','houdini-video','houdini-delivery-scope'],'other modes expose no scene controls; global tutorial settings remain available')
 assert.equal(app.current.getSnapshot().key,'standard')
 app.current.set({key:'houdini-a'})
 await flush()
@@ -127,7 +127,6 @@ assert.equal(latest.input.after,0,'a restarted Host has its own sequence')
 changed.intent(8,null);await flush();changed.intent(1);await flush();assert.deepEqual(changed.opened,['houdini-a'])
 await changed.close()
 
-assert(!source.includes('createChatGptSettings('),'account ownership remains in Desktop')
 assert(!source.includes('createWorkbenchUpdates('),'host update ownership remains in Desktop')
 assert(!source.includes('dsh-houdini-workspace'),'no private Qt URL navigation path remains')
-console.log('Desktop client: native selected session, menu/launch isolation, mode-only controls/Trace/settings, navigation cancellation, acknowledgement and reconnect passed')
+console.log('Desktop client: native selected session, menu/launch isolation, mode-only controls and global settings, navigation cancellation, acknowledgement and reconnect passed')

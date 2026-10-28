@@ -7,14 +7,14 @@ dsh-houdini是Cordis形状的DeepSeek Harness插件，不是独立MCP服务器�
 用户内容输出锚定$HIP，插件源码不是任务工作区。后台job是异步排队，不是同一HOM会话并行。
 
 ```text
-浏览器 → bare dsh-houdini frontend-host → DSH根client graph与Houdini Trace
+浏览器 → bare dsh-houdini frontend-host → DSH根client graph、原生轨迹与节点交付
 用户消息 → Houdini preset内dsh-houdini/agent + persona + 按需skill
          → src/context.ts + scene-context.ts：事实上下文与一次现场指代观察
          → src/tools.ts → tool-runtime.ts / tool-query.ts → src/bridge.ts
          → dsh_bridge.py：HTTP → 主线程队列 → dsh_execution.py
          → dsh_hou_helpers.py → SOP/几何/相机模块
          → dsh_execution_results.py：结构化结果与证据
-         → tool-output.ts / execution-history.ts → 模型上下文与client/trace
+         → tool-output.ts / execution-history.ts → 模型上下文、原生轨迹与节点交付
 ```
 
 静态文档和构建通过不证明live已加载。查看当前/预期版本与重载要求使用[兼容设计](dsh-update-compatibility.md)
@@ -39,7 +39,7 @@ Houdini侧Package/helper由显式组件准备和真正新开Houdini前的同一�
 
 Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该模式恢复进入前的窗口层级。当前公开客户端没有窗口置顶合同，因此使用Windows窄适配：Host只能定位自己的Desktop父进程及窗口，不接受浏览器提供PID或窗口句柄；复用官方安装已有的Koffi，不带另一份Electron。窗口身份不明确时不操作，插件重载/卸载恢复自己的变更。退出条件是官方提供等价窗口接口，届时替换该适配。
 
-ChatGPT订阅作为独立的标准模型插件提供，使用DSH原生授权会话、凭据存储及模型菜单，与Houdini模式解耦；不为Houdini建立账户平台。Houdini侧仅保留接入、组件维护和离线诊断小窗口。完整会话诊断仍由Desktop提供，本端离线报告只包含明确的组件与连接事实。
+模型与账户由DSH原生接口及用户选择的提供方管理；可选的第三方模型插件独立安装、升级和授权，不进入Houdini发行依赖。Houdini不维护订阅登录、账户数据库或授权迁移。Houdini侧仅保留接入、组件维护和离线诊断小窗口。完整会话诊断仍由Desktop提供，本端离线报告只包含明确的组件与连接事实。
 
 ## 职责分层
 
@@ -98,13 +98,13 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 
 | 源码 | 维护职责 |
 |---|---|
-| [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具的职责唯一源，注册、Trace与[工具说明](tools.md)共用 |
-| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息与原生/嵌套持久工具日志适配；精确live job结果解码唯一源，客户端由生成器复用；日志原值与展示限额分离，不从普通作业文本猜Houdini事实 |
+| [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具的职责唯一源，注册、节点交付及[工具说明](tools.md)共用 |
+| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息与原生/嵌套持久工具日志适配；精确live job结果解码唯一源，节点交付生成器复用；日志原值与展示限额分离，不从普通作业文本猜Houdini事实 |
 | [src/live-jobs.ts](../src/live-jobs.ts) | 先原生jobs准入再提交现场任务，按原runtime观察/请求队列取消，卸载释放本机观察；不重放代码、不把断线或取消意图冒充HOM终态 |
 | [src/execution-facts.ts](../src/execution-facts.ts) | 同源增量执行事实转换；在线只维护待处理事实和必要锚点，冷历史读取可捕获原始记录；不建立任务完成账本 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管；一次性执行和开发评测复用 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
-| [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页只做配置发现与本机依赖诊断；模型工具通过preset内dsh-houdini/agent加载 |
+| [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页直接保存同源配置并诊断本机依赖；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
 | [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
@@ -144,11 +144,10 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |
 | [dsh_load_warnings.py](../houdini/python3.11libs/dsh_load_warnings.py)、[结果预算](../houdini/result-detail-policy.json) | 主线程只采集有界首尾预览，HTTP worker按既有结果格式保存完整警告；同内容复用hash文件，后续现场仅引用，失败不回填全文；预算与Host结果读取同源 |
-| [client.js](../client.js) | DSH CJS factory；普通任务导航、紧凑工程状态与选择组件、共享在线观察和按需Trace诊断 |
-| [client/trace-runtime.js](../client/trace-runtime.js) | 回包解析与诊断组件创建；构建进入同一个DSH客户端bundle |
-| [client/trace-model.js](../client/trace-model.js) | 公开轨迹的请求/调用索引、关系和统一统计；与React渲染分离 |
-| [client/trace-view.js](../client/trace-view.js)、[trace-view.css](../client/trace-view.css) | 消费轨迹投影的记录/资料/高级诊断、历史正文、结构化详情与来源路径展示 |
+| [client.js](../client.js) | DSH CJS factory；普通任务导航、紧凑工程状态与选择组件、全局教程设置及节点交付；通用调用详情复用DSH原生轨迹 |
 | [client/node-delivery.js](../client/node-delivery.js) | 原生/嵌套回执的节点卡片投影，使用DSH公开Conversation与回复尾部插槽；文件交付继续由DSH负责 |
+| [gen-node-delivery-client.mjs](../tools/gen-node-delivery-client.mjs) | 只生成同源live-job解码与节点交付客户端，不再生成独立Trace或提示词镜像 |
+| [gen-verb-contract.mjs](../tools/gen-verb-contract.mjs) | 从tool-design生成Host动词名称、摘要、hash与执行版本，构建及docs:check共同校验 |
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
@@ -170,20 +169,6 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 后续导航取消、实际已选任务和意图消费仍取原生状态，不读取私有启动标记或另建选择缓存。
 入口只消费Host返回的精确session ID；从某个Houdini进入默认创建明确preset的原生对话，继续历史需明确指定原对话。
 不按目录和历史顺序自动找任务；原位重试复用同request ID，用户操作或新意图取消旧导航。
-
-### 独立ChatGPT订阅模型插件
-
-生产入口位于[packages/dsh-chatgpt-subscription](../packages/dsh-chatgpt-subscription/README.md)，单独安装、启用和卸载，通用于宿主其他模式。它不进入Houdini工具scope、发行依赖或默认模型设置。
-
-| 源码 | 维护职责 |
-|---|---|
-| [index.ts](../packages/dsh-chatgpt-subscription/src/index.ts)、[types.ts](../packages/dsh-chatgpt-subscription/src/types.ts) | 标准插件注册、授权/模型公开服务与安全前端Remote合同 |
-| [accounts.ts](../packages/dsh-chatgpt-subscription/src/accounts.ts) | 账户连接、明确选择、目录读取和本次请求固定身份；不接管其他提供方账户 |
-| [oauth.ts](../packages/dsh-chatgpt-subscription/src/oauth.ts) | 官方SiWC安装身份、动态注册、回调与OIDC验证、刷新轮换恢复；无Codex/API-key回退 |
-| [store.ts](../packages/dsh-chatgpt-subscription/src/store.ts) | 复用原生CredentialService保存本插件命名空间；敏感grant经Windows DPAPI加密；账户刷新互斥仅占自身文件锁，宿主凭据事务不等待网络，无独立auth.json或其他账户迁移 |
-| [adapter.ts](../packages/dsh-chatgpt-subscription/src/adapter.ts)、[transport.ts](../packages/dsh-chatgpt-subscription/src/transport.ts) | 组合DSH公开PiAiAdapter及公开消息转换器，维护SiWC窄传输策略、账户绑定与完整终态；不复制编码器、不修改宿主SDK或共享解析 |
-| [errors.ts](../packages/dsh-chatgpt-subscription/src/errors.ts) | 安全错误投影，区分授权、计划权限、目录与实际请求 |
-| [client.js](../packages/dsh-chatgpt-subscription/client.js) | 原生设置薄页面，连接、选择、断开与目录状态；模型选择继续使用DSH原生菜单 |
 
 ## Houdini执行模块
 

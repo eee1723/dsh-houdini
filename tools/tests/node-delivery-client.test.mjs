@@ -12,7 +12,7 @@ import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {installHoudiniExecutionLog,liveJobResult,LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
-import {generatedNodeDeliveryBlock,generatedNodeDeliveryFactory} from '../gen-trace-client.mjs'
+import {generatedNodeDeliveryBlock,generatedNodeDeliveryFactory} from '../gen-node-delivery-client.mjs'
 
 const read = file => fs.readFileSync(new URL('../../'+file,import.meta.url),'utf8').replaceAll('\r\n','\n')
 const client = read('client.js')

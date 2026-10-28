@@ -10,9 +10,9 @@
 | [当前交接](handoff.md) | 未完成动作的优先级、依赖、验证缺口与移除条件；完成即删，不积累历史 |
 | [系统架构](architecture.md) | 官方Desktop插件的目标产品形态、两条用户入口及当前Host、Bridge、启动器、UI等生产模块索引 |
 | [主要开发方向](development-directions.md) | 三项主要方向、COP按需能力边界、共用可靠性能力、目标交付与验收原则；不复制活动待办，不包含自动知识沉淀 |
-| [Houdini Trace设计](houdini-trace-design.md) | 记录/资料/诊断信息架构、详情规范、提示词/工具/技能来源、版本同步与计数契约；明确生产接入边界 |
+| [Houdini Trace设计](houdini-trace-design.md) | DSH原生轨迹、Houdini节点交付、离线诊断信息来源、版本同步与计数契约；不再维护第二套执行记录界面 |
 | [工具说明](tools.md) | 工具分别为何存在、输入、返回与执行位置；由tool-catalog生成 |
-| [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host/浏览器目录 |
+| [工具设计与词表](tool-design.md) | 动词目录唯一源、版本握手、设计准入；生成Host执行合同 |
 | [按需动词契约](verb-contracts.md) | verb_help读取的输入/成功返回结构、Python示例和作用域；由verb-operation-contracts.json生成 |
 | [执行与证据契约](execution-contract.md) | ownership、Raw Gate、事务、模块构建、几何/控制/渲染边界 |
 | [工程文件与图像目录](project-files.md) | 同源目录角色、真实HIP锚点、显式目的地、Save As与文件生命周期 |

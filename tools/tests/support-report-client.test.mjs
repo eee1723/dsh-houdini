@@ -3,7 +3,7 @@ import vm from 'node:vm'
 import assert from 'node:assert/strict'
 
 const source=fs.readFileSync('client.js','utf8')
-const fragment=source.slice(source.indexOf('    function createSupportReporter('),source.indexOf('    function HoudiniTrace('))
+const fragment=source.slice(source.indexOf('    function createSupportReporter('),source.indexOf('    function apply('))
 const hooks=[],effects=[],requests=[],downloads=[]
 let cursor=0,sessionId='task-a',generation={id:1},respond
 const React={Fragment:'fragment',createElement:(tag,props,...children)=>typeof tag==='function'?tag({...props,children:children.flat(Infinity)}):({tag,props:props??{},children:children.flat(Infinity)}),
