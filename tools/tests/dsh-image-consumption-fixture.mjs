@@ -10,6 +10,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {deflateSync} from 'node:zlib';
+import {createRun} from '../output-artifacts.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -141,19 +142,30 @@ export function apply(ctx) {
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const [runtimeArg,outputArg]=process.argv.slice(2);assert(runtimeArg,'usage: node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]');
-  const runtime=path.resolve(runtimeArg),outputRoot=path.resolve(outputArg??path.join(root,'tools/out/system-feedback-cost'));
+  const runtime=path.resolve(runtimeArg);
   const version=JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version;assert.equal(version,JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).preferredVersion);
-  fs.mkdirSync(outputRoot,{recursive:true});const run=fs.mkdtempSync(path.join(outputRoot,'image-consumption-'));
-  const workspace=path.join(run,'workspace'),home=path.join(run,'home'),temp=path.join(run,'temp'),output=path.join(run,'report.json');fs.mkdirSync(workspace);fs.mkdirSync(home);fs.mkdirSync(temp);
+  const evidence=await createRun({label:'image-consumption',kind:'evidence',isolation:'isolated'},outputArg?{root:path.resolve(outputArg)}:undefined);
+  const scratch=await createRun({label:'image-consumption-host',kind:'tmp',isolation:'isolated'},outputArg?{root:path.resolve(outputArg)}:undefined);
+  const run=evidence.directory;
+  let child,childClosed,log,exited,succeeded=false;
+  try{
+  const workspace=path.join(run,'workspace'),home=path.join(scratch.directory,'home'),temp=path.join(scratch.directory,'temp'),output=path.join(run,'report.json');fs.mkdirSync(workspace);fs.mkdirSync(home);fs.mkdirSync(temp);
   for(const [index,name]of ['reference.png','A.png','B.png'].entries())fs.writeFileSync(path.join(workspace,name),fixturePng(index));
-  const patch=path.join(run,'fixture.patch.yml');fs.writeFileSync(patch,'- id: session-title-llm\n  disabled: true\n- id: spill-local\n  config:\n    root: '+JSON.stringify(path.join(run,'spill').replaceAll('\\','/'))+'\n    cleanupPeriodDays: 0\n- insert:\n    - id: image-consumption-fixture\n      name: '+JSON.stringify(fileURLToPath(import.meta.url).replaceAll('\\','/'))+'\n');
+  const patch=path.join(run,'fixture.patch.yml');fs.writeFileSync(patch,'- id: session-title-llm\n  disabled: true\n- id: spill-local\n  config:\n    root: '+JSON.stringify(path.join(scratch.directory,'spill').replaceAll('\\','/'))+'\n    cleanupPeriodDays: 0\n- insert:\n    - id: image-consumption-fixture\n      name: '+JSON.stringify(fileURLToPath(import.meta.url).replaceAll('\\','/'))+'\n');
   const env=Object.fromEntries(['PATH','Path','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','APPDATA','LOCALAPPDATA','COMSPEC','PATHEXT'].filter(name=>process.env[name]!==undefined).map(name=>[name,process.env[name]]));
   Object.assign(env,{TEMP:temp,TMP:temp,DSH_HOME:home,DSH_IMAGE_CONSUMPTION_OUT:output,DSH_IMAGE_CONSUMPTION_WORKSPACE:workspace,DSH_IMAGE_CONSUMPTION_RUNTIME:runtime});
-  const cli=path.join(runtime,'node_modules/@deepseek-ai/dsh/lib/bin.js'),log=fs.openSync(path.join(run,'host.log'),'w');
-  const child=spawn(process.execPath,[cli,'web','--patch',patch,'--host','127.0.0.1','--port','0','--no-open'],{cwd:workspace,env,stdio:['ignore',log,log],windowsHide:true});
-  let exited;child.on('exit',code=>{exited=code});const deadline=Date.now()+90000;
-  try{while(!fs.existsSync(output)&&exited===undefined&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,100));
+  const cli=path.join(runtime,'node_modules/@deepseek-ai/dsh/lib/bin.js');log=fs.openSync(path.join(run,'host.log'),'w');
+  child=spawn(process.execPath,[cli,'web','--patch',patch,'--host','127.0.0.1','--port','0','--no-open'],{cwd:workspace,env,stdio:['ignore',log,log],windowsHide:true});
+  child.on('exit',code=>{exited=code});childClosed=new Promise(resolve=>child.once('close',resolve));
+  await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject)});
+  const deadline=Date.now()+90000;
+  while(!fs.existsSync(output)&&exited===undefined&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,100));
     assert(fs.existsSync(output),'DSH fixture did not produce a report; inspect '+path.join(run,'host.log'));
     const result=JSON.parse(fs.readFileSync(output,'utf8'));assert(result.ok,result.error);console.log(JSON.stringify({ok:true,report:output,requests:result.requests.map(({phase,imageCount,payloadBytes,images})=>({phase,imageCount,payloadBytes,images}))},null,2));
-  }finally{if(exited===undefined)child.kill('SIGTERM');fs.closeSync(log)}
+    succeeded=true;
+  }finally{
+    if(child){if(exited===undefined&&child.pid)child.kill('SIGTERM');await childClosed}
+    if(log!==undefined)fs.closeSync(log);
+    try{await scratch.finish(succeeded?'success':'failed')}finally{await evidence.finish(succeeded?'success':'failed')}
+  }
 }

@@ -7,7 +7,7 @@ dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前发行包面向
 标准发行单元是包含 Houdini 和媒体资源的 `.tgz`，通过 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases) 分发。在 Desktop 原生「插件 → 添加插件」中粘贴下方完整地址，即可直接安装指定版本；无需先下载或解压：
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.2/dsh-houdini-0.1.2.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.3/dsh-houdini-0.1.3.tgz
 ```
 
 当前使用 GitHub 正式包直链，未发布 npm 包名。不要只填 `dsh-houdini` 或仓库首页地址；历史独立工作台包和 GitHub 自动生成的 Source code ZIP 也不适用于这条标准插件安装路径。发布页同时提供 SHA256 校验文件；源码 push、tag 或 Draft 本身不等于包已公开可用。

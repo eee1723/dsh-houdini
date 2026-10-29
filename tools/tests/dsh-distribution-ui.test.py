@@ -1,8 +1,9 @@
 """Actual Native Desktop plugin installation UI and tutorial credential consumer.
 
 Only a new desktop profile/userData/cache/Documents tree is used. The package is
-not installed by CLI. Chat inference and the remote tarball are owned loopback
-fixtures; no real credential, Houdini, npm publication or paid ASR is involved.
+not installed by CLI. Chat inference uses owned loopback fixtures; the remote
+tarball defaults to loopback or uses the explicit --remote-url HTTPS source.
+No real credential, Houdini, npm publication or paid ASR is involved.
 """
 import argparse
 import hashlib
@@ -18,6 +19,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.parse
 import winreg
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -33,9 +35,15 @@ parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--expected-sha256')
 parser.add_argument('--remote-only',action='store_true',help='Directly validate the owned HTTP/UI lifecycle after a fixture-only change')
 parser.add_argument('--local-only',action='store_true',help='Verify the actual local Native UI/Agent/credential path after a UI-only change')
+parser.add_argument('--remote-url',help='Install this actual HTTPS tarball URL through the native remote UI stage')
 parser.add_argument('--timeout',type=int,default=240)
 args=parser.parse_args()
 assert not (args.remote_only and args.local_only)
+if args.remote_url:
+    remote_source=urllib.parse.urlsplit(args.remote_url)
+    if remote_source.scheme!='https' or not remote_source.hostname:
+        parser.error('--remote-url requires a complete HTTPS URL')
+    if args.local_only:parser.error('--remote-url requires a remote UI stage; remove --local-only')
 artifact=args.artifact.resolve(strict=True)
 desktop=args.desktop_root.resolve(strict=True)
 electron=desktop/'DeepSeek Harness.exe'
@@ -230,11 +238,13 @@ assert digest(copied)==digest(artifact)
 if args.expected_sha256:assert digest(copied)==args.expected_sha256,'Frozen artifact SHA256 mismatch'
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),FixtureServer)
 base='http://127.0.0.1:'+str(server.server_port);asr_endpoint=base+'/asr/audio/transcriptions'
+remote_tarball=args.remote_url or base+'/dsh-houdini.tgz'
 threading.Thread(target=server.serve_forever,daemon=True).start()
 immutable={str(file):digest(file) for file in [electron,desktop/'resources/app.asar',desktop/'resources/runtime/versions.json']}
 report={'fixture':str(fixture),'artifactSha256':digest(copied),'nativeElectronWindowTested':False,'nativeProfile':'desktop',
     'installedByNativeUi':False,'cliPluginInstallUsed':False,'chatModel':'owned scripted loopback provider',
-    'remoteDistribution':'owned HTTP tarball mechanism only; no npm/GitHub publication claim','immutable':immutable}
+    'remoteDistribution':'explicit HTTPS tarball installed by native UI' if args.remote_url else 'owned HTTP tarball mechanism only; no npm/GitHub publication claim',
+    'remoteTarballUrl':remote_tarball,'immutable':immutable}
 print('Owned Native distribution UI evidence:',fixture,flush=True)
 try:
     baseline=protocol_hash();report['protocolSha256Before']=baseline
@@ -254,7 +264,7 @@ try:
             cwd=fixture,env=env,stdout=output,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0))
         birth=_process_started(process.pid);assert birth;owned.append((process.pid,birth))
         endpoint=endpoints();capture_children()
-        settings={'artifact':str(copied),'remoteTarball':base+'/dsh-houdini.tgz','asrEndpoint':asr_endpoint,'sentinel':sentinel,
+        settings={'artifact':str(copied),'remoteTarball':remote_tarball,'asrEndpoint':asr_endpoint,'sentinel':sentinel,
             'remoteOnly':mode=='remote','expectedPid':process.pid,'timeoutMs':args.timeout*1000,'output':str(stage/'ui-result.json'),**endpoint}
         config=stage/'probe-input.json';config.write_text(json.dumps(settings),encoding='utf-8')
         result=subprocess.run([shutil.which('node'),str(ROOT/'tools/tests/desktop-install-ui-probe.mjs'),str(config)],
@@ -280,13 +290,14 @@ try:
         print('PASS Native '+mode+' UI stage',flush=True)
     report['nativeElectronWindowTested']=True;report['installedByNativeUi']=True
     assert server_facts['asrRequests']==0 and not server_facts['errors'],server_facts
-    if not args.local_only:assert server_facts['tarballGets']>0,server_facts
+    if not args.local_only and not args.remote_url:assert server_facts['tarballGets']>0,server_facts
     assert server_facts['sentinelAbsentFromModel'],server_facts
     if not args.remote_only:assert server_facts['chatRequests']==0 and not server_facts['toolCalls'],server_facts
     assert protocol_hash()==baseline and {file:digest(file) for file in immutable}==immutable
     report.update(ok=True,normalExitCode=process.returncode,loopback=server_facts,desktopInstallationAndProtocolUnchanged=True)
-    print(('PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native HTTP tarball UI install/disable/re-enable/uninstall' if args.remote_only else
-        'PASS Native UI local tgz + real tutorial Agent/credentials + HTTP distribution/lifecycle')+': '+str(fixture),flush=True)
+    remote_label='HTTPS' if args.remote_url else 'HTTP'
+    print(('PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' tarball UI install/disable/re-enable/uninstall' if args.remote_only else
+        'PASS Native UI local tgz + real tutorial Agent/credentials + '+remote_label+' distribution/lifecycle')+': '+str(fixture),flush=True)
 except BaseException as error:
     report['error']=repr(error);raise
 finally:

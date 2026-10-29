@@ -87,6 +87,8 @@ npm run docs:check
 
 正式包由 `python tools/build-release.py --output <目录>` 构建；`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或Release。维护者在验证最终包、获得发布授权后，将该tgz及校验文件作为同一GitHub Release资产发布，再用正式HTTPS地址核对原生插件页的安装、启用与实际Houdini接入；下载地址不可由Draft、源码push或本地成功推断。npm包名分发需要单独的发布账户，不能用未发布包名替代GitHub完整包直链。
 
+正式地址的原生安装界面回访使用[分发检查](../tools/tests/dsh-distribution-ui.test.py)的`--remote-only --remote-url <正式tgz的HTTPS地址>`，同时提供本地冻结包与`--expected-sha256`核对安装内容。报告明确区分正式HTTPS来源和自有回环HTTP夹具，两种结果分别保留。
+
 [Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。浏览器连接和原故障的现场复现分别判断；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
 
 [权限恢复](../tools/tests/scene-recovery.test.mjs)验证同一保存点写前恢复、新目标不恢复、当前只读回执不抹除旧归属证据；[原工程保持](../tools/tests/scene-recovery-original.test.mjs)验证不自动load/clear/提问丢内容；[原生恢复](../tools/tests/dsh-scene-recovery.test.py)验证真实文件、节点基线、活跃作者与场景代际。真实加载后警告原文/有界投影由[警告边界](../tools/tests/load-warning.test.py)和[跨语言资源读取](../tools/tests/load-warning-resource.test.mjs)验证，不把日志摘要当跨版本兼容结论。
@@ -94,6 +96,28 @@ npm run docs:check
 [已有工作区生命周期](../tools/tests/dsh-workspace-lifecycle-check.mjs)接受缓存根目录，核对预存文件的更新/重命名/删除、硬链接与目录联接的外部权限保持、显式保护、只读token、重复授权和撤销。[网页传输反例](../tools/tests/dsh-web-transport-check.mjs)验证公开CDN跳转、私网/凭据/降级拒绝、混合DNS答案、真实失败原因及代理凭据脱敏。开发缓存由官方精确版本和依赖锁准备，不编译或替换上游核心；客户端交付由官方插件管理器完成，不把源码测试组合当作正式安装。
 
 ## 修改与验证
+
+### 调试输出与素材保留
+
+开发输出使用`tools/out/tmp`、`tools/out/cache`和`tools/out/evidence`。发布打包、媒体编译的暂存树及测试浏览器资料用完即清，下载缓存通过显式参数复用；截图与检查报告单独保留。需要保留的Node检查通过[输出管理器](../tools/output-artifacts.mjs)的`createRun`登记，运行结束调用`finish`；临时批次立即删除，证据批次完成时按30天保留期清理已完成旧批次，并保留同组最近一次成功。手动清理还可指定缓存保留期；未知来源和仍在运行的批次不自动删除。
+
+每批新证据和发布输出都写`artifact-manifest.json`及同源`MANIFEST.md`，记录源码commit、工作树是否修改、插件/DSH版本、生成时间、检查结果和隔离来源。根索引只读顶层与受管批次元数据，不递归扫描历史大目录；历史缺失信息明确为unknown，不能按目录名或修改时间补造源码版本。发行包自己的`release-manifest.json`继续维护包摘要与安装事实，运行来源由同一个输出管理器生成。
+
+验证、手动截图、演示与录屏默认使用新的DSH数据根和浏览器资料，沿现有隔离入口运行。隔离声明只说明采集环境，所有新素材仍标记`unreviewed`；分享前核对画面内容，含真实历史、账号或联系方式的素材不可直接复用。历史目录中的素材保留同样的未审核状态，不能当作当前版本的演示证据。
+
+```powershell
+npm run outputs:index
+# 先预览到期的受管批次
+npm run outputs:prune
+# 执行预览所使用的同一保留规则
+npm run outputs:prune -- --apply
+# 缓存仅在明确指定保留期后参与清理
+npm run outputs:prune -- --apply --cache-days 90
+```
+
+清理只作用于明确的输出范围，禁止删除输出根或类别根、跟随目录联接进入其他目录。安全边界、保留策略与来源记录由[定向回归](../tools/tests/output-artifacts.test.mjs)验证；批次内容和清理报告保留在忽略目录或CI中，不写进docs流水账。
+
+### 受影响能力的验证
 
 标准宿主验证：先 npm run build 和 npm run docs:check，运行 [官方包边界](../tools/tests/official-host-package.test.mjs)、[本机接入反例](../tools/tests/desktop-integration.test.mjs)、[菜单线程/认证](../tools/tests/dsh-desktop-client.test.py)、[本端安装](../tools/tests/dsh-install-runtime.test.py)，再用 [真实官方组合](../tools/tests/dsh-host-smoke.test.py)及其 --browser-module 参数核对原生模式、页面所选任务、插件启停与意图消费。
 
@@ -103,7 +127,7 @@ npm run docs:check
 
 HIP网络路径改动用`dsh-launcher-preflight.test.py`与隔离H21/H22的`dsh-scene-context.test.py`，把文件存在与真实路径解析替换为立即失败的探针，检查入口、工程登记、metadata与实际Bridge回执均不依赖网络I/O；覆盖UNC正反斜线、共享根目录、中文空格和映射盘。`image-generation.test.mjs`同时核对字面目录投影、Host解析后的实际输出、工程根别名与子目录重定向拒绝。注入断网只证明调用边界，实际SMB读写、服务器权限与用户加载仍须用自有网络工程另验，不能用本地路径测试代替。
 
-工程关联与空工作区改动用`workbench-association.test.mjs`核对同路径异工程、能力查询、UI回执、多窗口选择及目录提交失败；[保存目录回归](../tools/tests/scene-directory-follow.test.mjs)核对原生创建目录与历史日志位置保持。[真实Houdini入口](../tools/tests/dsh-desktop-live.test.py)覆盖H21/H22新建、打开和本端菜单，[共存重启](../tools/tests/dsh-desktop-coexistence.test.py)核对其他插件、默认模式、设置和持久会话，[正式包安装](../tools/tests/dsh-packaged-plugin-install.test.py)通过Desktop自带CLI在临时数据根安装最终tgz并检查实际运行与媒体资源。不连接用户live，不删除用户目录；后端及浏览器验证与原生Electron窗口验收分别报告。
+工程关联与空工作区改动用`workbench-association.test.mjs`核对同路径异工程、能力查询、UI回执、多窗口选择及目录提交失败；[保存目录回归](../tools/tests/scene-directory-follow.test.mjs)核对原生创建目录与历史日志位置保持。[真实Houdini入口](../tools/tests/dsh-desktop-live.test.py)覆盖H21/H22新建、打开和本端菜单；`--installation-alias`通过真实安装目录联接核对路径别名、Houdini实际回执与当前自动安装的helper。[共存重启](../tools/tests/dsh-desktop-coexistence.test.py)核对其他插件、默认模式、设置和持久会话，[正式包安装](../tools/tests/dsh-packaged-plugin-install.test.py)通过Desktop自带CLI在临时数据根安装最终tgz并检查实际运行与媒体资源。不连接用户live，不删除用户目录；后端及浏览器验证与原生Electron窗口验收分别报告。
 
 按用户目标和实际问题选择修改范围。工具描述只讲能力和真实调用条件；persona 讲角色和知识路由；领域工作方法只放 skill；操作合同落在执行实现。同一事实不要复制到多层提示词。
 

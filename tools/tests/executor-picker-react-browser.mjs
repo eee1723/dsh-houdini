@@ -8,6 +8,7 @@ import path from 'node:path'
 import http from 'node:http'
 import {spawn} from 'node:child_process'
 import assert from 'node:assert/strict'
+import {createRun} from '../output-artifacts.mjs'
 const root=path.resolve('.'),runtime=path.resolve(process.argv[2]??'')
 assert(process.argv[2],'Pass the exact prepared runtime root')
 const dist=path.join(runtime,'node_modules/@deepseek-ai/dsh-web-frontend/dist')
@@ -27,7 +28,9 @@ const nativeThemeCss=['base_css_default','design_platform_css_default'].map(name
 const code=source.slice(source.indexOf('    function Button('),source.indexOf('    // >>> houdini-node-delivery'))
 const videoCode=source.slice(source.indexOf('    function createVideoSettings('),source.indexOf('    function createSupportReporter('))
 const styles=source.slice(source.indexOf('    var shellCss ='),source.indexOf('    var shellCssId ='))
-const output=await fs.mkdtemp(path.join(root,'tools/out/target-chip-react-'))
+const evidence=await createRun({label:'target-chip-react',kind:'evidence',isolation:'isolated'})
+const output=evidence.directory
+const scratch=await createRun({label:'target-chip-react-browser',kind:'tmp',isolation:'isolated'})
 const fixture=`
 const sdk=await window.fixtureSdk;
 const React=sdk.react;
@@ -113,12 +116,8 @@ const html=`<!doctype html><html><head><meta charset="utf-8">${css.map(name=>`<l
 <script>window.fixtureSdk=new Promise(resolve=>{window.__ModuleLoader__={create:options=>{resolve(options.staticModules);throw Error('Isolated component fixture: no Host application boot')}}})</script>
 <script type="module" src="/sdk/${script}"></script></head><body><div id="root" hidden></div><main class="fixture-surface"><h1 class="fixture-title">Houdini 工程</h1><div id="fixture"></div><p class="fixture-caption">使用配套 DSH 的真实 React 与插件自有控件 · 无模型请求</p></main><script type="module">${fixture}</script></body></html>`
 const server=http.createServer(async(request,response)=>{try{const url=new URL(request.url,'http://127.0.0.1');if(url.pathname==='/'){response.setHeader('Content-Type','text/html;charset=utf-8');response.end(html);return}if(!url.pathname.startsWith('/sdk/')){response.writeHead(404);response.end();return}const file=path.resolve(dist,url.pathname.slice(5));if(!file.startsWith(dist+path.sep))throw Error('invalid path');response.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.woff2')?'font/woff2':'application/octet-stream');response.end(await fs.readFile(file))}catch(error){response.writeHead(404);response.end(String(error))}})
-await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
-let executable
-for(const file of ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','C:/Program Files/Microsoft/Edge/Application/msedge.exe']){try{await fs.access(file);executable=file;break}catch{}}
-assert(executable,'Microsoft Edge is required for this owned browser fixture')
-const userData=path.join(output,'browser'),browser=spawn(executable,['--headless=new','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+userData,'http://127.0.0.1:'+server.address().port],{windowsHide:true,stdio:'ignore'})
-let socket,sequence=0;const pending=new Map()
+const userData=path.join(scratch.directory,'browser')
+let browser,browserClosed,browserDidClose=false,socket,sequence=0;const pending=new Map()
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 async function call(method,params={}){const id=++sequence;const result=new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('CDP timeout '+method))},10000);pending.set(id,data=>{clearTimeout(timer);pending.delete(id);data.error?reject(Error(JSON.stringify(data.error))):resolve(data.result)})});socket.send(JSON.stringify({id,method,params}));return result}
 async function evaluate(expression){const value=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});assert(!value.exceptionDetails,JSON.stringify(value.exceptionDetails));return value.result.value}
@@ -129,11 +128,19 @@ async function projectAction(name){await section(['clear','prepareBridge'].inclu
 async function key(key,code,virtual){await call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:virtual,...(key==='Enter'?{text:'\r'}:key===' '?{text:' '}:{} )});await call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:virtual});await sleep(80)}
 async function screenshot(name){const shot=await call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,name+'.png'),Buffer.from(shot.data,'base64'))}
 const primaryColors={}
+let succeeded=false
 async function primaryContrast(selector,label){
  const color=await evaluate(`(()=>{const s=getComputedStyle(document.querySelector(${JSON.stringify(selector)}));const lum=c=>{const v=c.match(/[0-9.]+/g).slice(0,3).map(Number).map(n=>n/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4);return v[0]*.2126+v[1]*.7152+v[2]*.0722};const a=lum(s.color),b=lum(s.backgroundColor);return{color:s.color,background:s.backgroundColor,contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)}})()`)
  assert(color.contrast>=4.5,label+' primary text must remain readable: '+JSON.stringify(color));primaryColors[label]=color
 }
 try{
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+ let executable
+ for(const file of ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe','C:/Program Files/Microsoft/Edge/Application/msedge.exe']){try{await fs.access(file);executable=file;break}catch{}}
+ assert(executable,'Microsoft Edge is required for this owned browser fixture')
+ browser=spawn(executable,['--headless=new','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+userData,'http://127.0.0.1:'+server.address().port],{windowsHide:true,stdio:'ignore'})
+ browserClosed=new Promise(resolve=>browser.once('close',()=>{browserDidClose=true;resolve()}))
+ await new Promise((resolve,reject)=>{browser.once('spawn',resolve);browser.once('error',reject)})
  let port
  for(let n=0;n<200;n++){try{port=Number((await fs.readFile(path.join(userData,'DevToolsActivePort'),'utf8')).split('\n')[0]);break}catch{await sleep(100)}}
  assert(port,'Owned Edge did not create a debugging endpoint')
@@ -347,5 +354,11 @@ try{
  const calls=await evaluate('fixture.calls');assert.equal(calls.filter(row=>row.method==='houdiniTargets/select').length,pressCalls.length);assert.equal(calls.filter(row=>row.method==='houdiniTargets/clear').length,1)
  await fs.writeFile(path.join(output,'result.json'),JSON.stringify({ok:true,exactSdk:sdkVersion,pluginControls:true,realReact:true,stableFixedActions:true,newAvailableWhileLoading:true,candidateActivityIsolation:true,lateLaunchTicketDetached:true,modeIsolation:true,tutorial:{directConfiguration:true,nativeCredentialModal:true,secretOnlyInCredentials:true,nestedEscape:true,storedKeyNeverRead:true,changedServiceClosesOldDraft:true,allModeSettings:true,primaryColors},loadingRect,compactDisclosures:true,hiddenActionsSkipped:true,oneCurrentScene:true,sceneChangeCannotRetarget:true,nativeChangedRowClickDispatched:pressCalls.length===2,select:pressCalls.length,clear:1,states:['unbound','ready','working','occupied','changed','offline','unknown'],screenshots:(await fs.readdir(output)).filter(name=>name.endsWith('.png'))},null,2))
  console.log('PASS exact DSH React + plugin controls: selection/clear, states and narrow dark layout: '+output)
+ succeeded=true
 } catch(error){if(socket?.readyState===1){try{await screenshot('failure');await fs.writeFile(path.join(output,'failure.txt'),await evaluate('document.body.innerText'))}catch{}}throw error}
-finally{if(socket?.readyState===1){try{await call('Browser.close')}catch{}socket.close()}for(let n=0;n<50&&browser.exitCode===null;n++)await sleep(100);if(browser.exitCode===null)browser.kill();server.close()}
+finally{
+ if(socket?.readyState===1){try{await call('Browser.close')}catch{}socket.close()}
+ if(browser){for(let n=0;n<50&&!browserDidClose;n++)await sleep(100);if(!browserDidClose)browser.kill();await browserClosed}
+ if(server.listening)await new Promise(resolve=>server.close(resolve))
+ try{await scratch.finish(succeeded?'success':'failed')}finally{await evidence.finish(succeeded?'success':'failed')}
+}

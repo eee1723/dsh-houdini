@@ -19,6 +19,13 @@ const execute=promisify(execFile)
 const id=()=>randomUUID().replaceAll('-','')
 const ID=/^[0-9a-f]{32}$/
 const key=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
+async function sameInstallationPath(actual:string,expected:string):Promise<boolean> {
+  if(key(actual)===key(expected))return true
+  // Houdini can publish Windows 8.3 paths even when Desktop launched the long
+  // path. Compare the actual installation without changing its reported facts.
+  const [actualPath,expectedPath]=await Promise.all([fs.realpath(actual),fs.realpath(expected)])
+  return key(actualPath)===key(expectedPath)
+}
 const pluginRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 export interface HoudiniInstallation {hfs:string;version:string;series:string;executable:string}
 export interface DesktopSelection {workspaceId?:string;sessionId:string;executorId:string;source:'menu'|'launch';launchId?:string}
@@ -270,7 +277,7 @@ export class DesktopIntegration {
     const process=await this.ticketProcessState(ticket)
     if(process==='unknown'&&this.live(ticket).child)throw new LaunchNotReady('原启动进程身份正在确认，请稍后重试。')
     if(process!=='alive'||ticket.pid!==data.pid||ticket.processStarted!==data.processStarted
-      ||key(ticket.hfs)!==key(data.hfs)||(ticket.hip?(data.hipIsNew||key(ticket.hip)!==key(data.hipPath)):!data.hipIsNew))
+      ||!(await sameInstallationPath(data.hfs,ticket.hfs))||(ticket.hip?(data.hipIsNew||key(ticket.hip)!==key(data.hipPath)):!data.hipIsNew))
       throw Error('当前 Houdini 与原启动身份或工程不一致，未接管。')
     return {id:ticket.id,phase:ticket.phase,workspace:ticket.workspace,hfs:ticket.hfs,hip:ticket.hip}
   }
@@ -513,7 +520,8 @@ export class DesktopIntegration {
     if(process==='unknown')throw new LaunchNotReady('原 Houdini 进程身份暂时无法确认，未绑定。')
     if(process!=='alive')throw new LaunchRejected('原 Houdini 已结束或 PID 已被复用，未绑定。')
     if(record.pid!==ticket.pid||record.processStarted!==ticket.processStarted||record.houdini_version!==ticket.houdiniVersion
-      ||!record.runtime||key(record.runtime.hfs)!==key(ticket.hfs)||key(record.runtime.executable)!==key(path.join(ticket.hfs,'bin/houdini.exe'))
+      ||!record.runtime||!(await sameInstallationPath(record.runtime.hfs,ticket.hfs))
+      ||!(await sameInstallationPath(record.runtime.executable,path.join(ticket.hfs,'bin/houdini.exe')))
       ||!record.hip_path||(ticket.hip?key(ticket.hip)!==key(record.hip_path):record.hip_is_new!==true)
       ||!record.scene_epoch||!ID.test(record.scene_epoch))throw new LaunchRejected('启动回执与原进程、版本或工程不一致，未绑定。')
     const receipt={executorId:record.executor_id,registrationId:record.registration_id,expectedHip:record.hip_path,
@@ -530,8 +538,11 @@ export class DesktopIntegration {
       // This is one explicitly pending launch, not a history/scene guess: the
       // original OS process and installation must match before we inspect it.
       const records=await directory.list()
-      const matches=records.filter(row=>row.pid===ticket.pid&&row.processStarted===ticket.processStarted
-        &&row.runtime&&key(row.runtime.hfs)===key(ticket.hfs))
+      const matches:ExecutorRecord[]=[]
+      for(const row of records) {
+        if(row.pid!==ticket.pid||row.processStarted!==ticket.processStarted||!row.runtime)continue
+        if(await sameInstallationPath(row.runtime.hfs,ticket.hfs))matches.push(row)
+      }
       if(matches.length>1)throw Error('原启动进程有多个登记，尚未自动绑定。')
       record=matches[0]
     }

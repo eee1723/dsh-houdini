@@ -10,7 +10,6 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
-import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,24 +19,23 @@ spec.loader.exec_module(builder)
 
 
 def prepare(args):
-    scratch_parent = ROOT / "tools/out"
-    scratch_parent.mkdir(exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="private-video-runtime-", dir=scratch_parent))
-    config = json.loads((ROOT / "deployment/runtime.json").read_text(encoding="utf-8"))
-    staged = work / "video"
-    notice = builder.stage_video_runtime(staged, work / "build", config,
-        cache=args.cache, prepared=args.runtime)
-    destination = ROOT / "runtime/video"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    previous = destination.with_name("video.previous-" + uuid.uuid4().hex[:12]) if destination.exists() else None
-    if previous:
-        destination.rename(previous)
-    try:
-        staged.rename(destination)
-    except OSError:
+    with builder.temporary_staging("private-video-runtime-") as directory:
+        work = Path(directory)
+        config = json.loads((ROOT / "deployment/runtime.json").read_text(encoding="utf-8"))
+        staged = work / "video"
+        notice = builder.stage_video_runtime(staged, work / "build", config,
+            cache=args.cache, prepared=args.runtime)
+        destination = ROOT / "runtime/video"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        previous = destination.with_name("video.previous-" + uuid.uuid4().hex[:12]) if destination.exists() else None
         if previous:
-            previous.rename(destination)
-        raise
+            destination.rename(previous)
+        try:
+            staged.rename(destination)
+        except OSError:
+            if previous:
+                previous.rename(destination)
+            raise
     print("Prepared private FFmpeg / ffprobe:", destination)
     print("Version:", notice["version"])
     if previous:

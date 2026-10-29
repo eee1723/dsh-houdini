@@ -51,6 +51,14 @@ async function request(f,route,payload){
   body:JSON.stringify(payload),signal:AbortSignal.timeout(3000)})
  return {status:r.status,...await r.json()}
 }
+async function aliasedFixture(name){
+ const f=await fixture(name),aliases=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-launch-installation-alias-'))
+ await fs.mkdir(path.join(f.home,'bin'));await fs.writeFile(path.join(f.home,'bin/houdini.exe'),'fixture executable; never run')
+ f.alias=path.join(aliases,'Houdini')
+ await fs.symlink(f.home,f.alias,process.platform==='win32'?'junction':'dir')
+ assert.equal(await fs.realpath(f.alias),await fs.realpath(f.home),'the two spellings identify the same actual installation')
+ return f
+}
 try{
  const f=await fixture('resume'),first=f.create();await first.start()
  const t=await first.project(f.action(),new AbortController().signal)
@@ -99,6 +107,46 @@ try{
  await new ExecutorBinding().select(s.session,{...s.record,executor_id:'f'.repeat(32)});s.state.available=true
  assert.equal((await request(s,'/launch-attached',s.callback(st))).status,400);assert.equal(s.state.bindings,0)
  assert.equal((await ss.status({id:st.id})).phase,'error');await ss.dispose()
+ const alias=await aliasedFixture('receipt-installation-alias'),aliasService=alias.create();await aliasService.start()
+ const aliasTicket=await aliasService.project(alias.action(),new AbortController().signal)
+ alias.record.runtime={...alias.record.runtime,hfs:alias.alias,executable:path.join(alias.alias,'bin/houdini.exe')}
+ const aliasAttached=await request(alias,'/launch-attached',alias.callback(aliasTicket))
+ assert.equal(aliasAttached.status,200,JSON.stringify(aliasAttached))
+ assert.equal((await aliasService.status({id:aliasTicket.id})).phase,'ready','a real HFS/executable alias does not reject the launched window')
+ assert.equal(alias.state.bindings,1);assert.equal(alias.state.spawns,1);await aliasService.dispose()
+ const admission=await aliasedFixture('admission-installation-alias'),admissionService=admission.create();await admissionService.start()
+ const admissionTicket=await admissionService.project(admission.action(),new AbortController().signal)
+ const aliasAdmission=await request(admission,'/ticket-current',{id:admissionTicket.id,pid:process.pid,processStarted:'1001',
+  hfs:admission.alias,hipPath:admission.record.hip_path,hipIsNew:true})
+ assert.equal(aliasAdmission.status,200,JSON.stringify(aliasAdmission));assert.equal(admission.state.spawns,1);await admissionService.dispose()
+ const polling=await aliasedFixture('observed-installation-alias'),pollingService=polling.create();await pollingService.start()
+ const pollingTicket=await pollingService.project(polling.action(),new AbortController().signal)
+ polling.record.runtime={...polling.record.runtime,hfs:polling.alias,executable:path.join(polling.alias,'bin/houdini.exe')}
+ polling.state.available=true
+ assert.equal((await pollingService.status({id:pollingTicket.id})).phase,'ready','polling finds the original process through its installation alias without a callback')
+ assert.equal(polling.state.bindings,1);assert.equal(polling.state.spawns,1);await pollingService.dispose()
+ for(const mismatch of ['installation','executable','pid','process-started','version','hip']){
+  const rejected=await aliasedFixture('alias-reject-'+mismatch),rejectedService=rejected.create();await rejectedService.start()
+  const rejectedTicket=await rejectedService.project(rejected.action(),new AbortController().signal)
+  rejected.record.runtime={...rejected.record.runtime,hfs:rejected.alias,executable:path.join(rejected.alias,'bin/houdini.exe')}
+  if(mismatch==='installation'){
+   const foreign=path.join(rejected.home,'another-installation');await fs.mkdir(path.join(foreign,'bin'),{recursive:true})
+   await fs.writeFile(path.join(foreign,'bin/houdini.exe'),'another installation; never run')
+   rejected.record.runtime={...rejected.record.runtime,hfs:foreign,executable:path.join(foreign,'bin/houdini.exe')}
+   const foreignAdmission=await request(rejected,'/ticket-current',{id:rejectedTicket.id,pid:process.pid,processStarted:'1001',
+    hfs:foreign,hipPath:rejected.record.hip_path,hipIsNew:true})
+   assert.equal(foreignAdmission.status,400,'another installation does not qualify as an alias at admission')
+  }else if(mismatch==='executable'){
+   await fs.writeFile(path.join(rejected.home,'bin/other.exe'),'another executable; never run')
+   rejected.record.runtime.executable=path.join(rejected.alias,'bin/other.exe')
+  }else if(mismatch==='pid')rejected.record.pid=process.pid+1
+  else if(mismatch==='process-started')rejected.record.processStarted='1002'
+  else if(mismatch==='version')rejected.record.houdini_version='21.0.440'
+  else rejected.record.hip_is_new=false
+  const refusal=await request(rejected,'/launch-attached',rejected.callback(rejectedTicket))
+  assert.equal(refusal.status,400,'installation aliases cannot bypass '+mismatch+' identity checks')
+  assert.equal(rejected.state.bindings,0);assert.equal(rejected.state.spawns,1);await rejectedService.dispose()
+ }
  const preparing=await fixture('preparing-message'),preparingService=preparing.create();await preparingService.start()
  const helperGate=gate(),prepareHelper=preparingService.installHelper
  preparingService.installHelper=async()=>{helperGate.enter();await helperGate.wait;return prepareHelper.call(preparingService)}
@@ -148,7 +196,7 @@ try{
  assert.equal((await rr.project(r.action(),new AbortController().signal)).phase,'error','ended request identity remains terminal')
  assert.equal(r.state.spawns,1,'a network retry of a retired operation cannot launch another window')
  await rr.dispose()
- console.log('Desktop launch recovery: cross-generation admission, explicit resume, commit fence, concurrent receipt, retryable identity, prepare failure, stale selection and safe cleanup passed')
+ console.log('Desktop launch recovery: cross-generation admission, explicit resume, commit fence, concurrent receipt, installation aliases with identity rejection, retryable identity, prepare failure, stale selection and safe cleanup passed')
 }finally{
  for(const f of fixtures)for(const s of f.services)await s.dispose()
  if(previous===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=previous

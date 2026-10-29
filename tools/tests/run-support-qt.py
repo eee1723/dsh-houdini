@@ -17,17 +17,18 @@ def main():
     parser.add_argument('--startup-feedback',action='store_true')
     args = parser.parse_args()
     for executable in args.hython:
-        fixture = Path(tempfile.mkdtemp(prefix='support-qt-',dir=ROOT/'tools/out'))
-        env = isolated_environment(fixture/'env',executable=executable,gui=True)
-        env.update(QT_QPA_PLATFORM='offscreen',DSH_SUPPORT_QT_ROOT=str(fixture))
-        with (fixture/'process.log').open('wb') as output:
-            script='dsh-startup-feedback-qt.test.py' if args.startup_feedback else 'dsh-support-qt.test.py'
-            result = subprocess.run([str(executable),str(ROOT/'tools/tests'/script)],
-                                    cwd=launch_directory(executable),env=env,stdout=output,stderr=subprocess.STDOUT,
-                                    creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),timeout=90)
-        print((fixture/'process.log').read_text(encoding='utf-8',errors='replace'),flush=True)
-        if result.returncode:
-            raise RuntimeError('Qt download regression failed: '+str(fixture))
+        with tempfile.TemporaryDirectory(prefix='support-qt-') as directory:
+            fixture = Path(directory)
+            env = isolated_environment(fixture/'env',executable=executable,gui=True)
+            env.update(QT_QPA_PLATFORM='offscreen',DSH_SUPPORT_QT_ROOT=str(fixture))
+            with (fixture/'process.log').open('wb') as output:
+                script='dsh-startup-feedback-qt.test.py' if args.startup_feedback else 'dsh-support-qt.test.py'
+                result = subprocess.run([str(executable),str(ROOT/'tools/tests'/script)],
+                                        cwd=launch_directory(executable),env=env,stdout=output,stderr=subprocess.STDOUT,
+                                        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),timeout=90)
+            print((fixture/'process.log').read_text(encoding='utf-8',errors='replace'),flush=True)
+            if result.returncode:
+                raise RuntimeError('Qt download regression failed; process output is printed above')
 
 
 if __name__ == '__main__':

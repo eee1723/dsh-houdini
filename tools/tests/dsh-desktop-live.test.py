@@ -30,6 +30,7 @@ parser.add_argument('--runtime-cache',required=True,type=Path)
 parser.add_argument('--hfs',action='append',type=Path)
 parser.add_argument('--action',action='append',choices=['new','open'])
 parser.add_argument('--helper-package',action='store_true',help='Install the immutable helper Package separately from the Host package')
+parser.add_argument('--installation-alias',action='store_true',help='Launch through a real installation junction to exercise Windows short/long paths')
 parser.add_argument('--timeout',type=int,default=240)
 args=parser.parse_args()
 cache=args.runtime_cache.resolve(strict=True)
@@ -116,6 +117,13 @@ def scenario(hfs,action):
     env['HOUDINI_NO_START_PAGE_SPLASH']='1'
     env['HOUDINI_PATH']=str(hook)+os.pathsep+'&'
     env['DSH_HOUDINI_TEST_MENU_ROOT']=str(directory)
+    installation_alias=directory/'Houdini Installation With Spaces' if args.installation_alias else None
+    if installation_alias:
+        subprocess.run([node,'--input-type=module','-e',
+            'import fs from "node:fs";fs.symlinkSync(process.argv[1],process.argv[2],"junction")',
+            str(hfs),str(installation_alias)],check=True,capture_output=True)
+        assert installation_alias.samefile(hfs)
+        env['HFS']=str(installation_alias)
     subprocess.run([node,str(ROOT/'tools/tests/prepare-shared-host-fixture.mjs'),str(bin_file),env['DSH_HOME'],str(ROOT)],
                    cwd=ROOT,env=env,check=True,timeout=90,capture_output=True)
     installed=directory/'installed/dsh-houdini'
@@ -152,7 +160,8 @@ def scenario(hfs,action):
             wait_until(authorize,60,'official Host authentication')
             wait_until(lambda:True if rpc('houdiniFrontend/capabilities',{})['desktop'] else None,15,'Desktop plugin service')
             installations=rpc('houdiniFrontend/projectInstallations',{})
-            installation=next(item for item in installations if Path(item['hfs']).samefile(hfs))
+            installation=next(item for item in installations if Path(item['hfs']).samefile(hfs)
+                and (installation_alias is None or os.path.normcase(os.path.normpath(item['hfs']))==os.path.normcase(str(installation_alias))))
             workspace=directory/'conversation';workspace.mkdir()
             workspace_id=rpc('workspace/create',{'request':{'path':str(workspace)}})['workspace']['workspaceId']
             session=rpc('session/create',{'request':{'sessionId':uuid.uuid4().hex,'workspaceId':workspace_id,'agentPreset':'houdini'}})
@@ -168,6 +177,12 @@ def scenario(hfs,action):
                 assert value['phase']=='ready',value
                 return value
             ready=wait_until(status,args.timeout,str(hfs)+' '+action+' actual GUI callback')
+            # Desktop prepares its own immutable helper before launch. Verify
+            # the registered Package rather than assuming the Host copy loads.
+            package=json.loads((Path(env['HOUDINI_PACKAGE_DIR'])/'dsh-houdini.json').read_text(encoding='utf-8-sig'))
+            helper_path=next(row['DSH_HOUDINI_PATH'] for row in package['env'] if 'DSH_HOUDINI_PATH' in row)
+            expected_helper=Path(helper_path).parent.resolve(strict=True)
+            assert expected_helper.is_relative_to(Path(env['LOCALAPPDATA'])/'DSH-Houdini/helpers')
             listing=rpc('houdiniTargets/list',{'input':{'sessionId':session['sessionId']}})
             assert listing['state']['status']=='selected',listing
             target=listing['selectedTarget'];assert target['executor_id']==ready['result']['executorId'],(target,ready)
@@ -218,7 +233,8 @@ fs.writeFileSync(process.argv[3],JSON.stringify(result,null,2));if(result.ok!==t
             assert menu_target['runtime_id']==target['runtime_id'] and menu_target['scene_epoch']==target['scene_epoch'],menu_target
             evidence={'hfs':str(hfs),'version':facts['version'],'action':action,'pid':facts['pid'],'executorId':record['executor_id'],
                 'sessionId':session['sessionId'],'hip':facts['hip'],'mainThread':True,'pluginCopy':str(installed),
-                'helperPackageInstalled':args.helper_package,'helperRoot':str(expected_helper),
+                'helperPackageInstalled':True,'helperPackagePreinstalled':args.helper_package,'helperRoot':str(expected_helper),
+                'launchHfs':installation['hfs'],'reportedHfs':facts['hfs'],'installationAlias':str(installation_alias) if installation_alias else None,
                 'menuSessionId':menu['result']['sessionId'],'menuIdempotent':True,'intent':intent['sequence'],'elapsedSeconds':round(time.monotonic()-started,2)}
             (directory/'result.json').write_text(json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
             print('PASS real GUI:',facts['version'],action,'PID',facts['pid'],'main-thread read + menu callback',flush=True)

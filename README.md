@@ -43,10 +43,10 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.2/dsh-houdini-0.1.2.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.3/dsh-houdini-0.1.3.tgz
 ```
 
-[正式发布与校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.2)。当前通过 GitHub 完整包直链安装，未上架 npm；直接粘贴地址即可，无须解压或运行脚本。
+[正式发布与校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.3)。当前通过 GitHub 完整包直链安装，未上架 npm；直接粘贴地址即可，无须解压或运行脚本。
 
 新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
 

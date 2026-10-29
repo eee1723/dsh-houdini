@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,15 @@ def stage_video_runtime(destination, scratch, config, *, cache=None, prepared=No
                            "source": item["url"]} for name, item in spec["librarySources"].items()]}
 
 
+def temporary_staging(prefix):
+    """Own only one disposable build workspace, including on build failure."""
+    scratch = ROOT / "tools/out/tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    if not scratch.resolve().is_relative_to(ROOT.resolve()):
+        raise ValueError("Build staging must remain inside this checkout")
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=scratch)
+
+
 
 def build(args):
     """Package the plugin and its media tools; Desktop owns DSH and Node."""
@@ -53,11 +63,27 @@ def build(args):
         raise RuntimeError("Plugin packaging requires npm")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    run([npm, "run", "build"])
-    inventory = json.loads(run([npm, "pack", "--dry-run", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache"], capture=True))[0]["files"]
-    scratch = ROOT / "tools/out"
-    scratch.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix="plugin-package-", dir=scratch))
+    version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    artifact_tool = ["node", ROOT / "tools/output-artifacts.mjs"]
+    run([*artifact_tool, "begin", output, "--label", "release-" + version,
+         "--kind", "evidence", "--isolation", "unknown"])
+    try:
+        run([npm, "run", "build"])
+        inventory = json.loads(run([npm, "pack", "--dry-run", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache"], capture=True))[0]["files"]
+        with temporary_staging("plugin-package-") as directory:
+            result = package_staged(args, npm, output, inventory, Path(directory))
+        run([*artifact_tool, "finish", output, "--status", "success"])
+        return result
+    except BaseException:
+        try:
+            run([*artifact_tool, "finish", output, "--status", "failed"])
+        except BaseException as error:
+            print("Unable to record failed release output: " + str(error), file=sys.stderr)
+        raise
+
+
+def package_staged(args, npm, output, inventory, work):
+    """Assemble inside the caller-owned staging directory, preserving final output."""
     plugin = work / "package"
     plugin.mkdir()
     for entry in inventory:
