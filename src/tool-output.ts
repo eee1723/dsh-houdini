@@ -356,6 +356,42 @@ export function renderJobStatus(value: JobStatus) {
     ...renderFields(value)].join('\n\n') }, ...imageBlocks(value)]
 }
 
+function utf8Head(text:string,maxBytes:number):string {
+  let bytes=0,end=0
+  for(const char of text){
+    const size=Buffer.byteLength(char)
+    if(bytes+size>maxBytes)break
+    bytes+=size;end+=char.length
+  }
+  return text.slice(0,end)
+}
+
+function utf8Tail(text:string,maxBytes:number):string {
+  const chars=Array.from(text)
+  let bytes=0,start=chars.length
+  for(let index=chars.length-1;index>=0;index--){
+    const size=Buffer.byteLength(chars[index])
+    if(bytes+size>maxBytes)break
+    bytes+=size;start=index
+  }
+  return chars.slice(start).join('')
+}
+
+/** Preserve the renderer's prioritized head and recovery/detail tail. The
+ * native finalizer keeps only a tail, so bound before returning through its
+ * existing single-text contract; never maintain a second field interpreter. */
+export function renderJobObservation(value: ExecResult, maxBytes: number): string {
+  if(!Number.isSafeInteger(maxBytes)||maxBytes<0)throw Error('maxBytes must be a nonnegative safe integer')
+  const full=(value.status?renderJobStatus(value as JobStatus):renderExec(value))
+    .filter(block=>block.type==='text').map(block=>block.text).join('\n\n')
+  if(Buffer.byteLength(full)<=maxBytes)return full
+  const marker='\n\n… [middle omitted to fit the native job output budget; use the original request/details references; omission is not evidence of absence] …\n\n'
+  const available=maxBytes-Buffer.byteLength(marker)
+  if(available<=0)return utf8Head(full,maxBytes)
+  const headBytes=Math.ceil(available*2/3)
+  return utf8Head(full,headBytes)+marker+utf8Tail(full,available-headBytes)
+}
+
 export function renderJobHandle(value: JobHandle) {
   const summary = `DSH job ${value.job_id}. Use job_output/job_kill; completion is reported in this conversation. `
     +(value.jobId?'Houdini admission confirmed; this is not execution completion.':`Houdini admission is unconfirmed; do not resubmit. ${value.error||''}`)

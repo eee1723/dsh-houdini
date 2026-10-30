@@ -42,6 +42,8 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
 
 ## 高效执行
 
+- 机械展开先解决承力、铰接、行程和收纳关系，再复制与精细化受这些关系约束的部件；按需读[机械部署](references/rig-animation-patterns.md#机械部署与联动)。静态精细模型上补运动容易把连杆、缸筒或接头变成跟随外观的装饰。已有机构成立时直接局部修改，无需重做代理。
+- 首次全量builder不是后续默认迭代入口。机构接入后只改负责的模块、节点参数或用现场hash同步snippet；需要重跑时限定受影响模块，保留无关节点、材质绑定和已验证状态。小修反复刷新全场景VEX与计算会放大返工，不能当作无成本操作。
 - 选择 KineFX §3.1 或 OBJ §3.2 时可读对应小节；已有 H21/H22 fast path 就直接使用，只探测
   当前任务真正未知的类型、参数或输入。不要把 HDA internals 当默认文档。
 - 未知契约依次用 `verb_help`、Tab/parm/describe、自包含单变量 probe、本机 help；只有公开合同与
@@ -65,10 +67,7 @@ description: 在 Houdini 中设计、构建、调试和交付参数动画、刚�
    然后覆盖 sequence mid/end 与 recovery。所有控制量归零不能证明 inverse 正确。
    一旦修改状态求值器、核心 transform 图或 membership 规则，先前所有序列证据立即失效；必须从
    first、非交换 transition、mid/end 到 recovery 全部重跑，不能只验证修复点后的终帧。
-7. 客观状态通过后才用 `render_view(EXPLICIT_SOP)`；先隐藏非交付 skeleton/control/helper，确认
-   主体仍完整且运动成立。动画 A/B 使用同一 `framing_frame`，且该参考取景必须覆盖整个验收帧
-   包络并留边，不能只保证参考帧本身不裁切。视觉明确报告主体静止、缺失或方向相反时阻断完成；
-   pixel diff 不能覆盖该反例。
+7. 数值与图像按当前疑点交替使用，不等全部状态检查结束才观察形体。`render_view(EXPLICIT_SOP)`先隐藏非交付 skeleton/control/helper，确认主体仍完整且运动成立。动画 A/B 使用同一 `framing_frame`；先对最终输出的收拢、关键中间姿态与展开端点取包络，统一提供`framing_bounds`及`depth_bounds`。旋转的中间姿态可能比终帧更宽，单个终帧不代表全时段范围；采样包络也不证明未采样帧或运动模糊。先低成本核对风险姿态，再批量输出。视觉明确报告主体静止、缺失或方向相反时回到对应构造；pixel diff不能覆盖该反例。
 8. 清理 probe、恢复 frame/selection/visibility、布局、设置交付输出并说明尚未验证的审美项。
 
 ## 关键边界

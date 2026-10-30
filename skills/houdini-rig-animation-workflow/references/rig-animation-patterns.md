@@ -38,6 +38,16 @@ H21/H22 基线：
 不要用大量逐帧 keys 默认替代正确曲线；确需 baked motion 时可用，但注意结果/trace 体积。
 Channel 正确求值只证明控制数据，不证明被驱动 geometry/rig 的语义。
 
+### 机械部署与联动
+
+将运动看作部件之间的关系：哪一侧固定、绕哪个实际销轴旋转、哪段允许伸缩、如何支撑和收纳。先选最影响结构的一套代表机构，观察收拢、过渡和展开；关系成立后把紧固件、护罩、材质和重复布局接入。纯外观动画可有意风格化，但不能用这种简化证明用户要求的机械可信性。
+
+液压机构分开固定长度缸筒、滑动杆与两端接头。由两端安装位置求方向和行程，缸筒随底端定位旋转、杆保持同轴并按所需伸出量变化；不要对整个组件沿长度缩放。核对杆在筒内仍有重叠、行程可达、接头连接的是最终可见支耳。剪叉或连杆优先从杆长、铰点与滑轨求解，实际杆长与销轴关系随时间检查；同一套驱动公式算出的端点重合只是驱动检查。
+
+同名函数跨语言并不保证参数顺序一致：[HScript smooth](https://www.sidefx.com/docs/houdini/expressions/smooth.html)为`smooth(value, minimum, maximum)`，[VEX smooth](https://www.sidefx.com/docs/houdini/vex/functions/smooth.html)为`smooth(minimum, maximum, value)`。将时序表达式复制到另一语言前，在区间前、中、后分别核对0、中间值和1。VEX的[dihedral](https://www.sidefx.com/docs/houdini/vex/functions/dihedral.html)同时返回matrix3或vector4；写orient时先显式赋给`vector4 q`再传入`setpointattrib`，避免重载歧义。具体节点控制仍从当前接口发现，不将固定对象尺寸或阶段表变成通用配方。
+
+判据应能推翻设计：实际销轴沿轴向错开、孔被实体封住、壳体穿插，即使中心线、bbox或刚体长度检查通过也可能不合格。局部剖视/隔离图回答可见连接问题，最终实体测量回答声明范围内的几何关系；没有碰撞或实体间隙证据时，不把关节端点检查扩写成“全程无穿插”。
+
 ## 2. Rigid pieces 与路径依赖状态
 
 稳健数据：

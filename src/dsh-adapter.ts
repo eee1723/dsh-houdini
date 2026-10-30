@@ -5,7 +5,7 @@ import {boundContextSummary,createUserMessage,type ContentBlock,type ContextForm
 import type {JobEvent} from '@deepseek-ai/dsh-jobs'
 import type { SessionEvent } from './execution-history.js'
 import { HOUDINI_TOOLS } from './tool-catalog.js'
-import {renderExec,renderJobStatus} from './tool-output.js'
+import {renderJobObservation} from './tool-output.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -22,6 +22,7 @@ export const isHoudiniTool=(name:unknown):name is string => typeof name==='strin
 
 export const LIVE_JOB_KIND='houdini-live'
 export const LIVE_JOB_RESULT='dsh-houdini/live-job-result-v1'
+export const LIVE_JOB_OUTPUT_LIMIT_BYTES=16000
 /** A generic DSH job read becomes a Houdini fact only through this exact producer envelope. */
 export function liveJobResult(value:any):{job_id:string;value:any}|undefined {
   if(value?.job?.kind!==LIVE_JOB_KIND||typeof value.text!=='string')return
@@ -138,10 +139,10 @@ export function installHoudiniExecutionLog(ctx:Context):void {
     const live=exec.name==='job_output'?liveJobResult(value):undefined
     if(!live||decision.kind!=='accept'||decision.content)return decision
     const native=value as any
-    const blocks=live.value.status?renderJobStatus(live.value):renderExec(live.value)
     const ref=live.value.requestReceipt?.request_ref
-    return {...decision,content:[{type:'text' as const,text:blocks.filter(b=>b.type==='text').map(b=>b.text).join('\n\n')
-      +`\n\nDSH job ${live.job_id}: ${native.job.status}. Original images/result: houdini_request(request_ref=${JSON.stringify(ref)}).`}]}
+    const suffix=`\n\nDSH job ${live.job_id}: ${native.job.status}. Original images/result: houdini_request(request_ref=${JSON.stringify(ref)}).`
+    return {...decision,content:[{type:'text' as const,text:
+      renderJobObservation(live.value,LIVE_JOB_OUTPUT_LIMIT_BYTES-Buffer.byteLength(suffix))+suffix}]}
   })
 }
 

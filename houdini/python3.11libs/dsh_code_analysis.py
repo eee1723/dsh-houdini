@@ -423,7 +423,7 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                     self.scope.wildcard = True
                     continue
                 value = ('constructor', builtin_types[item.name]) if node.module == 'builtins' and item.name in builtin_types else (
-                    (item.name,) if node.module == 'builtins' and item.name in ('getattr', 'setattr', 'delattr', 'vars', 'locals', 'type') else (
+                    (item.name,) if node.module == 'builtins' and item.name in ('getattr', 'setattr', 'delattr', 'vars', 'locals', 'globals', 'type') else (
                         ('hom_method', 'hou', item.name) if node.module == 'hou' and not node.level else (
                             'imported_member', node.module if not node.level else None, item.name)))
                 self.scope.bind(ast.Name(id=item.asname or item.name), value)
@@ -542,7 +542,7 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             result = name(scope.parent, key)
         else:
             result = ('constructor', builtin_types[key]) if key in builtin_types else (
-                (key,) if key in ('hou', 'getattr', 'setattr', 'delattr', 'vars', 'locals', 'type') else None)
+                (key,) if key in ('hou', 'getattr', 'setattr', 'delattr', 'vars', 'locals', 'globals', 'type') else None)
         resolving.remove(identity)
         cache[identity] = result
         return result
@@ -580,13 +580,17 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
             if isinstance(value, ast.Call) and kind(value.func) != ('getattr',):
                 return ('unknown_method', attr)
             owner = kind(receiver)
+            if (owner and owner[0] in ('global_dict', 'module_dict', 'local_dict')
+                    and attr not in {'clear', 'pop', 'popitem', 'setdefault', 'update', '__setitem__', '__delitem__', '__ior__', '__init__'}
+                    and callable(getattr(dict, attr, None))):
+                return ('python_method', dict, attr)
             if owner and owner[0] in ('value', 'constructor') and callable(getattr(owner[1], attr, None)):
                 return ('python_method', owner[1], attr)
             if owner and owner[0] in ('hou', 'node', 'node_type', 'parm'):
                 return ('hom_method', owner[0], attr)
             if owner == ('builtins',) and attr in builtin_types:
                 return ('constructor', builtin_types[attr])
-            if owner == ('builtins',) and attr in ('getattr', 'setattr', 'delattr', 'vars', 'locals', 'type'):
+            if owner == ('builtins',) and attr in ('getattr', 'setattr', 'delattr', 'vars', 'locals', 'globals', 'type'):
                 return (attr,)
             if owner and owner[0] in ('local_class', 'local_instance'):
                 if attr == '__dict__':
@@ -615,14 +619,19 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
                 return ('local_instance', callable_kind[1])
             if callable_kind and callable_kind[0] in ('local_function', 'local_method'):
                 return local_return(callable_kind[1] if callable_kind[0] == 'local_function' else callable_kind[2])
+            if callable_kind in (('globals',), ('locals',), ('vars',)) and not value.args and not value.keywords:
+                scope = scopes.get(id(value), root)
+                if callable_kind != ('globals',) and scope.class_node is not None:
+                    return ('local_dict', scope.class_node)
+                # Namespace maps permit dictionary reads, never provenance of
+                # their values or a new proof for namespace-mutating methods.
+                if callable_kind == ('globals',) or scope.parent is None:
+                    return ('global_dict',)
+                return ('value', dict)
             if callable_kind == ('type',) and len(value.args) == 1:
                 owner = kind(value.args[0])
                 if owner and owner[0] == 'local_instance':
                     return ('local_class', owner[1])
-            if callable_kind in (('locals',), ('vars',)) and not value.args and not value.keywords:
-                scope = scopes.get(id(value), root)
-                if scope.class_node is not None:
-                    return ('local_dict', scope.class_node)
             if callable_kind == ('vars',) and len(value.args) == 1:
                 owner = kind(value.args[0])
                 if owner and owner[0] == 'module':
@@ -1519,7 +1528,7 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
         lines.append(f"verb-covered raw call(s): {pairs} — use the verbs instead.")
     if mutating:
         lines.append(
-            "possibly scene-mutating raw call(s) with no direct verb: "
+            "possibly scene-mutating raw call(s) with unresolved method origin and no direct verb: "
             + ", ".join(sorted(mutating)) + "."
         )
     if covered:
@@ -1530,8 +1539,10 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
     else:
         lines.append(
             "If no verb genuinely covers the operation, re-issue the SAME call with "
-            "allow_raw=\"<why no verb fits>\" — a one-time exemption that is recorded "
-            "in the trace (each exemption documents a vocabulary gap)."
+            "allow_raw=\"<source and why no verb fits>\" — a one-time exemption recorded "
+            "in the trace. For an inspected local Python helper, name its source and "
+            "confirm that it only composes verbs or does not call raw HOM; do not rewrite "
+            "ordinary builder code merely to evade source analysis."
         )
     return "\n".join(lines)
 

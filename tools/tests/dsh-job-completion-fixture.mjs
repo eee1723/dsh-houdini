@@ -44,7 +44,7 @@ function bridgeFor({cancelFinishes=false}={}) {
       const abort=()=>reject(signal.reason);signal.addEventListener('abort',abort,{once:true});
       terminal.promise.then(value=>{signal.removeEventListener('abort',abort);resolve(value)},reject)})},
     async cancelJob(){cancels++;if(cancelFinishes)finish();return {jobId,status:'running',ok:false,stdout:'',stderr:''}}};
-  const finish=(status='done',stdout='actual producer result')=>terminal.resolve({jobId,status,ok:status==='done',stdout,stderr:''});
+  const finish=(status='done',stdout='actual producer result',extra={})=>terminal.resolve({jobId,status,ok:status==='done',stdout,stderr:'',...extra});
   return {bridge,finish,receipt,jobId,cancels:()=>cancels,submissions:()=>submissions};
 }
 const live=new LiveJobs(preset.ctx,{retain:async value=>value});
@@ -90,6 +90,16 @@ try {
   assert.equal(JSON.parse(stored.data.meta.canonical.text).value.stdout,payload);
   assert.equal(executionResult(stored).value.stdout,payload,'shared history decoder reads the canonical producer envelope');
   assert.equal((await call(selected.owner,'job_output',{job_id:large.id})).value.text,'','preserving metadata never reconsumes a native job');
+  const failed=await start(),failure='CheckpointError: failed final output /obj/fixture/OUT';
+  failed.finish('failed',payload,{error:failure,outcome:{batch:'failed',operations:{total:100,failed:1}},
+    transaction:{status:'rolled_back'},verbs:[{verb:'verify_network',ok:false,error:failure}],
+    details:{stored:true,sha256:'c'.repeat(64),path:path.join(root,'fixture-original.json'),format:'returned_bridge_envelope_json'}});
+  await settled(failed.id,selected.owner.id);
+  const failureRead=await call(selected.owner,'job_output',{job_id:failed.id}),failureText=failureRead.content.map(b=>b.text??'').join('\n');
+  assert(Buffer.byteLength(failureText)<=16000);
+  for(const fact of [failure,'rolled_back','verify_network',failed.receipt.request_ref,'c'.repeat(64)])assert(failureText.includes(fact),fact);
+  assert(!failureText.includes('[result truncated]'),'plugin summary fits the unchanged native finalizer');
+  assert.equal(JSON.parse(failureRead.meta.canonical.text).value.stdout,payload);
   // Other job kinds preserve native value and rendering. The output projector
   // uses the legal null sentinel when the native definition has no metadata.
   for(const holder of [selected,other]) {

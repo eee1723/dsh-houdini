@@ -5,7 +5,7 @@ import type {HoudiniBridge,JobHandle,JobStatus,OwnershipScope,ExecResult} from '
 import type {ExecutionSource} from './execution-source.js'
 import {hostService} from './api-route.js'
 import {HoudiniToolRuntime} from './tool-runtime.js'
-import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from './dsh-adapter.js'
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT,LIVE_JOB_OUTPUT_LIMIT_BYTES} from './dsh-adapter.js'
 declare module '@deepseek-ai/dsh-jobs/view' {interface JobKindMap {'houdini-live':'houdini-live'}}
 
 type Admission=JobHandle&{job_id:string}
@@ -40,7 +40,7 @@ export class LiveJobs {
     const admission=new Promise<JobHandle>(resolve=>{admitted=resolve})
     // DSH checks the owner, controller and concurrency cap BEFORE run().
     const id=jobs.start({kind:LIVE_JOB_KIND,label:'Houdini · 工程长任务',owner:owner.sessionId,
-      toolCall:{callId:exec.callId,rootCallId:exec.rootCallId??exec.callId},outputLimitBytes:16000,
+      toolCall:{callId:exec.callId,rootCallId:exec.rootCallId??exec.callId},outputLimitBytes:LIVE_JOB_OUTPUT_LIMIT_BYTES,
       run:(job:NativeJobHandle)=>{
         if(receiptKey)this.observing.set(receiptKey,job.id)
         const controller=new AbortController()

@@ -15,6 +15,8 @@ DSH 原生「轨迹」和工具结果卡是会话内通用调用详情的唯一�
 
 通用工具调用使用 DSH 的 `presentCall`、`presentResult`、`presentationMeta` 和原生视图。参数、执行证据、错误及完整原值按原生折叠和详情限额展示；模型可见文本、canonical 回执和展示投影分别处理，不能为了展示重新执行 Python 或重新解释领域结论。
 
+live job的模型结果复用普通执行渲染器的字段与优先级，在生产者声明的16 KB内保留开头的错误、请求和检查上下文，以及末尾的恢复提示和详情入口；中间省略处明确标注，完整值仍在原生canonical与原归档中。原生`job_output`最终裁剪保留尾部，因此不能先输出任意大的操作清单再依赖宿主裁剪来保住首部错误。插件在既有`tools/post-execute`扩展内适配自身回执，不改原生finalizer、其他job类型、会话或共享配置，也不另维护一套领域字段筛选器；消费方回归见[真实jobs组合](../tools/tests/dsh-job-completion-fixture.mjs)。宿主如提供保留领域优先字段的公开投影合同并验证等价，可替换此窄摘要实现。
+
 Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js) 提供：
 
 - 只读取成功 `present_nodes` 动词的真实回执，不依赖 `__result__` 包装、节点名称或自报路径。

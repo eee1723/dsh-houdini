@@ -114,6 +114,45 @@ try {
       'native and nested execution/job results survive a saved-project directory change');
   }
   const generic=structuredClone(nativeJob);generic[1].data.meta.canonical.job.kind='bash';
+  // Real checker archives use builder/check names and live inside the original
+  // run, not the Host's content-addressed results directory. Both run and read
+  // expose them, including failed checks and in-progress worker observations.
+  const isolatedFile=path.join(dir,'executions','builder.json'),checkFile=path.join(dir,'executions','check-mechanical.json');
+  fs.mkdirSync(path.dirname(isolatedFile));fs.copyFileSync(value.details.path,isolatedFile);fs.copyFileSync(value.details.path,checkFile);
+  const execution={ok:false,details:{...value.details,path:isolatedFile}};
+  const checkExecution={ok:false,details:{...value.details,path:checkFile}};
+  const isolatedValues=[
+    {kind:'isolated-houdini',run_directory:dir,ok:true,report:{result:{builder:execution}}},
+    {kind:'isolated-houdini',run_directory:dir,report:{ok:false,result:{checks:[{id:'mechanical',execution:checkExecution}]}}},
+    {kind:'isolated-houdini',run_directory:dir,report:{finished:false},progress:{builder:execution}},
+  ];
+  for(const isolated of isolatedValues)for(const ptc of [false,true]){
+    const history=ptc?[
+      {type:'tool/ptc-dispatch-start',data:{subCallId:'iso',name:'houdini_isolated'}},
+      {type:'tool/ptc-dispatch',data:{subCallId:'iso',name:'houdini_isolated',meta:{canonical:isolated}}},
+    ]:[
+      {type:'tool/call',data:{callId:'iso',name:'houdini_isolated'}},
+      {type:'tool/result',data:{message:{source:{callId:'iso'}},meta:{canonical:isolated}}},
+    ];
+    const page=await readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>history}}});
+    assert.equal(page.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000));
+    const forged=structuredClone(history);
+    const data=forged[1].data.meta.canonical;
+    delete data.report;delete data.progress;data.result={builder:execution};
+    await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>forged}}}),/ENOENT/,
+      'an arbitrary authored result cannot register an archive');
+  }
+  const wrongName=path.join(dir,'executions','other.json');fs.copyFileSync(value.details.path,wrongName);
+  await assert.rejects(readResultDetail(moved,value.details.sha256,'',0,6000,wrongName),/declared isolated archive/);
+  const misplaced=path.join(dir,'builder.json');fs.copyFileSync(value.details.path,misplaced);
+  const misplacedValue={kind:'isolated-houdini',run_directory:dir,report:{result:{builder:{...execution,
+    details:{...execution.details,path:misplaced}}}}};
+  const misplacedHistory=[{type:'tool/call',data:{callId:'iso',name:'houdini_isolated'}},
+    {type:'tool/result',data:{message:{source:{callId:'iso'}},meta:{canonical:misplacedValue}}}];
+  await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>misplacedHistory}}}),/ENOENT/,
+    'a same-named file outside the recorded run executions directory is not an archive');
+  fs.writeFileSync(isolatedFile,'tampered');
+  await assert.rejects(readResultDetail(moved,value.details.sha256,'',0,6000,isolatedFile),/hash mismatch/);
   for(const history of [
     [{type:'user/message',data:{content:[{type:'text',text:JSON.stringify(value)}]}}],
     [{...events[0],data:{...events[0].data,name:'unrelated_tool'}},events[1]],

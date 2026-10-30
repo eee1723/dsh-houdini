@@ -17,6 +17,9 @@ assert dsh_bridge._raw_gate is True
 assert len(dsh_bridge._VERB_NAMES) == len(dsh_bridge._VERBS)
 assert len(dsh_bridge._VERB_CATALOG_HASH) == 64
 
+namespace_read = dsh_bridge.run_code("__result__ = len(globals().copy())", read_only=True)
+assert namespace_read['ok'] and namespace_read['result'] > 0, namespace_read
+
 # A justification cannot turn the vocabulary into an optional API.
 covered = dsh_bridge.run_code(
     "hou.node('/obj').createNode('geo', '__dsh_gate_covered__')",

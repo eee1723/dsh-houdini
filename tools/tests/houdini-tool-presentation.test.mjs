@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HoudiniBridge } from '../../lib/bridge.js';
 import { registerHoudiniTools } from '../../lib/tools.js';
-import {renderJobStatus,execPresentationMeta,jobResultTitle} from '../../lib/tool-output.js';
+import {renderJobStatus,renderJobObservation,execPresentationMeta,jobResultTitle} from '../../lib/tool-output.js';
 import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs';
 import {houdiniSnapshot,executionResult} from '../../lib/dsh-adapter.js';
 
@@ -179,6 +179,21 @@ assert.match(finishedCheckText,/checks failed or contain warnings/,'finished job
 assert.doesNotMatch(finishedCheckText,/finished successfully/);
 const caughtJobMeta=status.output.presentationMeta({}, {...caughtRead,jobId:'job-7',status:'done'});
 assert.match(status.presentResult({jobId:'job-7'}, {content:text,isError:false,meta:caughtJobMeta}).title,/批次完成，部分操作失败/);
+const observationValue={jobId:'job-large',status:'failed',ok:false,stdout:'',stderr:'',
+  error:'HEAD-ERROR: final output failed',requestReceipt:{request_ref:'original-request'},
+  evidence:[{verb:'verify_network',ok:false,reason:'HEAD-EVIDENCE'}],result:{payload:'中间数据'.repeat(12000)},
+  advisory:'TAIL-ADVICE: inspect the original checkpoint',details:{stored:true,sha256:'d'.repeat(64)}};
+const fullObservation=renderJobStatus(observationValue)[0].text;
+assert.equal(renderJobObservation(observationValue,Buffer.byteLength(fullObservation)),fullObservation);
+const boundedObservation=renderJobObservation(observationValue,1600);
+assert(Buffer.byteLength(boundedObservation)<=1600);
+for(const fact of ['HEAD-ERROR','HEAD-EVIDENCE','TAIL-ADVICE','d'.repeat(64),'middle omitted'])assert(boundedObservation.includes(fact),fact);
+assert(!boundedObservation.includes('\uFFFD'),'UTF-8 head/tail boundaries never manufacture replacement characters');
+for(const budget of [0,1,31,128,256]){
+  const text=renderJobObservation(observationValue,budget);
+  assert(Buffer.byteLength(text)<=budget,budget);assert(!text.includes('\uFFFD'),budget);
+}
+assert.throws(()=>renderJobObservation(observationValue,-1),/nonnegative/);
 const jobValue = {
   jobId: 'job-7',
   status: 'running',

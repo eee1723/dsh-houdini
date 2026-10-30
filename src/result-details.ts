@@ -26,9 +26,23 @@ export function recordedResultPath(events:readonly SessionEvent[],ref:string):st
     const result=executionResult(event)
     if(!result||result.isError||!calls.has(result.callId)
       ||calls.get(result.callId)==='job_output'&&result.producer!=='live-job')continue
-    const detail=result.value?.details
-    if(detail?.stored===true&&detail.sha256===ref&&detail.format==='returned_bridge_envelope_json'
-      &&typeof detail.path==='string')retained=detail.path
+    const value=result.value,isolated=calls.get(result.callId)==='houdini_isolated'&&value?.kind==='isolated-houdini'
+    // Isolated archives keep their producer-declared run and execution name.
+    // Never register a lookalike path from arbitrary authored result data.
+    const executions=isolated
+      ?[value.report?.result,value.progress].flatMap(report=>report
+        ?[{execution:report.builder,archive:'builder.json'},
+          ...(Array.isArray(report.checks)?report.checks.map((check:any)=>({execution:check.execution,archive:`check-${check.id}.json`})):[])] : [])
+      :[{execution:value,archive:undefined}]
+    for(const {execution,archive} of executions){
+      const detail=execution?.details
+      if(detail?.stored!==true||detail.sha256!==ref||detail.format!=='returned_bridge_envelope_json'
+        ||typeof detail.path!=='string')continue
+      if(isolated&&(typeof value.run_directory!=='string'||!path.isAbsolute(value.run_directory)
+        ||path.dirname(detail.path)!==path.join(value.run_directory,'executions')
+        ||path.basename(detail.path)!==archive))continue
+      retained=detail.path
+    }
   }
   return retained
 }
@@ -94,7 +108,9 @@ export async function readResultDetail(workspace: string | null, ref: string, po
   if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16000) {
     throw new Error('offset must be a nonnegative integer; limit must be 1..16000 characters')
   }
-  if(retainedPath&&(!path.isAbsolute(retainedPath)||path.basename(retainedPath)!==`${ref}.json`))throw Error('recorded result path does not match its reference')
+  if(retainedPath&&(!path.isAbsolute(retainedPath)||(path.basename(retainedPath)!==`${ref}.json`
+    &&path.basename(retainedPath)!=='builder.json'&&!/^check-[a-z0-9_-]{1,48}\.json$/.test(path.basename(retainedPath)))))
+    throw Error('recorded result path does not match its reference or declared isolated archive')
   const filename = retainedPath??path.join(await directory(workspace!), `${ref}.json`)
   const stat = await fs.lstat(filename)
   if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error('invalid result artifact')

@@ -12,6 +12,18 @@ for source in (
     "pieces = list((1, 2)); alias = pieces; alias.remove(1)",
     "items, names = [], set(); items.copy(); names.add('body')",
     "groups = {}; groups.setdefault('body', []).append(1)",
+    "globals().copy().items()",
+    "locals().copy().keys()",
+    "vars().copy().values()",
+    "from builtins import globals as namespace; namespace().copy()",
+    "import builtins as b; b.globals().copy()",
+    "snapshot=globals(); snapshot.copy()",
+    "snapshot=locals(); snapshot.copy()",
+    "snapshot=vars(); snapshot.copy()",
+    "def probe():\n    snapshot=locals(); snapshot.copy()\nprobe()",
+    "class Namespace:\n    snapshot=locals(); snapshot.copy()",
+    "import math; math.__dict__.copy(); vars(math).copy()",
+    "def probe():\n    locals().setdefault('local', 1)\nprobe()",
     "value = 'node_surface'; value.removesuffix('_surface')",
     "value = str(12); value.removeprefix('1')",
     "value = f'node_{12}'; value.removesuffix('_12')",
@@ -69,6 +81,18 @@ for source in (
 
 
 for source, method in (
+    ("globals=unknown; globals().copy()", 'copy'),
+    ("def probe(globals): globals().copy()", 'copy'),
+    ("from external import globals; globals().copy()", 'copy'),
+    ("globals()['node'].setName('changed')", 'setName'),
+    ("globals().copy()['node'].setName('changed')", 'setName'),
+    ("locals=unknown; locals().copy()", 'copy'),
+    ("vars=unknown; vars().copy()", 'copy'),
+    ("globals().setdefault('node', hou.node('/obj'))", 'setdefault'),
+    ("locals().setdefault('node', hou.node('/obj'))", 'setdefault'),
+    ("vars().setdefault('node', hou.node('/obj'))", 'setdefault'),
+    ("import math; math.__dict__.setdefault('node', hou.node('/obj'))", 'setdefault'),
+    ("class Namespace:\n    locals().setdefault('node', hou.node('/obj'))", 'setdefault'),
     ("pieces=[]; pieces=hou.node('/obj'); pieces.remove(1)", 'remove'),
     ("pieces=[]\nif condition: pieces=unknown\npieces.remove(1)", 'remove'),
     ("pieces=[]\nfor pieces in [unknown]: pass\npieces.remove(1)", 'remove'),
@@ -263,5 +287,13 @@ try:
     assert analysis.CodeAnalysis(stdlib_source).raw_usage['suspectedMutations'] == [{'name': 'copy', 'count': 1}]
 finally:
     copy.copy = original_copy
+
+helper_source = "import build_power as bp; p=bp.Part('/obj'); p.add('null', 'OUT')"
+helper = analysis.CodeAnalysis(helper_source)
+error, _ = helper.preflight(mutating_verbs=set(), read_only=False, raw_gate=True, allow_raw=None)
+assert error and 'unresolved method origin' in error and 'inspected local Python helper' in error, error
+error, _ = helper.preflight(mutating_verbs=set(), read_only=False, raw_gate=True,
+                           allow_raw='Inspected build_power.Part.add only appends build_module specs; no raw HOM')
+assert error is None, error
 
 print('pure Raw Gate ownership counterexamples passed')

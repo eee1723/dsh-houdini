@@ -42,7 +42,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。直接、导入别名、绑定及literal getattr调用共用词法归属：区分精确内建值、可信标准库API、HOM和未知来源。源码内明确传入或返回的HOM回调保留其修改来源；普通Python函数与方法不因名称或参数无法静态展开成为HOM修改。未知对象方法保留原保守判断，不新增普通裸helper函数的命名门槛。
 
-标准库API依据解释器的模块spec与来源判断，不执行待分析import；已加载模块的实际HOM重导出仍按原方法检查。遮蔽、重绑定、显式成员覆写及可变namespace外逸会使普通API证明失效，返回值不继承模块身份。此分析不递归解释任意模块、自定义import hook或回调副作用，不能作为通用Python沙箱。
+标准库API依据解释器的模块spec与来源判断，不执行待分析import；已加载模块的实际HOM重导出仍按原方法检查。`globals/locals/vars`及显式namespace映射只证明字典只读方法，容器中对象的来源和`setdefault/update`等命名空间修改不获得新保证。遮蔽、重绑定、显式成员覆写及可变namespace外逸会使普通API证明失效，返回值不继承模块身份。此分析不递归解释任意模块、自定义import hook或回调副作用，不能作为通用Python沙箱。导入实例方法的来源未证明时，反馈明确标为unresolved；作者核清本地helper只组合动词或不调用裸HOM后，可按原有一次性`allow_raw`合同执行，不为绕过静态分析改写正常builder，也不按方法名放行未知HOM。
 
 低层逃生舱只接受单次明确用途；不隐式放开整段已覆盖修改。静态分析服务正常模型调用，不是任意 Python 沙箱。已观察的非终止 VEX 删除循环写前拒绝；其他 VEX 仍由原生编译与计算反馈判断。
 
