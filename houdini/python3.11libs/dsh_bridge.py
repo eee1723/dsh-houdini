@@ -81,6 +81,9 @@ _PYTHON_RUNTIME = {
     "pythonVersion": ".".join(str(value) for value in sys.version_info[:3]),
     "executable": sys.executable,
 }
+from dsh_deployment import loaded_helper
+_HELPER = loaded_helper()
+
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
 _EXECUTION_CONTRACT_VERSION = 117
@@ -459,6 +462,7 @@ class _Handler(BaseHTTPRequestHandler):
             "executorId": _EXECUTOR_ID,
             "sceneEpoch": _recovery.scene_epoch(),
             "runtime": _PYTHON_RUNTIME,
+            "helper": _HELPER,
             "verbCatalog": {"hash": _VERB_CATALOG_HASH, "count": len(_VERB_NAMES), "names": list(_VERB_NAMES)},
             "activeRequests": _request_registry.active_count(),
             **_job_activity(),

@@ -9,13 +9,16 @@ const root=path.resolve(import.meta.dirname,'../..');
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const policy=JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8'));
 const fixture=JSON.parse(fs.readFileSync(path.join(root,'deployment/package.json'),'utf8'));
-assert.equal(manifest.engines.dsh,policy.preferredVersion);
+const supported=policy.releases.map(release=>release.dshVersion);
+assert.equal(manifest.engines.dsh,supported.join(' || '));
 assert.equal(fixture.dependencies['@deepseek-ai/dsh'],policy.preferredVersion);
 assert.equal(policy.runtimeOwnership,'host');
 assert.equal(policy.runtimeFixes,undefined);
 assert.ok(manifest.files.includes('runtime/video'),'formal plugin packaging retains the source-complete tutorial media resources');
-assert.equal(evaluatePluginCompatibility(manifest,{},policy.preferredVersion),undefined,
-  'the official host must admit the plugin using its ordinary compatibility check');
+for(const version of supported)assert.equal(evaluatePluginCompatibility(manifest,{},version),undefined,
+  `the official host must admit the qualified ${version} using its ordinary compatibility check`);
+assert.ok(evaluatePluginCompatibility(manifest,{},'0.2.2-alpha.2'),
+  'a newer preview is not supported merely because its version is higher');
 assert.ok(evaluatePluginCompatibility(manifest,{},'0.2.0-rc.2'),
   'an unqualified host is rejected by the official check, without replacing its runtime');
 assert.equal(Object.keys(manifest.dependencies??{}).some(name=>name==='@deepseek-ai/dsh'||name.startsWith('@deepseek-ai/dsh-')),false,

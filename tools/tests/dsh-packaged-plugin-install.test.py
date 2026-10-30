@@ -32,6 +32,8 @@ parser.add_argument('--artifact',required=True,type=Path)
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--hfs',type=Path,help='Also verify the installed tarball with one owned real Houdini GUI')
 parser.add_argument('--legacy-components',action='store_true',help='Seed owned legacy entry/data fixtures before automatic component preparation (requires --hfs)')
+parser.add_argument('--plugin-updates',action='store_true',help='Exercise installed update API with the public feed; offline stays unknown')
+parser.add_argument('--expected-helper-id',help='Verify installed helper sources match an already validated GUI build')
 parser.add_argument('--timeout',type=int,default=600)
 args=parser.parse_args()
 if args.legacy_components and not args.hfs:parser.error('--legacy-components requires --hfs')
@@ -268,10 +270,11 @@ def verify_real_houdini(installed,workspace_id):
     checker.write_text('import fs from "node:fs";import {HoudiniBridge} from '+json.dumps((installed/'lib/bridge.js').as_uri())+''';
 const input=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),signal=AbortSignal.timeout(45000);
 const bridge=new HoudiniBridge(input.record.bridge_url,45000,input.target.executor_id,undefined,{runtimeId:input.target.runtime_id,sceneEpoch:input.target.scene_epoch});
+const health=await bridge.observeExecutor(signal);
 await bridge.claimWriter(input.sessionId,input.record.registration_id,input.record.hip_path,signal);
 const code="import os,sys,threading,dsh_bridge,dsh_launcher,dsh_desktop_client,dsh_workbench_entry\\n__result__={'version':hou.applicationVersionString(),'hip':hou.hipFile.path(),'new':hou.hipFile.isNewFile(),'hfs':hou.getenv('HFS'),'pid':os.getpid(),'mainThread':threading.get_ident()==dsh_bridge._HOU_THREAD_ID,'bridgeFile':dsh_bridge.__file__,'pythonPath':list(sys.path),'loadedFiles':{'launcher':dsh_launcher.__file__,'desktopClient':dsh_desktop_client.__file__,'entry':dsh_workbench_entry.__file__}}";
 const value=await bridge.exec(code,{sessionId:input.sessionId,callId:'packaged-real-houdini-read'},signal,undefined,true);
-fs.writeFileSync(process.argv[3],JSON.stringify(value));if(value.ok!==true)process.exitCode=1;
+fs.writeFileSync(process.argv[3],JSON.stringify({...value,health}));if(value.ok!==true)process.exitCode=1;
 ''',encoding='utf-8')
     inputs=fixture/'hom-input.json';inputs.write_text(json.dumps({'record':record,'target':target,'sessionId':session['sessionId']}),encoding='utf-8')
     hom_file=fixture/'hom-result.json'
@@ -279,10 +282,22 @@ fs.writeFileSync(process.argv[3],JSON.stringify(value));if(value.ok!==true)proce
         capture_output=True,timeout=65,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     (fixture/'hom-check.log').write_bytes(checked.stdout+checked.stderr)
     assert checked.returncode==0,'Installed Bridge GUI check failed; inspect hom-check.log'
-    facts=json.loads(hom_file.read_text(encoding='utf-8'))['result']
+    hom_result=json.loads(hom_file.read_text(encoding='utf-8'))
+    facts=hom_result['result'];health=hom_result['health']
+    assert health['helper']=={'id':helper_root.name,'version':json.loads((installed/'package.json').read_text(encoding='utf-8'))['version']},health
+    assert health['runtimeId']==target['runtime_id'] and health['sceneEpoch']==target['scene_epoch'],health
     assert facts['mainThread'] and facts['new'] and facts['pid']==record['pid'] and facts['version']==selected['version'],facts
     assert Path(facts['hfs']).samefile(hfs) and Path(facts['bridgeFile']).resolve().is_relative_to(helper_root),facts
     assert all(filename and Path(filename).resolve().is_relative_to(helper_root) for filename in facts['loadedFiles'].values()),facts['loadedFiles']
+    def component_current():
+        presence=rpc('houdiniFrontend/projectPresence',{})
+        observed=next(row for row in presence if row['executorId']==target['executor_id'])
+        assert observed['runtimeId']==target['runtime_id'] and observed['sceneEpoch']==target['scene_epoch'],observed
+        assert observed['status']=='online' and observed['contractMismatch'] is False,observed
+        component=observed.get('componentUpdate',{})
+        return component if component.get('state')=='current' else None
+    component=wait_until(component_current,35,'installed helper component state')
+    assert component['loadedHelperId']==helper_root.name,component
     if args.legacy_components:
         legacy_prefix=os.path.normcase(str(legacy_bootstrap.resolve()))
         assert not any(os.path.normcase(os.path.abspath(path)).startswith(legacy_prefix) for path in facts['pythonPath'] if path)
@@ -295,8 +310,8 @@ fs.writeFileSync(process.argv[3],JSON.stringify(value));if(value.ok!==true)proce
     assert 'error' not in menu,menu
     assert menu['result']['sessionId']==session['sessionId'],'Native menu must return the exact registered writer conversation'
     assert menu['result']['executorId']==target['executor_id'],menu
-    print('PASS installed helper GUI, main-thread HOM and exact native-menu conversation',flush=True)
-    return {**facts,'releaseTarballUsed':True,'automaticComponentPreparation':True,'helperRoot':str(helper_root),
+    print('PASS installed helper GUI, loaded build identity, current component status, main-thread HOM and exact native-menu conversation',flush=True)
+    return {**facts,'loadedHelper':health['helper'],'componentUpdate':component,'releaseTarballUsed':True,'automaticComponentPreparation':True,'helperRoot':str(helper_root),
         'componentInstallRoot':str(install_root),'legacyComponents':args.legacy_components,
         'migrationReport':str(component_report) if component_report else None,
         'legacyFilesRetained':len(legacy_files),'legacyEntryCount':len(legacy_packages),'sessionId':session['sessionId'],
@@ -321,7 +336,19 @@ with log.open('wb') as output:
         assert installed.is_relative_to(fixture),'Plugin must be installed into the owned data/store tree'
         assert not installed.is_relative_to(ROOT),'Formal tgz test cannot resolve to the checkout'
         manifest=facts['manifest']
-        assert manifest['name']=='dsh-houdini' and manifest['engines']['dsh']=='0.2.1-rc.3',manifest
+        expected_manifest=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
+        assert manifest['name']=='dsh-houdini' and manifest['engines']['dsh']==expected_manifest['engines']['dsh'],manifest
+        if args.expected_helper_id:
+            assert len(args.expected_helper_id)==16 and all(char in '0123456789abcdef' for char in args.expected_helper_id)
+            planner=Path(os.environ.get('SystemRoot','C:/Windows'))/'System32/WindowsPowerShell/v1.0/powershell.exe'
+            planned=subprocess.run([str(planner),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',
+                str(installed/'installer/install.ps1'),'-Root',str(fixture/'component-source-plan'),
+                '-PackagesDir',str(fixture/'packages'),'-PrintOnly'],cwd=installed,env=env,
+                capture_output=True,timeout=30,check=True)
+            plan=json.loads(planned.stdout.decode('utf-8-sig'))
+            source_id=Path(plan['helper']).name
+            assert source_id==args.expected_helper_id,plan
+            report['helperSourceId']=source_id
         presets=facts['roster']['presets'];houdini=next(row for row in presets if row['id']=='houdini');standard=next(row for row in presets if row['id']=='standard')
         assert standard['isDefault'] and not houdini['isDefault'] and len(presets)>=5 and 'broken' not in houdini,presets
         assert {'houdini_exec','houdini_inspect','houdini_isolated'}<=set(facts['modes']['houdini'])
@@ -340,6 +367,13 @@ with log.open('wb') as output:
             assert time.monotonic()<deadline,'Installed Desktop integration never became available'
             time.sleep(.1)
         assert rpc('agentPresets/list',{})==facts['roster']
+        if args.plugin_updates:
+            updates=rpc('houdiniFrontend/pluginUpdates',{'input':{}},timeout=20)
+            host_version=facts['graph'].get('release',{}).get('version') if isinstance(facts['graph'],dict) else None
+            assert isinstance(host_version,str) and updates['currentVersion']==manifest['version'] and updates['hostVersion']==host_version,updates
+            assert updates['state'] in {'current','available','unavailable','unknown'},updates
+            report['pluginUpdates']=updates
+            print('PASS installed update API; public release lookup state: '+updates['state']+' (unknown does not mean no update)',flush=True)
         print('PASS packaged official Host modes, scoped tools and root client',flush=True)
         descriptor=json.loads((home/'dsh-houdini/desktop.json').read_text(encoding='utf-8'))
         assert Path(descriptor['pluginRoot']).samefile(installed)

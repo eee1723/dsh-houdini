@@ -29,6 +29,7 @@ export interface ExecutorRecord {
   hip_is_new?:boolean
   workspace_path?:string
   runtime?:HoudiniRuntimeFacts
+  helper?:{id:string|null;version:string|null}
 }
 type Session = Parameters<ExecutorBinding['ensure']>[0] & {id:string;header?:{cwd?:string}}
 type Agent = {id:string;session:Session;status?:string}

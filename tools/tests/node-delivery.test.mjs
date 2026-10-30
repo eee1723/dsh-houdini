@@ -101,7 +101,7 @@ try {
   }})
   const frontend=new HoudiniFrontend(root)
   assert.deepEqual(remoteMethods(frontend).map(method=>method.method),[
-    'windowPin','videoSettings','videoConfigure','videoDiagnostics','capabilities','openNode','supportReport','projectPresence','projectInstallations','prepareBridge',
+    'windowPin','videoSettings','videoConfigure','videoDiagnostics','capabilities','pluginUpdates','openNode','supportReport','projectPresence','projectInstallations','prepareBridge',
     'projectAction','projectLaunchStatus','projectLaunchDetach','projectLaunchResume','desktopIntent','desktopIntentAck'])
   assert.equal(frontend.capabilities().nodeDeliveries,true)
   const coordinates=i=>({sessionId:agents[i].id,eventSeq:20,index:0})

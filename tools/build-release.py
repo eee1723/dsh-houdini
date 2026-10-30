@@ -112,11 +112,18 @@ def package_staged(args, npm, output, inventory, work):
     artifact = output / packed["filename"]
     with artifact.open("rb") as stream:
         sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    update = json.loads((ROOT / "release-update.json").read_text(encoding="utf-8"))
+    run(["node", "--input-type=module", "-e",
+         "import {validReleaseUpdate} from './lib/plugin-updates.js'; "
+         "if(!validReleaseUpdate(JSON.parse(process.argv[1]))) "
+         "throw Error('Release advice needs a clear summary and valid affected version range');",
+         json.dumps(update, ensure_ascii=False)])
     result = {"kind": "dsh-plugin-bundle", "version": package["version"],
               "requiresDsh": package["engines"]["dsh"], "runtimeOwnership": "host",
               "file": str(artifact), "integrity": packed["integrity"], "sha256": sha256,
               "installUrl": "https://github.com/eee1723/dsh-houdini/releases/download/v"
                   + package["version"] + "/" + packed["filename"],
+              "platform": {"os": "win32", "cpu": "x64"}, "update": update,
               "mediaVersion": media["version"], "mediaLicense": media["license"]}
     (output / "release-manifest.json").write_text(json.dumps({**result, "file": artifact.name}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (output / "SHA256SUMS.txt").write_text(sha256 + "  " + artifact.name + "\n", encoding="ascii")

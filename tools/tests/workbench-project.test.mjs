@@ -73,7 +73,21 @@ assert.equal(uiContext.houdiniPresence(liveView,{...live,records:{[view.executor
 assert.equal(uiContext.houdiniPresence(liveView,{...live,records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now()-13000}}}).status,'unknown','a fresh batch response does not freshen an old individual observation')
 const mismatch=uiContext.houdiniPresence(liveView,{...live,records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now(),contractMismatch:true}}})
 assert.equal(mismatch.status,'unknown','a contract mismatch is not painted as live')
-assert.match(mismatch.detail,/版本不一致/,'the user gets an actionable reload reason')
+assert.equal(mismatch.label,'需要检查组件')
+assert.match(mismatch.detail,/先安装或更新组件/,'unknown installed state must not promise that reopening alone fixes the mismatch')
+const componentSnapshot=patch=>({...live,records:{[view.executorId]:{...live.records[view.executorId],...patch}}})
+const toInstall=uiContext.houdiniPresence(liveView,componentSnapshot({contractMismatch:true,componentUpdate:{state:'install'}}))
+assert.equal(toInstall.label,'需要更新组件')
+assert.match(toInstall.detail,/先更新 Houdini 组件/)
+const toRestart=uiContext.houdiniPresence(liveView,componentSnapshot({contractMismatch:true,componentUpdate:{state:'restart'}}))
+assert.equal(toRestart.label,'更新待生效')
+assert.match(toRestart.detail,/组件已安装/)
+const compatibleRestart=uiContext.houdiniPresence(liveView,componentSnapshot({componentUpdate:{state:'restart'}}))
+assert.equal(compatibleRestart.status,'online','an optional helper build update does not disable a compatible running scene')
+assert.match(compatibleRestart.detail,/可以继续使用/)
+assert.equal(uiContext.houdiniPresence(liveView,componentSnapshot({contractMismatch:true,runtimeId:'different',componentUpdate:{state:'restart'}})).state,'changed',
+  'a replaced scene is reselected before any component advice')
+assert.equal(uiContext.houdiniComponentNotice({componentUpdate:{state:'unknown'}}),null,'unknown helper identity alone is not evidence of a required update')
 const liveProps={...props,usePresence:()=>live}
 currentProject=liveView
 const liveMark=uiContext.HoudiniProjectMark(liveProps)
@@ -126,6 +140,7 @@ const boundedUi=uiContext.createHoudiniDesktopUi({
   rpc:{call:async(_channel,method,_payload,signal)=>{
     if(method==='houdiniFrontend/capabilities')return {ok:true,value:{desktop:true}}
     if(method==='houdiniFrontend/windowPin')return {ok:true,value:{pinned:false}}
+    if(method==='houdiniFrontend/pluginUpdates')return {ok:true,value:{state:'current',title:'当前版本可以继续使用',message:'没有适用更新。'}}
     pollCount++
     if(stalled)return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}))
     return {ok:true,value:[{executorId:view.executorId,runtimeId:'8'.repeat(32),status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}

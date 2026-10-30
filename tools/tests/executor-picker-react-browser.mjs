@@ -41,6 +41,8 @@ const createUi=factories.createHoudiniDesktopUi;
 let selected=null,session='chat-a',hidden=false,mode='ready',listGate=null,releaseList=null,launchGate=null,releaseLaunch=null;
 let onlyCurrent=false,prepareFailure=false,prepareGate=null,releasePrepare=null,reverseRows=false;
 let generation={id:1},launchPhase='ready',loseActionReply=false,lastLaunch=null;
+let pluginUpdateState='available';
+window.fixturePluginUpdate=value=>{pluginUpdateState=value;};
 const tickets=new Map(),listeners=new Set(),nativeListeners=new Set(),generationListeners=new Set(),calls=[];
 const viewListeners=new Set(),formListeners=new Set(),credentialEvents=new Set(),opened=[];
 let view='project',videoRevision={revision:1,status:'ready',writable:true},rejectKey=false,losePrompt=false,secretOnly=true;
@@ -75,6 +77,7 @@ if(method==='credentials/set'){
 }
 if(method==='session/prompt'){if(losePrompt){losePrompt=false;throw Error('Fixture: prompt receipt lost')}return{ok:true,value:{accepted:true}};}
 if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true}};
+if(method==='houdiniFrontend/pluginUpdates')return{ok:true,value:pluginUpdateState==='available'?{state:'available',title:'有可选更新',message:'当前版本可以继续使用，可在方便时更新。',currentVersion:'0.1.3',hostVersion:'0.2.1-rc.5',canIgnore:true,ignoredVersion:'',checkedAt:Date.now(),update:{version:'0.1.4',url:'https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.4',summary:'改善更新提醒和工程选择。',urgency:'optional'}}:{state:'unknown',title:'暂时无法检查更新',message:'请稍后再试。当前工程可以继续使用。',checkedAt:Date.now()}};
 if(method==='houdiniFrontend/projectInstallations')return{ok:true,value:[{hfs:'C:/Program Files/Side Effects Software/Houdini 22.0.368',version:'22.0.368',series:'22.0'}]};
 if(method==='houdiniFrontend/projectAction'){
  const input=payload.args.input;if(!/^[a-f0-9]{32}$/.test(input.requestId))throw Error('Stable request identity missing');lastLaunch=input.requestId;
@@ -172,6 +175,8 @@ try{
  await screenshot('choose-wide')
  assert.equal(await evaluate('document.querySelector("[data-houdini-target]").dataset.houdiniTarget'),'a'.repeat(32))
  await key('Home','Home',36)
+ assert.equal(await evaluate('document.activeElement.querySelector("[data-houdini-project-action]").dataset.houdiniProjectAction'),'pluginUpdates','an available update has a visible keyboard-reachable entry')
+ await key('ArrowDown','ArrowDown',40)
  assert.equal(await evaluate('document.activeElement.dataset.houdiniMenuToggle'),'project')
  await key('Enter','Enter',13);await until('!document.querySelector("[data-houdini-menu-section=project]").open')
  await key(' ','Space',32);await until('document.querySelector("[data-houdini-menu-section=project]").open')
@@ -298,6 +303,22 @@ try{
  await evaluate('fixture.failPrepare(false)');await projectAction('prepareBridge');await until('document.querySelector(".dsh-houdini-target-menu")?.textContent.includes("夹具：Houdini 组件已准备")')
  assert.equal(await evaluate('fixture.calls.find(row=>row.method==="houdiniFrontend/prepareBridge")?.input.sessionId'),'chat-a','first setup remains scoped to the selected Houdini session')
  await screenshot('bridge-setup-in-menu')
+ await evaluate('document.querySelectorAll(".dsh-houdini-toast button").forEach(button=>button.click())')
+ await section('management');await click('[data-houdini-project-action=pluginUpdates]')
+ await until('document.querySelector("[data-houdini-plugin-updates=available]")')
+ assert.equal(await evaluate('document.body.innerText.includes("可以继续使用")'),true)
+ assert.equal(await evaluate('document.querySelector("[data-houdini-update-notes]").textContent'),'查看更新方法与说明')
+ assert.equal(await evaluate('document.body.innerText.includes("0.2.1-rc.5")'),false,'version details stay folded for ordinary users')
+ await primaryContrast('[data-houdini-update-notes]','dark-update-notes')
+ await screenshot('plugin-update-optional-narrow-dark')
+ await call('Emulation.setDeviceMetricsOverride',{width:1080,height:720,deviceScaleFactor:1,mobile:false});await evaluate('fixture.dark(false)')
+ await primaryContrast('[data-houdini-update-notes]','light-update-notes')
+ await screenshot('plugin-update-optional-wide-light')
+ await evaluate('fixturePluginUpdate("unknown");[...document.querySelectorAll("button")].find(e=>e.textContent==="重新检查").click()')
+ await until('document.querySelector("[data-houdini-plugin-updates=unknown]")')
+ assert.equal(await evaluate('document.querySelector("[data-houdini-update-notes]")===null'),true,'failed update lookup has no installation action')
+ await screenshot('plugin-update-unavailable-network')
+ await key('Escape','Escape',27);await until('!document.querySelector("[data-houdini-plugin-updates]")')
  await evaluate('fixture.preset("standard")');await until('!document.querySelector("[data-houdini-project-label]")&&!document.querySelector("[data-houdini-project-dialog]")')
  await screenshot('standard-mode-clean')
  await evaluate('fixture.preset("houdini")');await until('document.querySelector("[data-houdini-project-label]")')

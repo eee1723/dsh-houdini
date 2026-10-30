@@ -21,7 +21,9 @@ const React={
  useEffect:(effect,deps)=>{const i=cursor++;if(!currentHooks[i]||deps.some((value,index)=>!Object.is(value,currentHooks[i].deps[index]))){currentHooks[i]?.dispose?.();const slot={deps};currentHooks[i]=slot;queued.push(()=>slot.dispose=effect())}}
 }
 const document={get visibilityState(){return hidden?'hidden':'visible'},addEventListener:(kind,fn)=>{if(kind==='visibilitychange')visibility.add(fn)},removeEventListener:(kind,fn)=>visibility.delete(fn)}
-const context={React,AbortController,AbortSignal,setTimeout,clearTimeout,setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},document,
+let clockOffset=0
+class ClientDate extends Date {static now(){return Date.now()+clockOffset}}
+const context={React,Date:ClientDate,AbortController,AbortSignal,setTimeout,clearTimeout,setInterval:fn=>{intervals.push(fn);return intervals.length},clearInterval:()=>{},document,
  require:()=>({Tooltip:'tooltip',Menu:'menu',MenuItemButton:'menuitem',Button:'button',Toast:'toast'})}
 vm.createContext(context);vm.runInContext(fragment,context)
 const observed=record=>({executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,hipPath:record.hip_path,
@@ -46,10 +48,21 @@ assert.equal(context.houdiniDisplayProject(unsaved,{...fresh,observedAt:Date.now
 const pendingReview={...unsaved,needsReview:true}
 assert.equal(context.houdiniDisplayProject(pendingReview,fresh),pendingReview)
 let observations=[observed(first),observed(second)]
+let pluginStatus={state:'current',title:'当前版本可以继续使用',message:'暂时没有适合当前 DSH 的插件更新。',currentVersion:'0.1.3',hostVersion:'0.2.1-rc.3',checkedAt:Date.now()}
+let pluginFailure=false
+let ignoredVersion='',ignoreReadOnly=false
+let preferenceGate=null
 const connection={generation:{getSnapshot:()=>generation,subscribe:fn=>{generationListeners.add(fn);return()=>generationListeners.delete(fn)}},rpc:{call:async(_channel,method,payload,signal)=>{
  requests.push({method,payload,signal})
  if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true}}
  if(method==='houdiniFrontend/windowPin')return{ok:true,value:{pinned:false}}
+ if(method==='houdiniFrontend/pluginUpdates'){
+   if(pluginFailure)throw Error('fixture network failure')
+   if(payload.args.input.ignoreVersion&&preferenceGate)await preferenceGate
+   const canIgnore=!ignoreReadOnly&&pluginStatus.state==='available'&&pluginStatus.update?.urgency==='optional'
+   if(payload.args.input.ignoreVersion&&canIgnore)ignoredVersion=payload.args.input.ignoreVersion
+   return{ok:true,value:{...pluginStatus,ignoredVersion,canIgnore}}
+ }
  if(method==='houdiniFrontend/projectPresence'){if(presenceReply)return presenceReply();if(failPresence)throw Error('connection lost');return{ok:true,value:observations}}
  if(method==='houdiniTargets/select')return{ok:true,value:{status:'selected',sessionId:task,selectedTarget:first}}
  if(method==='houdiniTargets/clear')return{ok:true,value:{selectedTarget:null}}
@@ -183,6 +196,71 @@ let finishClosed;presenceReply=()=>new Promise(resolve=>finishClosed=resolve)
 chip(tree).props.onClick();await settle();tree=render(menu);chip(tree).props.onClick()
 finishClosed({ok:true,value:[observed(first)]});await settle();tree=render(menu)
 assert.equal(Boolean(by(tree,n=>n.props.role==='menu')),false,'a slow refresh cannot reopen a dismissed menu')
+// Updating advice is opt-in to open, compatible-release scoped, and does not
+// turn a failed check into a scene failure or manufacture an install action.
+presenceReply=null
+assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length,1,'one quiet check per mounted mode; presence refreshes do not query releases')
+const updateAction=()=>by(render(menu),n=>n.props.role==='menuitem'&&by(n,c=>c.props['data-houdini-project-action']==='pluginUpdates'))
+const openMenu=async()=>{let current=render(menu);if(!by(current,n=>n.props.role==='menu')){chip(current).props.onClick();await settle()}}
+await openMenu()
+updateAction().props.onClick();await settle()
+let updateTree=render(ui.Lifecycle)
+assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length,2,'opening reads the current native preference even when release advice is cached')
+assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').at(-1).payload.args.input.refresh,false,'preference observation reuses the Host release cache')
+assert.equal(by(updateTree,n=>n.props['data-houdini-plugin-updates'])?.props['data-houdini-plugin-updates'],'current')
+assert(!by(updateTree,n=>n.props['data-houdini-update-notes']),'no applicable package means no misleading update button')
+pluginStatus={state:'available',title:'有可选更新',message:'当前版本可以继续使用。',checkedAt:Date.now(),
+ update:{version:'0.1.4',url:'https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.4',urgency:'optional',summary:'改善工程选择。'}}
+const buttonNamed=(tree,label)=>by(tree,n=>n.tag==='button'&&text(n)===label)
+buttonNamed(updateTree,'重新检查').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+assert.match(text(updateTree),/当前版本可以继续使用/)
+assert.equal(by(updateTree,n=>n.props['data-houdini-update-notes']).props.href,pluginStatus.update.url)
+pluginFailure=true;buttonNamed(updateTree,'忽略此版本').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+assert.match(text(updateTree),/未能保存这个选择/,'a failed preference write keeps the dialog and visible advice')
+assert.equal(ignoredVersion,'')
+pluginFailure=false
+let releasePreference;preferenceGate=new Promise(resolve=>releasePreference=resolve)
+buttonNamed(updateTree,'忽略此版本').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+buttonNamed(updateTree,'稍后处理').props.onClick();await openMenu();updateAction().props.onClick();await settle()
+releasePreference();preferenceGate=null;await settle();updateTree=render(ui.Lifecycle)
+assert(by(updateTree,n=>n.props['data-houdini-plugin-updates']),'a late ignore receipt cannot close a newly opened update window')
+buttonNamed(updateTree,'稍后处理').props.onClick();await openMenu();tree=render(menu)
+assert.match(text(updateAction()),/插件更新/)
+assert(!text(updateAction()).includes('有更新'),'ignoring one optional release removes only its passive reminder')
+pluginStatus={...pluginStatus,update:{...pluginStatus.update,urgency:'required'}}
+updateAction().props.onClick();await settle();updateTree=render(ui.Lifecycle)
+buttonNamed(updateTree,'重新检查').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+assert(!buttonNamed(updateTree,'忽略此版本'),'required issue handling cannot inherit an optional-version dismissal')
+buttonNamed(updateTree,'稍后处理').props.onClick();await openMenu()
+assert.match(text(updateAction()),/插件有更新/)
+updateAction().props.onClick();await settle();updateTree=render(ui.Lifecycle)
+pluginFailure=true;buttonNamed(updateTree,'重新检查').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+assert.match(text(updateTree),/上次检查结果/,'a failed refresh explains that displayed advice is retained')
+assert(by(updateTree,n=>n.props['data-houdini-update-notes']),'a failed refresh cannot erase a known required update')
+assert(!buttonNamed(updateTree,'忽略此版本'))
+pluginFailure=false
+pluginStatus={state:'unknown',title:'暂时无法检查更新',message:'请稍后再试。'}
+buttonNamed(updateTree,'重新检查').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+assert(!by(updateTree,n=>n.props['data-houdini-update-notes']))
+assert(!text(updateTree).includes('立即更新'))
+pluginStatus={state:'unavailable',title:'暂时没有适合当前 DSH 的更新',message:'可以查看版本说明，了解支持范围。',
+ notesUrl:'https://github.com/eee1723/dsh-houdini/releases'}
+buttonNamed(updateTree,'重新检查').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+assert.equal(by(updateTree,n=>n.props['data-houdini-update-notes']).props.href,pluginStatus.notesUrl,'unsupported host advice has a real explanation destination')
+assert.match(text(updateTree),/查看支持范围与更新说明/)
+assert(!buttonNamed(updateTree,'忽略此版本'))
+pluginStatus={state:'unknown',title:'暂时无法检查更新',message:'请稍后再试。'}
+buttonNamed(updateTree,'重新检查').props.onClick();await settle();updateTree=render(ui.Lifecycle)
+buttonNamed(updateTree,'关闭').props.onClick()
+let updateChecks=requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length
+intervals.at(-1)();await settle()
+assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length,updateChecks,'failed checks are quiet for one minute')
+clockOffset=61000;pluginStatus={state:'current',title:'可以继续使用当前版本',message:'没有适用更新。',checkedAt:ClientDate.now()}
+intervals.at(-1)();await settle()
+assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length,++updateChecks,'an open client retries an expired failed check')
+clockOffset+=12*60*60*1000+1000;pluginStatus={...pluginStatus,checkedAt:ClientDate.now()}
+visibility.forEach(fn=>fn());await settle()
+assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length,++updateChecks,'returning to an old window discovers updates without restarting DSH')
 generation=undefined;generationListeners.forEach(fn=>fn());tree=render(menu);assert.equal(chip(tree).props['data-state'],'unbound')
 preset='standard';assert.equal(ui.Label(props()),null,'other presets do not mount the Houdini selector')
 assert(!source.includes('dangerouslySetInnerHTML'))

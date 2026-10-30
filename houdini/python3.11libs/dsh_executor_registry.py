@@ -35,12 +35,12 @@ def is_shared_executor():
     return _ACTIVE is not None and not _ACTIVE._closed
 
 
-def activate(root, executor_id, *, installation, version, port, runtime_id, hip, workbench=False, scene=None, runtime=None):
+def activate(root, executor_id, *, installation, version, port, runtime_id, hip, workbench=False, scene=None, runtime=None, helper=None):
     """Explicit worker-side registration after the Bridge is listening."""
     global _ACTIVE
     if _ACTIVE is not None:
         raise RuntimeError('An executor registration is already active')
-    item = ExecutorRegistration(root, executor_id, installation=installation, version=version, workbench=workbench, runtime=runtime)
+    item = ExecutorRegistration(root, executor_id, installation=installation, version=version, workbench=workbench, runtime=runtime, helper=helper)
     try:
         item.publish(port, runtime_id, hip=hip, scene=scene)
     except BaseException:
@@ -71,6 +71,15 @@ def _runtime_facts(runtime):
             or not re.fullmatch(r'\d+\.\d+\.\d+', runtime['pythonVersion'])):
         raise ValueError('invalid Houdini installation runtime')
     return dict(runtime)
+
+
+def _helper_facts(helper):
+    # Auxiliary update information is not an executor admission condition.
+    # Older or incomplete observations remain usable with unknown helper facts.
+    value = helper if isinstance(helper, dict) else {}
+    identity, version = value.get('id'), value.get('version')
+    return {'id': identity if isinstance(identity, str) and re.fullmatch('[0-9a-f]{16}', identity) else None,
+            'version': version if isinstance(version, str) and 0 < len(version) <= 128 else None}
 
 
 def _spelling(value):
@@ -123,7 +132,7 @@ class ExecutorRegistration:
     This is not a liveness oracle or automatic task recovery authority.
     A registration never adopts another process's existing record or writer.
     """
-    def __init__(self, root, executor_id, *, installation, version, workbench=False, runtime=None):
+    def __init__(self, root, executor_id, *, installation, version, workbench=False, runtime=None, helper=None):
         self.root = _absolute(root)
         self.executor_id = _identity(executor_id)
         self.installation = str(_absolute(installation))
@@ -131,6 +140,7 @@ class ExecutorRegistration:
             raise ValueError('expected exact Houdini version')
         self.version = version
         self.runtime = _runtime_facts(runtime) if runtime is not None else None
+        self.helper = _helper_facts(helper) if helper is not None else None
         self._guard = threading.RLock()
         self._writers = []
         self._writer_keys = []
@@ -243,6 +253,8 @@ class ExecutorRegistration:
                 record.update(workbench=True, **{key: self.scene.get(key) for key in ('scene_id', 'scene_epoch', 'hip_is_new', 'workspace_path')})
             if self.runtime is not None:
                 record['runtime'] = self.runtime
+            if self.helper is not None:
+                record['helper'] = self.helper
             atomic_json(self._file, record)
             self._port, self._runtime_id = port, runtime_id
             return record
@@ -428,6 +440,8 @@ def read_candidates(root, *, installation):
         _identity(value.get('registration_id'))
         if 'runtime' in value:
             _runtime_facts(value['runtime'])
+        if 'helper' in value:
+            value['helper'] = _helper_facts(value['helper'])
         if not 1024 <= int(value['bridge_url'].rsplit(':', 1)[1]) <= 65535:
             raise ValueError('invalid registered port')
         if value.get('installation') == install:

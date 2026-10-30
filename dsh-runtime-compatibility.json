@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.2.1-rc.3",
+  "preferredVersion": "0.2.1-rc.5",
   "host": "official-dsh-desktop",
   "runtimeOwnership": "host",
   "releases": [
@@ -27,6 +27,26 @@
         "System dsh:// activation into the end-user Desktop profile, existing user configuration and plugin upgrade/disable/uninstall",
         "Recovery of legacy shared Sessions written with the removed private relocation semantics",
         "User-authorized Codex login, account-returned model catalog including any GPT-6.1 Terra entry, real text/function-tool/image requests and a real Houdini task; installation or model visibility alone does not establish inference"
+      ]
+    },
+    {
+      "dshVersion": "0.2.1-rc.5",
+      "rpcWire": "slash-generated-args-v1",
+      "browserAuth": "process-token-api-peer-signed-cookie-v2",
+      "trajectorySource": "useTrajectory(snapshot.eventNodes)",
+      "sessionFormatVersion": 4,
+      "verificationStatus": "official-host-browser-context-verified",
+      "verifiedOn": [
+        "Unmodified official npm 0.2.1-rc.5 Host in an owned disposable profile; the public runtime-version API reports the exact selected version",
+        "Official composition preserves native default and other presets, additive Houdini scope, and exactly one root client module",
+        "Official browser selects the intended native workspace and Session, preserves draft/history and Standard/Houdini mode isolation; project menu, open dialog and native trajectory load without runtime exceptions",
+        "Scripted provider in the real native/PTC Agent loop receives original scene and recovery context; settled failures are not replayed and uncertain requests/active jobs remain observable",
+        "All declared runtime peers resolve from the official rc.3 and rc.5 installations to their respective DSH versions; shared Cordis/Schemastery/Koffi versions remain unchanged"
+      ],
+      "pendingVerification": [
+        "Native rc.5 Desktop application update, candidate tgz installation and end-user profile upgrade/disable/uninstall",
+        "Real model-provider requests and existing user Houdini scenes; owned provider/Bridge fixtures do not establish model quality or new live HOM execution",
+        "System dsh:// activation and the current user profile with its other installed plugins"
       ]
     }
   ]

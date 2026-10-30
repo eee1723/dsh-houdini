@@ -122,6 +122,8 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；同源执行事实保留canonical，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
+| [src/component-compatibility.ts](../src/component-compatibility.ts)、[src/component-installation.ts](../src/component-installation.ts) | 执行/界面共用兼容判断；异步消费安装器预览与实际加载身份，区分待安装和待重开，不以组件构建差异阻断兼容执行 |
+| [src/plugin-updates.ts](../src/plugin-updates.ts)、[release-update.json](../release-update.json) | 本插件正式发行的只读适用更新建议与同源修复范围校验；复用DSH兼容合同，安装/宿主更新仍由官方管理，方法与验证见[适配](dsh-update-compatibility.md#第三方插件更新入口) |
 | [src/executor-routing.ts](../src/executor-routing.ts) | 按对话明确选择路由、同工作区首次候选、写时作者预留和原运行实例历史查询；固定请求的runtime/scene epoch，不寻找历史替代目标；独立worker只读所选登记的静态安装事实，不领取现场权限 |
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：按明确启动来源创建或定位指定会话，列出/选择/取消目标和退出活动查询；不扫描会话历史、不恢复节点或迁移目录 |
 | [src/executor-host.ts](../src/executor-host.ts) | 官方根插件拥有的现场目录与选择服务；原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |

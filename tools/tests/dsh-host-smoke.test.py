@@ -25,9 +25,12 @@ import dsh_managed_runtime as runtime
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runtime-cache', type=Path, required=True)
+parser.add_argument('--dsh-version', help='Exact qualified runtime to exercise; defaults to the preferred version')
 parser.add_argument('--browser-module', type=Path)
 parser.add_argument('--browser', action='store_true', help='Verify the official browser and native mode/session navigation')
 parser.add_argument('--context-loop', action='store_true', help='Run a scripted provider through the real DSH loop and local Bridge fixture')
+parser.add_argument('--plugin-updates', action='store_true', help='Call the installed update API against the public release feed; network failure remains unknown')
+parser.add_argument('--update-preferences', action='store_true', help='Seed one owned optional update and verify browser dismissal persists through native settings')
 parser.add_argument('--repetition-method', action='store_true', help='Also verify native/nested reference delivery to the scripted provider')
 parser.add_argument('--surface-method', action='store_true', help='Verify surface/COP skills and native/nested reference delivery at the actual provider')
 parser.add_argument('--outcome-fixture', type=Path, help='Exact receipts exported by isolated caught-failure HOM regression')
@@ -37,6 +40,8 @@ parser.add_argument('--geometry-fixture', type=Path, help='Exact large-output co
 parser.add_argument('--script-fixture', type=Path, help='Exact script source, identity and complete receipt exported by isolated execution-runtime HOM')
 parser.add_argument('--render-fixture', type=Path, help='Exact multi-product Bridge receipt exported by isolated camera-framing HOM')
 args = parser.parse_args()
+if args.update_preferences and (not args.browser or args.plugin_updates):
+    parser.error('--update-preferences requires --browser and is separate from the public --plugin-updates lookup')
 if args.repetition_method and not args.context_loop:
     parser.error('--repetition-method requires --context-loop')
 if args.surface_method and not args.context_loop:
@@ -48,11 +53,18 @@ if args.render_fixture and not args.context_loop:
 cache = args.runtime_cache.resolve(strict=True)
 node = shutil.which('node')
 assert node
-preferred = json.loads((ROOT / 'dsh-runtime-compatibility.json').read_text(encoding='utf-8'))['preferredVersion']
+compatibility = json.loads((ROOT / 'dsh-runtime-compatibility.json').read_text(encoding='utf-8'))
+preferred = args.dsh_version or compatibility['preferredVersion']
+assert preferred in {release['dshVersion'] for release in compatibility['releases']}, 'Runtime must be explicitly declared for qualification'
 assert json.loads((cache / 'node_modules/@deepseek-ai/dsh/package.json').read_text())['version'] == preferred
 fixture = Path(tempfile.mkdtemp(prefix='dsh-host-smoke-'))
 print('Isolated evidence:', fixture, flush=True)
 env = isolated_environment(fixture)
+if args.update_preferences:
+    env['DSH_UPDATE_PREFERENCE_FIXTURE']='1'
+    env['DSH_UPDATE_PLUGIN_VERSION']=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))['version']
+if args.plugin_updates:
+    env['DSH_UPDATE_SOURCE_PROBE']='1'
 subprocess.run([node, str(ROOT / 'tools/tests/prepare-shared-host-fixture.mjs'),
     str(cache / 'node_modules/@deepseek-ai/dsh/lib/bin.js'), env['DSH_HOME'], str(ROOT)],
     cwd=ROOT, env=env, check=True, timeout=60, capture_output=True)
@@ -96,7 +108,7 @@ env['DSH_COMPOSITION_FIXTURE_OUT'] = str(output_file)
 inspector = fixture / 'inspect.mjs'
 inspector.write_text("import {createUserMessage,createToolResultMessage} from "
     +json.dumps((cache / 'node_modules/@deepseek-ai/dsh-llm/lib/index.js').as_uri())+";\n"
-    +"import {auditStartupEntries} from "+json.dumps((cache / 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js').as_uri())+";\n"+"""
+    +"import {auditStartupEntries,getDshRuntimeVersion} from "+json.dumps((cache / 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js').as_uri())+";\n"+"""
 import fs from 'node:fs';
 export const inject=['loader','tools','agentPresets','clientModules','agents'];
 export function apply(ctx) {
@@ -105,6 +117,28 @@ export function apply(ctx) {
     queueMicrotask(async () => {
       try {
         await ctx.loader.await();
+        const frontend=ctx.get('houdiniFrontend');
+        if(process.env.DSH_UPDATE_PREFERENCE_FIXTURE==='1') {
+          frontend.updates.cached={state:'available',title:'Houdini 插件有更新',message:'本次测试更新让提示更清楚。',
+            checkedAt:Date.now(),currentVersion:process.env.DSH_UPDATE_PLUGIN_VERSION,hostVersion:getDshRuntimeVersion(),
+            update:{version:'0.1.999',url:'https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.999',
+              installUrl:'https://github.com/eee1723/dsh-houdini/releases/download/v0.1.999/dsh-houdini-0.1.999.tgz',
+              requiresDsh:getDshRuntimeVersion(),summary:'本次测试更新让提示更清楚。',urgency:'optional'}};
+        }
+        if(process.env.DSH_UPDATE_SOURCE_PROBE==='1') {
+          const original=frontend.updates.fetcher;
+          frontend.updates.fetcher=async(...args)=>{
+            const response=await original(...args);
+            if(String(args[0]).startsWith('https://api.github.com/repos/eee1723/dsh-houdini/releases')) {
+              let message;
+              if(!response.ok)try{message=(await response.clone().text()).slice(0,1000).replace(/\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/g,'[IP]');}catch{}
+              fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT+'.update-source.json',JSON.stringify({
+                status:response.status,rateLimit:response.headers.get('x-ratelimit-limit'),
+                rateRemaining:response.headers.get('x-ratelimit-remaining'),rateReset:response.headers.get('x-ratelimit-reset'),message}));
+            }
+            return response;
+          };
+        }
         const roster=await ctx.agentPresets.remoteExportList();
         const lease=await ctx.agentPresets.acquireScope('houdini');
         try {
@@ -114,7 +148,7 @@ export function apply(ctx) {
           const activation=await auditStartupEntries(ctx,'owned-smoke',()=>{});
           const services={workspaceRegistry:ctx.get('workspaceRegistry')!==undefined,workspaceController:ctx.get('workspaceController')!==undefined,
             houdiniTargets:ctx.get('houdiniTargets')!==undefined,houdiniFrontend:ctx.get('houdiniFrontend')!==undefined};
-          if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({roster,tools,graph,rootEntries,activation,services}));
+          if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({runtimeVersion:getDshRuntimeVersion(),roster,tools,graph,rootEntries,activation,services}));
         } finally {await lease[Symbol.asyncDispose]();}
       } catch(error) {
         if(!disposed)fs.writeFileSync(process.env.DSH_COMPOSITION_FIXTURE_OUT,JSON.stringify({error:String(error.stack||error)}));
@@ -177,11 +211,11 @@ if args.context_loop:
 overlay.write_text(overlay_text, encoding='utf-8')
 log = fixture / 'host.log'
 auth = DshWebSession(f'http://127.0.0.1:{port}', str(log), str(fixture / 'runtime.json'))
-def rpc(method, arguments):
+def rpc(method, arguments, *, timeout=5):
     body=json.dumps({'type':'client-request','rpcId':uuid.uuid4().hex,'method':method,'payload':{'args':arguments}}).encode()
     request=urllib.request.Request(f'http://127.0.0.1:{port}/api/{method}', data=body,
         headers={'Content-Type':'application/json'}, method='POST')
-    with auth.open(request, timeout=5) as response:
+    with auth.open(request, timeout=timeout) as response:
         result=json.load(response)['result']
         assert result['ok'], result
         return result['value']
@@ -197,6 +231,7 @@ with log.open('wb') as output:
             time.sleep(.25)
         facts=json.loads(output_file.read_text(encoding='utf-8'))
         assert 'error' not in facts, facts
+        assert facts['runtimeVersion']==preferred, 'Consumer must see the exact official runtime under test'
         presets=facts['roster']['presets']
         houdini = next(row for row in presets if row['id'] == 'houdini')
         standard = next(row for row in presets if row['id'] == 'standard')
@@ -213,6 +248,15 @@ with log.open('wb') as output:
         assert sum(row['id'] == 'dsh-houdini' for row in graph_rows) == 1, [row['id'] for row in graph_rows]
         auth.authorize(timeout=5)
         assert rpc('agentPresets/list', {}) == facts['roster']
+        if args.plugin_updates:
+            updates=rpc('houdiniFrontend/pluginUpdates', {'input': {}}, timeout=20)
+            expected_plugin=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))['version']
+            assert updates['hostVersion']==preferred and updates['currentVersion']==expected_plugin, updates
+            assert updates['state'] in {'current','available','unavailable','unknown'}, updates
+            assert isinstance(updates['title'],str) and isinstance(updates['message'],str), updates
+            (fixture/'plugin-updates.json').write_text(json.dumps(updates,ensure_ascii=False,indent=2),encoding='utf-8')
+            print('Installed plugin update API: actual Host '+updates['hostVersion']+', plugin '+updates['currentVersion']
+                  +', public release lookup '+updates['state']+'; unknown does not mean no update',flush=True)
         default_workspace=rpc('workspace/create', {'request': {'path': str(fixture)}})['workspace']
         default=rpc('session/create', {'request':{'sessionId':uuid.uuid4().hex,'workspaceId':default_workspace['workspaceId']}})
         assert default['agentPreset']=='standard', default
@@ -251,7 +295,8 @@ with log.open('wb') as output:
                 browser_sessions.append(browser_session['sessionId'])
             Path(str(output_file)+'.sidebar').write_text(json.dumps([default['sessionId'],*browser_sessions]), encoding='utf-8')
             browser_config = fixture / 'browser-config.json'
-            browser_config.write_text(json.dumps({'base': f'http://127.0.0.1:{port}/',
+            browser_config.write_text(json.dumps({'base': f'http://127.0.0.1:{port}/', 'dshVersion': facts['runtimeVersion'],
+                'updatePreferences': args.update_preferences, 'updateVersion': '0.1.999',
                 'first': str(first), 'second': str(second), 'output': str(fixture),
                 'firstSession': browser_sessions[0], 'secondSession': browser_sessions[1], 'standardSession': default['sessionId'],
                 'seedFile': str(output_file)+'.seed',
@@ -260,6 +305,20 @@ with log.open('wb') as output:
                     'url': f'http://127.0.0.1:{port}/', 'httpOnly': True} for cookie in auth._cookies]}), encoding='utf-8')
             subprocess.run([node, str(ROOT / 'tools/tests/dsh-client-navigation.mjs'),
                 str(browser_config)], cwd=ROOT, env=env, check=True, timeout=120)
+            if args.update_preferences:
+                updates=rpc('houdiniFrontend/pluginUpdates', {'input': {}})
+                assert updates['ignoredVersion']=='0.1.999',updates
+                patch=Path(env['DSH_HOME'])/'profiles/web/cordis.patch.yml'
+                decoder=fixture/'inspect-preference.mjs'
+                decoder.write_text("import fs from 'node:fs';import {createRequire} from 'node:module';"
+                    +"const require=createRequire("+json.dumps(str(cache/'node_modules/@deepseek-ai/dsh/lib/bin.js'))+");"
+                    +"const yaml=require('js-yaml');"
+                    +"const data=yaml.load(fs.readFileSync(process.argv[2],'utf8'),{schema:yaml.JSON_SCHEMA}),values=[];"
+                    +"function visit(v){if(v&&typeof v==='object'){if(Object.hasOwn(v,'ignoredPluginVersion'))values.push(v.ignoredPluginVersion);for(const x of Object.values(v))visit(x)}}"
+                    +"visit(data);console.log(JSON.stringify(values));",encoding='utf-8')
+                decoded=subprocess.run([node,str(decoder),str(patch)],cwd=ROOT,env=env,check=True,capture_output=True,text=True,timeout=15)
+                assert json.loads(decoded.stdout)==['0.1.999'],decoded.stdout
+                print('Owned optional-update fixture: browser ignore/reload and native active-profile persistence passed; no public update discovery claimed',flush=True)
     finally:
         runtime.stop_owned(process)
         process.wait(timeout=15)

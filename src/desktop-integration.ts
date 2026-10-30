@@ -14,6 +14,7 @@ import {HoudiniBridge} from './bridge.js'
 import {projectedExecutorState} from './executor-identity-projection.js'
 import {targetMatchesRecord,targetSnapshot,type ExecutorRecord} from './executor-routing.js'
 import {acquireDesktopLease,processStarted as systemProcessStarted} from './desktop-process.js'
+import {ComponentInstallation,type ComponentUpdate} from './component-installation.js'
 
 const execute=promisify(execFile)
 const id=()=>randomUUID().replaceAll('-','')
@@ -118,6 +119,7 @@ export class DesktopIntegration {
   private server?:Server
   private lease?:Awaited<ReturnType<typeof acquireDesktopLease>>
   private preparation?:Promise<HelperInstallResult>
+  private readonly components=new ComponentInstallation(this.lifetime.signal)
   private port=0
   constructor(private readonly ctx:Context,private readonly targets:ExecutorController,
     private readonly installations=discoverHoudini,private readonly processStarted:ProcessProbe=systemProcessStarted,
@@ -311,18 +313,21 @@ export class DesktopIntegration {
   async presence() {
     const records=await this.targets.getRouter(this.paths.registry).directory.list()
     const observe=async(record:typeof records[number])=>{
-      let status='offline',contractVersion:number|undefined,activeRequests=0,activeJobs=0
+      let status='offline',contractVersion:number|undefined,verbCatalogHash:string|undefined,activeRequests=0,activeJobs=0,
+        componentUpdate:ComponentUpdate|undefined
       const process=record.state==='registered'?await this.registeredProcessState(record):'exited'
       if(record.state==='registered'&&process!=='exited'&&process!=='reused')try {
         const bridge=new HoudiniBridge(record.bridge_url,3000,record.executor_id,this.lifetime.signal)
-        const health=await bridge.inspectExecutor(AbortSignal.any([this.lifetime.signal,AbortSignal.timeout(3000)]))
+        const health=await bridge.observeExecutor(AbortSignal.any([this.lifetime.signal,AbortSignal.timeout(3000)]))
         status=health.runtimeId===record.runtime_id&&health.sceneEpoch===record.scene_epoch?'online':'changed'
         contractVersion=health.executionContractVersion
+        verbCatalogHash=health.verbCatalog?.hash
+        if(status==='online')componentUpdate=await this.components.observe(health,record.installation)
         activeRequests=health.activeRequests??0;activeJobs=health.activeJobs??0
       }catch{status='unknown'}
       return {executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
         sceneId:record.scene_id,hipPath:record.hip_path,status,observedAt:Date.now(),candidate:record,
-        ownerSessionId:record.task_id,activeRequests,activeJobs,busy:Boolean(activeRequests||activeJobs),contractVersion}
+        ownerSessionId:record.task_id,activeRequests,activeJobs,busy:Boolean(activeRequests||activeJobs),contractVersion,verbCatalogHash,componentUpdate}
     }
     const observed=[]
     for(let offset=0;offset<records.length;offset+=8) {
@@ -358,7 +363,7 @@ export class DesktopIntegration {
     const data=input as {sessionId?:string}
     if(!data||Object.keys(data).join(',')!=='sessionId'||typeof data.sessionId!=='string')throw Error('请选择 Houdini 模式的对话。')
     await this.houdiniSession(data.sessionId)
-    return this.installHelper()
+    try{return await this.installHelper()}finally{this.components.invalidate()}
   }
   intent(after:number,signal:AbortSignal){return this.intents.read(after,AbortSignal.any([signal,this.lifetime.signal]))}
   private async houdiniSession(sessionId:string) {

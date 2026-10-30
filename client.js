@@ -293,6 +293,20 @@ window.__ModuleLoader__.load({
         React.createElement("path", { d: paths[props.state] || paths.unknown }));
     }
 
+    function houdiniComponentNotice(record) {
+      if (!record) return null;
+      var update = record.componentUpdate, state = update && update.state;
+      if (state === "restart") return { label: "更新待生效", detail: record.contractMismatch ?
+        "组件已安装。请先保存工程，再关闭并重新打开这个 Houdini 窗口，之后继续操作。" :
+        "当前工程可以继续使用。要使用已安装的更新，请在工作结束后保存工程，再重新打开这个 Houdini 窗口。", action: null };
+      if (state === "install") return { label: record.contractMismatch ? "需要更新组件" : "组件可更新", detail: record.contractMismatch ?
+        "请先更新 Houdini 组件。安装完成后，会告诉你是否需要保存并重开这个窗口。" :
+        "当前工程可以继续使用。可在工作结束后更新 Houdini 组件，再按安装结果提示操作。", action: "更新 Houdini 组件" };
+      if (record.contractMismatch) return { label: "需要检查组件", detail:
+        "这个 Houdini 的连接组件与当前插件不匹配。请先安装或更新组件，再按结果提示操作。", action: "安装 / 更新 Houdini 组件" };
+      return null;
+    }
+
     function houdiniPresence(project, snapshot, sessionId, nativeStatuses, useCurrentActivity) {
       var target = houdiniProjectTarget(project);
       function status(state, label, detail, presence) { return { state: state, status: presence || (state === "offline" ? "offline" : state === "changed" ? "changed" : "unknown"), label: label, detail: detail || label }; }
@@ -304,10 +318,14 @@ window.__ModuleLoader__.load({
       if (!record || !Number.isFinite(record.observedAt) || Date.now() - record.observedAt > 12000)
         return status("unknown", "连接待确认", "尚未收到这个 Houdini 的最新状态，请稍后再试。");
       if (record.status === "offline") return status("offline", "已断开", "这个 Houdini 已关闭或断开，可以选择其他已打开的窗口。");
-      if (record.contractMismatch) return status("unknown", "版本待更新", "这个 Houdini 加载的插件版本不一致。请先保存工程，再重新打开这个 Houdini。");
+      var componentNotice = houdiniComponentNotice(record);
       if (record.status === "changed" || typeof record.sceneId === "string" && record.sceneId.length > 0 &&
         typeof target.scene_id === "string" && target.scene_id.length > 0 && record.sceneId !== target.scene_id)
         return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的工程。");
+      if (target.scene_epoch && record.sceneEpoch && target.scene_epoch !== record.sceneEpoch ||
+        target.runtime_id && record.runtimeId && target.runtime_id !== record.runtimeId)
+        return status("changed", "场景已变化", "Houdini 已重开或切换场景，请重新选择要继续的工程。");
+      if (record.contractMismatch) return status("unknown", componentNotice.label, componentNotice.detail);
       if (record.status !== "online") return status("unknown", "连接待确认", "暂时无法确认这个 Houdini 的连接状态。");
       if (!target.scene_epoch || !record.sceneEpoch || !target.runtime_id || !record.runtimeId)
         return status("unknown", "工程待确认", "工程身份信息尚未完整确认，请重新选择当前窗口。");
@@ -325,6 +343,7 @@ window.__ModuleLoader__.load({
       if (activeJobs && owner === sessionId)
         return status("working", "对话工作中", "当前对话在 Houdini 中的后台操作尚未完成。", "online");
       if (bridgeBusy) return status("working", "工程处理中", "Houdini 有操作尚未完成，可以继续查看当前场景。", "online");
+      if (componentNotice) return status("ready", componentNotice.label, componentNotice.detail, "online");
       return status("ready", "已就绪", "连接正常。可以查看场景，或告诉 Agent 你想完成的任务。", "online");
     }
 
@@ -355,14 +374,16 @@ window.__ModuleLoader__.load({
       var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
       var status = houdiniPresence(project, presence, props.sessionId, statuses), display = houdiniDisplayProject(project, presence), target = houdiniProjectTarget(display);
             return React.createElement(ui.Tooltip, { side: "bottom", align: "end", delayMs: 400, portal: true, maxWidth: 360, openOnClick: false,
-        label: (target ? houdiniProjectName(display) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail },
+        label: (target ? houdiniProjectName(display) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail + (props.pluginUpdateAvailable ? "\n插件有更新，可在工程菜单中查看。" : "") },
         React.createElement("button", { type: "button", className: "dsh-houdini-project-chip", onClick: props.onProjectMenuClick,
           "aria-haspopup": "menu", "aria-expanded": !!props.projectMenuOpen,
-          "aria-label": "Houdini 工程：" + (target ? houdiniProjectName(display) + " · " : "") + status.label,
+          "aria-label": "Houdini 工程：" + (target ? houdiniProjectName(display) + " · " : "") + status.label + (props.pluginUpdateAvailable ? "，插件有更新" : ""),
           "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-label": true },
           React.createElement(HoudiniProjectIcon),
           React.createElement("span", { className: "dsh-houdini-chip-name", "data-houdini-project-name": true }, target ? houdiniProjectName(display) : "Houdini"),
           React.createElement("span", { className: "dsh-houdini-chip-status" }, React.createElement(HoudiniTargetStateIcon, { state: status.state }), status.label),
+          props.pluginUpdateAvailable && React.createElement("span", { "aria-label": "插件有更新", "data-houdini-update-indicator": true,
+            style: { display: "inline-block", flex: "none", width: 5, height: 5, borderRadius: "50%", background: "var(--dsw-alias-state-warn-primary,#c6974c)" } }),
           React.createElement("svg", { width: 10, height: 10, viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: 1.3, "aria-hidden": true }, React.createElement("path", { d: "m3 4.5 3 3 3-3" }))));
     }
 
@@ -612,6 +633,7 @@ window.__ModuleLoader__.load({
     function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace) {
       var state = { available: false, visible: true, records: {}, observedAt: 0 }, listeners = new Set(), notice = null, serial = 0;
       var refreshPresence = function () {}, dialog = null;
+      var updates = { busy: false, value: null }, updateRequest = null, updateAttempt = 0, updateGeneration = null, lastUpdateAttempt = 0, updateDialogRevision = 0, updatesOpen = false, disposed = false;
       var launchOwnership = createLaunchOwnership(connection);
       var nativeWindow = typeof window !== "undefined" && window.dshDesktop && typeof window.dshDesktop.deviceInfo === "function";
       var windowPin = createWindowPinUi(connection, function () { publish(Object.assign({}, state)); }, notify, { enabled: !!nativeWindow });
@@ -622,6 +644,69 @@ window.__ModuleLoader__.load({
       function usePresence() { return React.useSyncExternalStore(subscribe, snapshot); }
       function useNativeStatus() { return React.useSyncExternalStore(nativeSource.subscribe, nativeSource.getSnapshot); }
       function notify(text) { notice = { id: ++serial, text: text }; publish(Object.assign({}, state)); }
+      function hasPluginUpdate() {
+        var value = updates.value, update = value && value.state === "available" && value.update;
+        return !!(update && (update.urgency !== "optional" || update.version !== value.ignoredVersion));
+      }
+      async function checkPluginUpdates(refresh, ignoreVersion, readPreference) {
+        if (updateRequest) return;
+        var generation = connection.generation.getSnapshot();
+        if (!generation || typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        var now = Date.now(), previous = updates.value;
+        if (!refresh && !ignoreVersion && !readPreference && updateGeneration === generation && previous && now < (previous.state === "unknown" || previous.checkError ?
+          lastUpdateAttempt + 60000 : Number(previous.checkedAt) + 12 * 60 * 60 * 1000)) return;
+        var controller = new AbortController(), attempt = ++updateAttempt;
+        updateRequest = controller; updateGeneration = generation; lastUpdateAttempt = now; updates = { busy: true, value: updates.value }; publish(Object.assign({}, state));
+        var timeout = setTimeout(function () { controller.abort(); }, 20000);
+        try {
+          var input = { refresh: !!refresh }; if (ignoreVersion) input.ignoreVersion = ignoreVersion;
+          var response = await connection.rpc.call("/api", "houdiniFrontend/pluginUpdates", { args: { input: input } }, controller.signal);
+          if (disposed || controller.signal.aborted || attempt !== updateAttempt || connection.generation.getSnapshot() !== generation) return;
+          if (!response.ok || !response.value || !["current", "available", "unavailable", "unknown"].includes(response.value.state)) throw new Error("update check unavailable");
+          if (ignoreVersion && response.value.ignoredVersion !== ignoreVersion) throw new Error("preference was not saved");
+          updates = { busy: false, value: response.value };
+          return true;
+        } catch (_error) {
+          if (!disposed && attempt === updateAttempt && connection.generation.getSnapshot() === generation) updates = ignoreVersion ?
+            { busy: false, value: previous, error: "未能保存这个选择。请重新检查后再试。" } : { busy: false, value:
+              previous && previous.state !== "unknown" ? Object.assign({}, previous, { checkError: "暂时无法刷新，以下为上次检查结果。", attemptedAt: now }) : {
+                state: "unknown", title: "暂时无法检查更新", message: "请稍后再试。当前工程的连接状态没有因此改变。", checkedAt: null } };
+        } finally {
+          clearTimeout(timeout); if (updateRequest === controller) updateRequest = null;
+          if (!disposed && attempt === updateAttempt && connection.generation.getSnapshot() === generation) {
+            updates = Object.assign({}, updates, { busy: false }); publish(Object.assign({}, state));
+          }
+        }
+      }
+      function showPluginUpdates() { updateDialogRevision++; updatesOpen = true; publish(Object.assign({}, state)); checkPluginUpdates(false, undefined, true); }
+      function PluginUpdateDialog() {
+        var intent = updateDialogRevision;
+        var value = updates.value, update = value && value.state === "available" && value.update;
+        var url = update && /^https:\/\/github\.com\/eee1723\/dsh-houdini\/releases\/tag\/[^?#]+$/.test(update.url || "") ? update.url :
+          value && ["unavailable", "unknown"].includes(value.state) && value.notesUrl === "https://github.com/eee1723/dsh-houdini/releases" ? value.notesUrl : null;
+        function close() { if (intent !== updateDialogRevision) return; updateDialogRevision++; updatesOpen = false; publish(Object.assign({}, state)); }
+        async function ignore() { if (await checkPluginUpdates(false, update.version)) close(); }
+        return React.createElement(ui.Modal, { open: true, onClose: close, title: "Houdini 插件更新", closeLabel: "关闭插件更新窗口",
+          footer: React.createElement(React.Fragment, null,
+            update && update.urgency === "optional" && value.canIgnore === true && React.createElement(Button, { variant: "ghost", disabled: updates.busy, onClick: ignore }, "忽略此版本"),
+            React.createElement(Button, { variant: "ghost", onClick: close }, update ? "稍后处理" : "关闭"),
+            React.createElement(Button, { disabled: updates.busy || !connection.generation.getSnapshot(), onClick: function () { checkPluginUpdates(true); } }, updates.busy ? "正在检查…" : "重新检查")) },
+          React.createElement("div", { "data-houdini-plugin-updates": value && value.state || "checking", style: { display: "grid", gap: 12, maxWidth: 480, lineHeight: 1.65 } },
+            updates.error && React.createElement("p", { role: "alert", style: { margin: 0 } }, updates.error),
+            value && value.checkError && React.createElement("p", { role: "status", "data-houdini-update-check-error": true, style: { margin: 0 } }, value.checkError,
+              Number.isFinite(value.checkedAt) && " 上次检查：" + new Date(value.checkedAt).toLocaleString()),
+            React.createElement("strong", { role: "status" }, updates.busy ? "正在检查插件更新…" : value && value.title || "暂时无法检查更新"),
+            value && React.createElement("p", { style: { margin: 0 } }, value.message),
+            update && update.summary && update.summary !== value.message && React.createElement("p", { style: { margin: 0 } }, update.summary),
+            url && React.createElement("a", { href: url, target: "_blank", rel: "noopener noreferrer", "data-houdini-update-notes": true,
+              className: "dsh-houdini-button", "data-variant": "primary", style: { width: "fit-content", textDecoration: "none" } }, update ? "查看更新方法与说明" : "查看支持范围与更新说明"),
+            value && (value.currentVersion || value.hostVersion || value.details || update) && React.createElement("details", null,
+              React.createElement("summary", null, "版本与检查详情"),
+              React.createElement("div", { style: { fontSize: 12, overflowWrap: "anywhere", whiteSpace: "pre-wrap" } },
+                value.currentVersion && "已安装插件：" + value.currentVersion + "\n",
+                value.hostVersion && "当前 DSH：" + value.hostVersion + "\n", update && "可用更新：" + update.version + "\n",
+                Number.isFinite(value.checkedAt) && "上次检查：" + new Date(value.checkedAt).toLocaleString() + "\n", value.details || ""))));
+      }
       function action(kind, sessionId, hip) {
         dialog = { action: kind === "reopen" ? "open" : kind, sessionId: sessionId, hip: hip || "", token: ++serial };
         publish(Object.assign({}, state));
@@ -699,6 +784,7 @@ window.__ModuleLoader__.load({
       }
       function Lifecycle() {
         usePresence();
+        React.useEffect(function () { checkPluginUpdates(false, undefined, true); }, []);
         React.useEffect(function () {
           if (!nativeWindow) return;
           windowPin.enter();
@@ -714,6 +800,7 @@ window.__ModuleLoader__.load({
           var stopped = false, pending = null, refreshResult = null;
           function refresh() {
             if (stopped) return Promise.resolve();
+            checkPluginUpdates(false);
             if (refreshResult) return refreshResult;
             var result = observe(); refreshResult = result;
             result.finally(function () { if (refreshResult === result) refreshResult = null; });
@@ -740,6 +827,12 @@ window.__ModuleLoader__.load({
           }
           function changed() {
             if (pending) pending.abort(); pending = null; refreshResult = null;
+            if (updateGeneration !== connection.generation.getSnapshot()) {
+              if (updateRequest) updateRequest.abort(); updateRequest = null; updateAttempt++;
+              updates = { busy: false, value: connection.generation.getSnapshot() ? null : {
+                state: "unknown", title: "暂时无法检查更新", message: "DSH 连接恢复后，请重新检查。", checkedAt: null } };
+            }
+            checkPluginUpdates(false);
             publish({ available: false, visible: document.visibilityState !== "hidden", observedAt: 0, records: {} }); refresh();
           }
           refreshPresence = refresh;
@@ -747,11 +840,13 @@ window.__ModuleLoader__.load({
           document.addEventListener("visibilitychange", changed);
           var timer = setInterval(refresh, 5000); refresh();
           return function () { stopped = true; if (pending) pending.abort(); clearInterval(timer); unsubscribe();
+            if (updateRequest) updateRequest.abort(); updateRequest = null; updateAttempt++; updates = { busy: false, value: updates.value }; updatesOpen = false;
             document.removeEventListener("visibilitychange", changed); refreshPresence = function () {}; dialog = null; notice = null; };
         }, []);
         var current = notice;
         return React.createElement(React.Fragment, null,
           dialog && React.createElement(ProjectDialog, { key: dialog.token, request: dialog }),
+          updatesOpen && React.createElement(PluginUpdateDialog),
           current && React.createElement(ui.Toast, { key: current.id, text: current.text, onDone: function () { if (notice === current) { notice = null; publish(Object.assign({}, state)); } } }));
       }
       function decorate(Component) { return function (props) { return React.createElement(Component, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus })); }; }
@@ -793,6 +888,7 @@ window.__ModuleLoader__.load({
             if (!response.ok) throw new Error(response.error && response.error.message || "没有完成工程选择。");
             if (method === "prepareBridge") {
               set(function (old) { return Object.assign({}, old, { busy: false, message: response.value.message || "Houdini 组件已安装，新打开的 Houdini 会加载菜单。" }); });
+              refreshPresence();
               return;
             }
             if (sessions && sessions.refreshProjections) await sessions.refreshProjections(sessionId);
@@ -825,6 +921,10 @@ window.__ModuleLoader__.load({
         rows.forEach(function (candidate) { if (!windowOrder.current.includes(candidate.executor_id)) windowOrder.current.push(candidate.executor_id); });
         rows.sort(function (left, right) { return windowOrder.current.indexOf(left.executor_id) - windowOrder.current.indexOf(right.executor_id); });
         var selectedCandidate = rows.find(function (candidate) { return houdiniSameTarget(target, candidate); });
+        var componentRecord = freshPresence && target && presence.records[target.executor_id];
+        var componentNotice = componentRecord && componentRecord.runtimeId === target.runtime_id && componentRecord.sceneEpoch === target.scene_epoch &&
+          status.state !== "changed" && status.state !== "offline" && Number.isFinite(componentRecord.observedAt) && Date.now() - componentRecord.observedAt <= 12000 &&
+          houdiniComponentNotice(componentRecord);
         function candidateItem(candidate, index) {
           var selected = houdiniSameTarget(target, candidate);
           var candidateProject = { target: candidate }, observed = selected ? status : houdiniPresence(candidateProject, presence, props.sessionId, nativeStatuses, false);
@@ -856,17 +956,20 @@ window.__ModuleLoader__.load({
         if (displayTarget && displayTarget.hip_path && displayTarget.hip_is_new === false) projectActions.push({ id: "reopen", label: "打开关联工程…", disabled: !presence.available || !!nativeRunning });
         var managementActions = [];
         if (target) managementActions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
-        managementActions.push({ id: "prepareBridge", label: "安装 / 更新 Houdini 组件", disabled: !presence.available || !!switchingDisabled });
+        if (!componentNotice || !componentNotice.action) managementActions.push({ id: "prepareBridge", label: "安装 / 更新 Houdini 组件", disabled: !presence.available || !!switchingDisabled });
+        if (!hasPluginUpdate()) managementActions.push({ id: "pluginUpdates", label: "插件更新…", disabled: !connection.generation.getSnapshot() });
         function actionItem(item) {
           return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
             onSelect: function () {
               if (item.id === "clear") { request("clear"); return; }
               if (item.id === "prepareBridge") { request("prepareBridge"); return; }
+              if (item.id === "pluginUpdates") { set(Object.assign({}, value, { open: false, busy: false })); showPluginUpdates(); return; }
               ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
               set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId, item.id === "reopen" ? displayTarget.hip_path : "");
             } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));
         }
         var anchor = React.createElement(HoudiniProjectLabel, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus,
+            pluginUpdateAvailable: hasPluginUpdate(),
             projectMenuOpen: value.open, onProjectMenuClick: function () { if (value.open) { ticket.current++; if (pending.current) pending.current.abort(); set(Object.assign({}, value, { open: false, busy: false })); } else request("list"); } }));
         return React.createElement(ui.Menu, { open: value.open, portal: true, compact: true, align: "end", side: "bottom", anchor: anchor,
           listClassName: "dsh-houdini-target-menu", onClose: function () { ticket.current++; if (pending.current) pending.current.abort(); set(function (old) { return Object.assign({}, old, { open: false, busy: false }); }); },
@@ -877,6 +980,12 @@ window.__ModuleLoader__.load({
               React.createElement(HoudiniTargetStateIcon, { state: status.state }), React.createElement("div", { className: "dsh-houdini-target-row", "data-houdini-selected-snapshot": true },
                 React.createElement("span", { className: "dsh-houdini-target-title" }, houdiniProjectName(display)),
                 React.createElement("span", { className: "dsh-houdini-target-meta" }, status.label)))),
+          componentNotice && React.createElement("div", { className: "dsh-houdini-target-choices", "data-houdini-component-update": componentRecord.componentUpdate && componentRecord.componentUpdate.state || "unknown" },
+            React.createElement("strong", null, componentNotice.label),
+            React.createElement("p", { className: "dsh-houdini-target-message" }, componentNotice.detail),
+            componentNotice.action && React.createElement(ui.MenuItemButton, { disabled: !presence.available || !!switchingDisabled,
+              onSelect: function () { request("prepareBridge"); } }, React.createElement("span", { "data-houdini-project-action": "prepareBridge" }, componentNotice.action))),
+          hasPluginUpdate() && actionItem({ id: "pluginUpdates", label: "插件有更新…", disabled: !connection.generation.getSnapshot() }),
           React.createElement("details", { className: "dsh-houdini-target-section", open: !target, "data-houdini-menu-section": "project" },
             React.createElement("summary", { "data-houdini-menu-toggle": "project" }, "工程"),
             target && React.createElement("dl", { className: "dsh-houdini-target-info" },
@@ -918,7 +1027,7 @@ window.__ModuleLoader__.load({
       function HeaderPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && !row.blank ? React.createElement(Pin, props) : null; }
       function BlankPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && row.blank ? React.createElement(Pin, props) : null; }
       return { Mark: decorate(HoudiniProjectMark), Detail: decorate(HoudiniProjectDetail), Label: Label, Blank: Blank, Pin: HeaderPin, BlankPin: BlankPin, Lifecycle: Lifecycle,
-        dispose: function () { windowPin.dispose(); launchOwnership.dispose(); } };
+        dispose: function () { disposed = true; if (updateRequest) updateRequest.abort(); windowPin.dispose(); launchOwnership.dispose(); } };
     }
 
 

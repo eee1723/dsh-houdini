@@ -6,6 +6,7 @@ import {DesktopIntegration,DesktopIntents} from '../../lib/desktop-integration.j
 import {HoudiniBridge} from '../../lib/bridge.js'
 import {HoudiniFrontend} from '../../lib/frontend-host.js'
 import {processStarted} from '../../lib/desktop-process.js'
+import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH} from '../../lib/generated-verb-contract.js'
 
 const home=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-desktop-integration-'))
 const previous=process.env.DSH_HOME
@@ -56,9 +57,9 @@ try {
     task_id:'session-a',hip_path:'E:/work/scene.hip',workbench:true,scene_id:'d'.repeat(32),scene_epoch:'e'.repeat(32),
     hip_is_new:false,workspace_path:'E:/work'}
   targets.getRouter=()=>({directory:{list:async()=>[record]}})
-  const inspect=HoudiniBridge.prototype.inspectExecutor
+  const inspect=HoudiniBridge.prototype.observeExecutor
   try {
-    HoudiniBridge.prototype.inspectExecutor=async()=>({ok:true,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
+    HoudiniBridge.prototype.observeExecutor=async()=>({ok:true,executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
       activeRequests:2,activeJobs:1,executionContractVersion:117})
     const [observed]=await service.presence()
     assert.equal(observed.candidate,record,'the client receives the original registry candidate')
@@ -69,11 +70,17 @@ try {
     assert.equal(observed.activeRequests,2)
     assert.equal(observed.activeJobs,1)
     assert.equal(observed.busy,true)
-  } finally {HoudiniBridge.prototype.inspectExecutor=inspect}
+  } finally {HoudiniBridge.prototype.observeExecutor=inspect}
   const mismatch=await HoudiniFrontend.prototype.projectPresence.call({desktop:()=>({presence:async()=>[
     {status:'online',contractVersion:1}]})},new AbortController().signal)
   assert.equal(mismatch[0].contractMismatch,true)
   assert.equal(mismatch[0].status,'unknown')
+  const catalogMismatch=await HoudiniFrontend.prototype.projectPresence.call({desktop:()=>({presence:async()=>[
+    {status:'online',contractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,verbCatalogHash:'old-catalog'},
+    {status:'online',contractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,verbCatalogHash:EXPECTED_VERB_CATALOG_HASH}]})},new AbortController().signal)
+  assert.equal(catalogMismatch[0].contractMismatch,true,'the UI rejects the same catalog mismatch as execution admission')
+  assert.equal(catalogMismatch[1].contractMismatch,false)
+  assert.equal(catalogMismatch[1].status,'online')
 } finally {
   await service.dispose()
   assert.equal(await fs.stat(path.join(home,'dsh-houdini/desktop.json')).then(()=>true,()=>false),false)
@@ -81,6 +88,27 @@ try {
 }
 
 const intents=new DesktopIntents(),selection={workspaceId:'w',sessionId:'s',executorId:'e',source:'menu'}
+let ignoredVersion='',settingsRevision=4,preferencesWritable=true
+const preferences=[]
+const availableUpdate={state:'available',title:'有可选更新',message:'可以继续使用当前版本。',update:{version:'0.1.4',urgency:'optional'}}
+const preferenceStatus={...availableUpdate}
+const preferenceHost={ctx:{get:name=>name==='settings'?{
+  get writable(){return preferencesWritable},describe:()=>[{ns:'houdini-frontend',revision:settingsRevision}],
+  update:async(ns,patch,revision)=>{assert.equal(ns,'houdini-frontend');assert.equal(revision,settingsRevision);preferences.push(patch);ignoredVersion=patch.ignoredPluginVersion;settingsRevision++},
+}:null},updates:{read:async()=>preferenceStatus},config:{ignoredPluginVersion:{get:()=>ignoredVersion}}}
+const preferenceCall=input=>HoudiniFrontend.prototype.pluginUpdates.call(preferenceHost,input,new AbortController().signal)
+assert.equal((await preferenceCall({})).canIgnore,true)
+assert.equal((await preferenceCall({ignoreVersion:'0.1.4'})).ignoredVersion,'0.1.4')
+assert.deepEqual(preferences,[{ignoredPluginVersion:'0.1.4'}],'dismissal uses the native settings namespace, not browser-origin storage')
+assert.equal((await HoudiniFrontend.prototype.pluginUpdates.call({...preferenceHost}, {},new AbortController().signal)).ignoredVersion,'0.1.4',
+  'a replacement service reads the same saved profile preference')
+preferenceStatus.update={...preferenceStatus.update,urgency:'required'}
+assert.equal((await preferenceCall({})).canIgnore,false)
+await assert.rejects(preferenceCall({ignoreVersion:'0.1.4'}),/信息已变化/)
+preferenceStatus.update={...preferenceStatus.update,urgency:'optional'}
+preferencesWritable=false;assert.equal((await preferenceCall({})).canIgnore,false)
+await assert.rejects(preferenceCall({ignoreVersion:'0.1.4'}),/无法保存/)
+assert.equal(preferences.length,1)
 const sequence=intents.publish(selection)
 const stop=new AbortController()
 let delivered=false

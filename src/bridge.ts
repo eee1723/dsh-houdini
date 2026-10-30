@@ -7,6 +7,7 @@
 /** Bridge wire JSON is independent of DSH's version-specific type re-exports. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
+import {isExecutionContractCompatible} from './component-compatibility.js'
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
 export interface ExecResult {
@@ -112,6 +113,8 @@ export interface BridgeHealth {
   sceneEpoch?: string
   houVersion?: string
   runtime?: HoudiniRuntimeFacts
+  /** Captured when the Python component was loaded; not the current disk state. */
+  helper?: {id:string|null;version:string|null}
   rawGate?: boolean
   executionContractVersion?: number
   verbCatalog?: {
@@ -162,6 +165,14 @@ export class HoudiniBridge {
   /** Non-HOM identity/contract check for an explicit target selection. */
   async inspectExecutor(signal?: AbortSignal): Promise<BridgeHealth> {
     return this.checkContract(signal)
+  }
+
+  /** Observation must also reach old components so the UI can explain an
+   * installation mismatch. It never grants permission to execute scene code. */
+  async observeExecutor(signal?:AbortSignal):Promise<BridgeHealth> {
+    const health=await this.get<BridgeHealth>('/health',signal)
+    if(!health.ok||this.executorId&&health.executorId!==this.executorId)throw Error('暂时无法确认这个 Houdini 的连接。')
+    return health
   }
 
   /** Fixed Host/UI recovery protocol. No model-authored Python or file paths. */
@@ -334,8 +345,7 @@ export class HoudiniBridge {
     if (this.executorId && health.executorId !== this.executorId) {
       throw new Error('当前连接指向另一个 Houdini，本次操作没有发送到工程。请从要操作的 Houdini 中重新打开 Open Workspace；同时开着多个窗口时，请先确认插件由哪个窗口使用。\n技术信息：Houdini executor mismatch: no scene code was submitted. Do not automatically rebind by port/HIP path.')
     }
-    if (health.ok && actual?.hash === EXPECTED_VERB_CATALOG_HASH
-        && health.executionContractVersion === EXPECTED_EXECUTION_CONTRACT_VERSION) {
+    if (health.ok && isExecutionContractCompatible(health.executionContractVersion,actual?.hash)) {
       if (owner && (typeof health.runtimeId !== 'string' || typeof health.requestRef !== 'string'
           || !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(health.requestRef)
           || !health.requestRef.startsWith(health.runtimeId + '.'))) {

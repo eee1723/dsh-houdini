@@ -19,7 +19,7 @@ for version in declared:
     compat.require_verified(version)
 package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
 fixture = json.loads((ROOT / "deployment/package.json").read_text(encoding="utf-8"))
-assert package["engines"]["dsh"] == required
+assert package["engines"]["dsh"] == " || ".join(row["dshVersion"] for row in manifest["releases"])
 assert fixture["dependencies"]["@deepseek-ai/dsh"] == required
 assert manifest["runtimeOwnership"] == "host" and "runtimeFixes" not in manifest
 try:

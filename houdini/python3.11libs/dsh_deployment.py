@@ -6,8 +6,43 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import time
 import uuid
+
+def _capture_loaded_helper():
+    """Observe this loaded module's immutable installation, never a new selection.
+
+    The installer verifies each snapshot before publishing its content-addressed
+    Package path. Development checkouts have no installed content identity;
+    this observation grants no execution compatibility or ownership permission.
+    """
+    root = Path(__file__).resolve().parents[2]
+    if root.parent.name != 'helpers' or not re.fullmatch('[0-9a-f]{16}', root.name):
+        return {'id': None, 'version': None}
+    version = None
+    try:
+        with (root / 'package.json').open('rb') as stream:
+            raw = stream.read(65537)
+        manifest = json.loads(raw) if len(raw) <= 65536 else None
+        if (isinstance(manifest, dict) and manifest.get('name') == 'dsh-houdini'
+                and isinstance(manifest.get('version'), str) and 0 < len(manifest['version']) <= 128):
+            version = manifest['version']
+    except (OSError, ValueError, RecursionError):
+        pass
+    return {'id': root.name, 'version': version}
+
+
+# Keep the first observation across local module repair. Selecting another
+# Package or editing its manifest cannot change what this process has loaded.
+if '_LOADED_HELPER' not in globals():
+    _LOADED_HELPER = _capture_loaded_helper()
+
+
+def loaded_helper():
+    """Read cached component facts without filesystem or HOM access."""
+    return dict(_LOADED_HELPER)
+
 
 def _json_snapshot(path: Path):
     """Readers retain a snapshot without blocking an atomic state publication."""

@@ -91,6 +91,7 @@ try:
         'executable': sys.executable,
     }
     assert prepared['runtime'] == expected_runtime, (prepared['runtime'], expected_runtime)
+    assert prepared['helper'] == b._HELPER, prepared
     assert Path(prepared['runtime']['python']).is_file(), prepared['runtime']
     # Every HTTP handler reads the same owning-thread cache, even with HOM
     # unavailable on handler threads. Health must never queue a scene query.
@@ -101,6 +102,7 @@ try:
         response=connection.getresponse()
         health=json.loads(response.read());connection.close()
         assert response.status == 200 and health['runtime'] == expected_runtime, health
+        assert health['helper'] == b._HELPER, health
         assert post('/requests/prepare', {'owner_session':'cached-runtime'}, good)[1]['runtime'] == expected_runtime
     assert b._work_queue.empty(), 'runtime health metadata must not enqueue HOM work'
     # The Qt callback yields after a slow item, rather than draining an entire
@@ -556,7 +558,7 @@ with patch.object(b, 'stop', side_effect=AssertionError('reload stopped admitted
     try:
         launcher.restart_bridge(port=server.server_port)
     except RuntimeError as error:
-        assert 'arrived after preflight' in str(error), error
+        assert '操作未完成' in str(error), error
     else:
         raise AssertionError('an admitted operation did not prevent reload')
 b._request_registry.fail_before_dispatch(late, 'test finished without execution')

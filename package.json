@@ -1,11 +1,16 @@
 {
   "name": "dsh-houdini",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "DeepSeek Harness plugin that lets the agent control SideFX Houdini",
   "homepage": "https://github.com/eee1723/dsh-houdini#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/eee1723/dsh-houdini.git" },
-  "bugs": { "url": "https://github.com/eee1723/dsh-houdini/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eee1723/dsh-houdini.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eee1723/dsh-houdini/issues"
+  },
   "type": "module",
   "main": "lib/frontend-host.js",
   "types": "lib/frontend-host.d.ts",
@@ -84,45 +89,50 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-win32-process": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3 || 0.2.1-rc.5",
+    "@deepseek-ai/dsh-win32-process": "0.2.1-rc.3 || 0.2.1-rc.5",
     "@deepseek-ai/schemastery": "3.18.5",
-    "koffi": "3.1.1"
+    "koffi": "3.1.1",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.3 || 0.2.1-rc.5"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-agent-preset": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-agent-preset-registry": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-jobs": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-spill-policy": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-web-app": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-win32-process": "0.2.1-rc.3",
+    "@deepseek-ai/dsh": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-agent-preset": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-agent-preset-registry": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-jobs": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-spill-policy": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-web-app": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-win32-process": "0.2.1-rc.5",
     "@deepseek-ai/schemastery": "3.18.5",
     "@types/node": "^22",
     "esbuild": "0.25.9",
     "koffi": "3.1.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.5",
+    "@types/semver": "7.8.0",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.5"
   },
   "dependencies": {
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "semver": "7.8.5"
   },
   "overrides": {
     "zod": "4.4.3"
   },
   "engines": {
-    "dsh": "0.2.1-rc.3"
+    "dsh": "0.2.1-rc.3 || 0.2.1-rc.5"
   }
 }

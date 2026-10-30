@@ -1,0 +1,4 @@
+{
+  "summary": "更新提示会说明下一步该做什么，并区分组件尚未安装和已安装、等待重开 Houdini 的情况。",
+  "urgency": "optional"
+}

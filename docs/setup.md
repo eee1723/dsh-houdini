@@ -1,13 +1,13 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前发行包面向 **Windows x64**，精确 DSH 版本由[兼容清单](../dsh-runtime-compatibility.json)维护，当前为 **0.2.1-rc.3**；Houdini 侧支持 21.0 和 22.0，实测构建为 21.0.440 和 22.0.368。产品使用同一份 DSH 原生会话，不另启动 Qt 聊天窗口或私有 DSH Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前 **0.1.4** 发行包面向 **Windows x64**，支持 **DSH 0.2.1-rc.3 / 0.2.1-rc.5**，首选 rc.5。精确范围与验证边界由[兼容清单](../dsh-runtime-compatibility.json)维护。Houdini 侧支持 21.0 和 22.0，实测构建为 21.0.440 和 22.0.368。产品使用同一份 DSH 原生会话，不另启动 Qt 聊天窗口或私有 DSH Host。
 
 ## 普通安装
 
 标准发行单元是包含 Houdini 和媒体资源的 `.tgz`，通过 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases) 分发。在 Desktop 原生「插件 → 添加插件」中粘贴下方完整地址，即可直接安装指定版本；无需先下载或解压：
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.3/dsh-houdini-0.1.3.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.4/dsh-houdini-0.1.4.tgz
 ```
 
 当前使用 GitHub 正式包直链，未发布 npm 包名。不要只填 `dsh-houdini` 或仓库首页地址；历史独立工作台包和 GitHub 自动生成的 Source code ZIP 也不适用于这条标准插件安装路径。发布页同时提供 SHA256 校验文件；源码 push、tag 或 Draft 本身不等于包已公开可用。
@@ -67,6 +67,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Rollb
 在官方Windows Desktop的Houdini模式中可点击「置顶」，便于一边对话一边操作Houdini；空对话显示在输入工具行，已有对话显示在页头。Houdini对话之间切换保留本次使用中的选择，切回其他模式恢复进入前的窗口层级。若无法准确识别本Desktop窗口，按钮会说明原因，不按窗口标题或当前前台窗口猜测。
 
 ## Connection & Support（连接与维护）
+
+Houdini 工程菜单提供「插件更新…」。仅在有适合当前 DSH 的正式更新时显示提醒，可选更新可忽略；普通使用不弹窗。详情说明更新内容和下一步，版本信息与查询错误折叠显示。查询失败保留上次已确认结果并标明时间，不把断网写成不兼容。当前通过发布页查看更新方法，安装仍使用 Desktop 原生插件管理；不会自动关闭任务或重启应用。已有 0.1.1～0.1.3 不包含这条检查，需要先按下方方法完成首次更新。
+
+Houdini 组件提示按当前窗口实际加载与安装情况显示：「请先安装 Houdini 组件」说明尚未确认新组件就绪；「保存后重开此 Houdini」只在同一安装位置的新组件已经准备好时出现。连接正常但有组件更新时可以继续当前工作。不同安装位置、无法确认的旧组件和连接中断不承诺重开即可解决。
 
 Desktop 的应用和账户更新由官方管理；Node 侧插件沿官方插件管理更新。当前验证的 Desktop 0.2.1-rc.3 插件页对第三方插件要求先卸载再安装新版；npm 包名与 GitHub Release 安装链接都遵守这个界面合同，发布到 npm 本身不会增加一键更新。更新插件不需要执行下述「移除本机组件」。
 

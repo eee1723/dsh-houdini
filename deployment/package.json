@@ -4,6 +4,6 @@
   "private": true,
   "description": "Development and regression fixture only; the distributable plugin uses the Desktop runtime.",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.3"
+    "@deepseek-ai/dsh": "0.2.1-rc.5"
   }
 }
