@@ -11,7 +11,8 @@ const projectRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'
 export const outputRoot=path.join(projectRoot,'tools/out')
 export const manifestName='artifact-manifest.json'
 const marker='dsh-houdini-output'
-const kinds=['tmp','evidence','cache'],isolations=['isolated','unknown'],completed=['success','failed']
+const categories={tmp:'tmp',evidence:'evidence',cache:'cache',release:'releases'}
+const kinds=Object.keys(categories),isolations=['isolated','unknown'],completed=['success','failed']
 const DAY=24*60*60*1000
 const labelPattern=/^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$/i
 const key=value=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
@@ -89,8 +90,9 @@ export async function finishDirectory(directory,status='success',{root=outputRoo
   await writeManifest(directory,value)
   if(within(root,directory)) {
     const parts=path.relative(root,directory).split(path.sep)
-    if(parts.length===2&&parts[0]===initial.kind) {
+    if(parts.length===2&&parts[0]===categories[initial.kind]) {
       if(initial.kind==='tmp'){await removeTree(directory,root);await writeIndex({root})}
+      else if(initial.kind==='release')await writeIndex({root})
       else await prune({root,apply:true})
     }else await writeIndex({root})
   }
@@ -102,7 +104,7 @@ export async function createRun({label,kind='evidence',isolation='unknown'},{roo
   checkOptions({label,kind,isolation})
   root=path.resolve(root)
   await directoryWithoutLink(root,{create:true})
-  const category=path.join(root,kind);await directoryWithoutLink(category,{create:true})
+  const category=path.join(root,categories[kind]);await directoryWithoutLink(category,{create:true})
   const directory=await fs.mkdtemp(path.join(category,label+'-'))
   await beginDirectory(directory,{label,kind,isolation},{root})
   let finishing,finalStatus
@@ -140,15 +142,16 @@ async function listEntries(root) {
     if(item.name==='MANIFEST.md')continue
     const directory=path.join(root,item.name),stat=await existingStat(directory)
     if(!stat)continue
-    if(kinds.includes(item.name)&&stat.isDirectory()&&!stat.isSymbolicLink()) {
+    const kind=Object.keys(categories).find(kind=>categories[kind]===item.name)
+    if(kind&&stat.isDirectory()&&!stat.isSymbolicLink()) {
       let children
       try{children=await fs.readdir(directory,{withFileTypes:true})}catch(error){if(error.code==='ENOENT')continue;throw error}
       for(const child of children) {
         const candidate=path.join(directory,child.name),childStat=await existingStat(candidate)
         if(!childStat)continue
         entries.push({directory:candidate,relativePath:path.join(item.name,child.name),
-          manifest:childStat.isDirectory()&&!childStat.isSymbolicLink()?await readManifest(candidate,item.name):null,
-          linked:childStat.isSymbolicLink()})
+          manifest:childStat.isDirectory()&&!childStat.isSymbolicLink()?await readManifest(candidate):null,
+          category:kind,linked:childStat.isSymbolicLink()})
       }
     }else entries.push({directory,relativePath:item.name,manifest:stat.isDirectory()&&!stat.isSymbolicLink()?await readManifest(directory):null,linked:stat.isSymbolicLink()})
   }
@@ -158,17 +161,61 @@ const cell=value=>String(value??'unknown').replaceAll('|','\\|').replace(/[\r\n]
 export async function writeIndex({root=outputRoot}={}) {
   root=path.resolve(root);await directoryWithoutLink(root,{create:true})
   const rows=await listEntries(root)
+  const deliveries=new Map()
+  for(const entry of rows)if(!entry.linked&&(entry.category==='release'||!entry.category&&entry.manifest)){
+    const artifact=await releaseLink(entry.directory)
+    if(artifact)deliveries.set(entry,artifact)
+  }
+  const viewCategory=entry=>deliveries.has(entry)?'release':entry.category
+  const link=relative=>'./'+relative.split(path.sep).map(encodeURIComponent).join('/')
   const lines=['# 本地输出索引','',`生成时间：${new Date().toISOString()}`,'',
-    '此索引只读取目录第一层及受管类别下的批次元数据，不递归历史目录。unknown 表示来源未核实；不根据时间推测版本。',
-    '所有素材的复用状态均为 unreviewed（尚未审核）。隔离环境声明不能代替逐项隐私与内容审核。','',
-    '| 批次 | 类别 | 版本 / DSH | Commit / dirty | 结果 | 隔离来源 | 复用状态 | 生成时间 |',
-    '|---|---|---|---|---|---|---|---|']
-  for(const entry of rows) {
-    const m=entry.manifest,link='./'+entry.relativePath.split(path.sep).map(encodeURIComponent).join('/')
-    lines.push(`| [${cell(entry.relativePath)}](${link})${entry.linked?'（链接，未跟随）':''} | ${cell(m?.kind)} | ${cell(m?m.packageVersion+' / '+m.dshVersion:null)} | ${cell(m?String(m.commit??'unknown')+' / '+String(m.dirty??'unknown'):null)} | ${cell(m?.status)} | ${cell(m?.isolation)} | ${cell(m?.reuse)} | ${cell(m?.createdAt)} |`)
+    '| 去哪里找 | 内容 | 保留方式 |','|---|---|---|',
+    '| [releases](./releases/) | 安装包与明确交付产物 | 不参与自动清理 |',
+    '| [evidence](./evidence/) | 任务审查、测试报告与截图 | 受管证据保留30天及每组最近成功批次 |',
+    '| [cache](./cache/) | 可复用下载和构建资源 | 默认保留，显式指定期限才清理 |',
+    '| [tmp](./tmp/) | 可丢弃的构建/测试暂存 | 受管批次完成后清理 |',
+    '| [legacy](./legacy/) | 已归档的旧布局 | 不自动清理或推断来源 |','',
+    '这里只读取受管类别的一层批次和元数据，不递归历史大目录。目录位置表示用途，不证明版本、执行成功或素材已审核。历史缺少的来源保持 unknown；完整来源和 unreviewed 状态见各批次清单。','']
+  for(const [kind,title] of Object.entries({release:'安装包与交付',evidence:'审查与验证',cache:'复用资源',tmp:'暂存'})) {
+    const entries=rows.filter(row=>viewCategory(row)===kind)
+    lines.push('## '+title,'')
+    if(!entries.length){lines.push('暂无批次。','');continue}
+    lines.push('| 批次 | 记录版本 | 结果 | 说明 |','|---|---|---|---|')
+    for(const entry of entries){
+      const m=entry.manifest
+      const notes=[]
+      if(entry.linked)notes.push('链接，未跟随')
+      if(!m)notes.push('未采用批次清单，保留原内容')
+      else if(m.kind!==kind)notes.push('旧类别记录 '+m.kind+'，未改写来源，不参与清理')
+      if(!entry.category)notes.push('原路径保留')
+      const artifact=deliveries.get(entry)
+      if(artifact)notes.push(`[安装包](${link(path.join(entry.relativePath,artifact.file))})`)
+      lines.push(`| [${cell(entry.relativePath)}](${link(entry.relativePath)}) | ${cell(m?.packageVersion)} | ${cell(m?.status)} | ${notes.join('；')} |`)
+    }
+    lines.push('')
+  }
+  const retained=rows.filter(row=>!viewCategory(row))
+  if(retained.length){
+    lines.push('## 保留原位置的目录与文件','',
+      '这些是旧布局、说明文件或显式指定的输出。索引不替它们补造来源，也不迁移已交付路径。','',
+      '| 原位置 | 已有记录 |','|---|---|')
+    for(const entry of retained)lines.push(`| [${cell(entry.relativePath)}](${link(entry.relativePath)}) | ${entry.linked?'链接，未跟随':entry.manifest?cell(entry.manifest.kind+' / '+entry.manifest.packageVersion+' / '+entry.manifest.status):'unknown，保留'} |`)
+    lines.push('')
   }
   await atomicWrite(path.join(root,'MANIFEST.md'),lines.join('\n')+'\n')
   return {file:path.join(root,'MANIFEST.md'),entries:rows.length,unknown:rows.filter(row=>!row.manifest).length}
+}
+
+async function releaseLink(directory) {
+  try {
+    const filename=path.join(directory,'release-manifest.json'),stat=await fs.lstat(filename)
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.size>65536)return null
+    const manifest=JSON.parse(await fs.readFile(filename,'utf8'))
+    if(manifest.kind!=='dsh-plugin-bundle'||typeof manifest.file!=='string'
+      ||path.basename(manifest.file)!==manifest.file||!manifest.file.endsWith('.tgz'))return null
+    const artifact=await fs.lstat(path.join(directory,manifest.file))
+    return artifact.isFile()&&!artifact.isSymbolicLink()?{file:manifest.file}:null
+  }catch(error){if(error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code))return null;throw error}
 }
 
 async function removeTreeWithoutFollowingLinks(directory) {
@@ -195,10 +242,10 @@ export async function prune({root=outputRoot,apply=false,cacheDays,now=Date.now(
   if(cacheDays!==undefined&&(!Number.isFinite(cacheDays)||cacheDays<0))throw Error('Cache retention days must be a nonnegative number')
   if(!Number.isFinite(now))throw Error('Invalid retention time')
   // Reject linked category roots before inspecting or deleting any run.
-  for(const kind of kinds) {
-    try{await directoryWithoutLink(path.join(root,kind))}catch(error){if(error.code!=='ENOENT')throw error}
+  for(const directory of Object.values(categories)) {
+    try{await directoryWithoutLink(path.join(root,directory))}catch(error){if(error.code!=='ENOENT')throw error}
   }
-  const rows=(await listEntries(root)).filter(row=>row.manifest&&row.relativePath.split(path.sep).length===2)
+  const rows=(await listEntries(root)).filter(row=>row.manifest&&row.category===row.manifest.kind&&row.relativePath.split(path.sep).length===2)
   const latest=new Map()
   for(const row of rows.filter(row=>row.manifest.status==='success')) {
     const group=row.manifest.kind+'\0'+row.manifest.label,previous=latest.get(group)
@@ -206,7 +253,7 @@ export async function prune({root=outputRoot,apply=false,cacheDays,now=Date.now(
   }
   const candidates=[],kept=[]
   for(const row of rows) {
-    const m=row.manifest,days=m.kind==='tmp'?7:m.kind==='evidence'?30:cacheDays
+    const m=row.manifest,days=m.kind==='tmp'?7:m.kind==='evidence'?30:m.kind==='cache'?cacheDays:undefined
     const group=m.kind+'\0'+m.label
     if(!completed.includes(m.status)||latest.get(group)===row||days===undefined||now-Date.parse(m.completedAt)<days*DAY) {
       kept.push(row.relativePath);continue
@@ -216,7 +263,7 @@ export async function prune({root=outputRoot,apply=false,cacheDays,now=Date.now(
   const deleted=[],errors=[]
   if(apply)for(const candidate of candidates) {
     try {
-      const category=path.join(root,candidate.kind)
+      const category=path.join(root,categories[candidate.kind])
       await directoryWithoutLink(root);await directoryWithoutLink(category);await directoryWithoutLink(candidate.directory)
       if(path.dirname(candidate.directory)!==category)throw Error('Cleanup target escaped the output category')
       await removeTree(candidate.directory,root);deleted.push(candidate.relativePath)
@@ -232,10 +279,14 @@ async function main() {
     'cache-days':{type:'string'},apply:{type:'boolean',default:false},help:{type:'boolean'},
   }})
   const [command,directory,...extra]=positionals
-  if(values.help||!command){console.log('output-artifacts.mjs index | prune [--apply] [--cache-days N] | begin <output-directory> --label NAME [--kind evidence] [--isolation unknown] | finish <output-directory> --status success|failed | stamp <new-output-directory> --label NAME [--kind evidence] [--isolation unknown] [--status success]');return}
+  if(values.help||!command){console.log('output-artifacts.mjs index | create --label NAME [--kind evidence|release|cache|tmp] [--isolation unknown] | prune [--apply] [--cache-days N] | begin <output-directory> --label NAME [--kind evidence] [--isolation unknown] | finish <output-directory> --status success|failed | stamp <new-output-directory> --label NAME [--kind evidence] [--isolation unknown] [--status success]');return}
   if(extra.length||!['stamp','begin','finish'].includes(command)&&directory)throw Error('Unexpected output command arguments')
   let result
   if(command==='index')result=await writeIndex()
+  else if(command==='create'){
+    const run=await createRun({label:values.label,kind:values.kind??'evidence',isolation:values.isolation??'unknown'})
+    result={directory:run.directory,manifest:path.join(run.directory,manifestName)}
+  }
   else if(command==='prune')result=await prune({apply:values.apply,cacheDays:values['cache-days']===undefined?undefined:Number(values['cache-days'])})
   else if(command==='begin'&&directory)result=await beginDirectory(directory,{label:values.label,kind:values.kind??'evidence',isolation:values.isolation??'unknown'})
   else if(command==='finish'&&directory)result=await finishDirectory(directory,values.status??'success')

@@ -68,6 +68,7 @@
     "prepare": "npm run build",
     "runtime:prepare": "node tools/prepare-dsh-runtime.mjs",
     "outputs:index": "node tools/output-artifacts.mjs index",
+    "outputs:create": "node tools/output-artifacts.mjs create",
     "outputs:prune": "node tools/output-artifacts.mjs prune"
   },
   "dsh": {

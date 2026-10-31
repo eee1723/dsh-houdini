@@ -61,12 +61,17 @@ def build(args):
     npm = shutil.which("npm.cmd" if os.name == "nt" else "npm")
     if not npm:
         raise RuntimeError("Plugin packaging requires npm")
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
     version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
     artifact_tool = ["node", ROOT / "tools/output-artifacts.mjs"]
-    run([*artifact_tool, "begin", output, "--label", "release-" + version,
-         "--kind", "evidence", "--isolation", "unknown"])
+    if args.output is None:
+        allocation = json.loads(run([*artifact_tool, "create", "--label", version,
+                                     "--kind", "release", "--isolation", "unknown"], capture=True))
+        output = Path(allocation['directory'])
+    else:
+        output = args.output.resolve()
+        output.mkdir(parents=True, exist_ok=True)
+        run([*artifact_tool, "begin", output, "--label", "release-" + version,
+             "--kind", "release", "--isolation", "unknown"])
     try:
         run([npm, "run", "build"])
         inventory = json.loads(run([npm, "pack", "--dry-run", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache"], capture=True))[0]["files"]
@@ -132,7 +137,7 @@ def package_staged(args, npm, output, inventory, work):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, help="Explicit output directory; default allocates a new versioned batch under tools/out/releases")
     parser.add_argument("--media-cache", type=Path, help="Reuse verified media source/compiler downloads")
     parser.add_argument("--media-runtime", type=Path, help="Reuse a source-complete media runtime after inventory/input verification")
     build(parser.parse_args())

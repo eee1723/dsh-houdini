@@ -52,7 +52,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - docs只放现役设计、接口、维护规范、稳定测试方法和实现边界。修改时就地替换旧说明，
   docs/handoff.md仅例外容纳必要交接；不追加版本叙事、尝试/测试流水、session记录，不建立docs/archive或按日期分叉交接。
 - 新增长期生产模块必须进入架构代码索引；新增文档须加入索引并有源码与验证入口。
-- 过程与证据保留在会话/CI或不打包的临时产物，历史在Git；不改机器生成记忆或范围外项目。
+- 过程与证据保留在会话/CI或不打包的临时产物，历史在Git；开发输出经tools/output-artifacts.mjs分配，目录职责与保留规则见[开发规范](docs/development.md#调试输出与素材保留)，不在tools/out根层新建零散任务产物。不改机器生成记忆或范围外项目。
 - TypeScript ESM/Cordis，client.js是手写CJS factory；Python通过PYTHONPATH兼容H21/H22。
   presets/houdini承载身份/工作方式并通过DSH bundle声明式注册，插件guidance保持persona中性。
   根级dsh-houdini承载前端，preset内dsh-houdini/agent承载工具与现场上下文；根客户端图不能由preset scope替代。
