@@ -8,7 +8,6 @@ never connect to or alter a user's Houdini process.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -85,6 +84,7 @@ def probe():
     app = QtWidgets.QApplication.instance()
     state = {'step': 0, 'captures': [], 'failures': [], 'busy': False}
     only_size_shadow = os.environ.get('DSH_UI_SURFACES_SIZE_SHADOW_ONLY') == '1'
+    only_shading = os.environ.get('DSH_UI_SURFACES_SHADING_ONLY') == '1'
     timer = QtCore.QTimer(hou.qt.mainWindow())
     import ctypes
     user32 = ctypes.WinDLL('user32', use_last_error=True)
@@ -108,7 +108,10 @@ def probe():
 
     def finish(result):
         timer.stop()
-        (output / 'ui-surfaces-result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        target=output / 'ui-surfaces-result.json'
+        pending=target.with_suffix('.tmp')
+        pending.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(pending,target)  # The launcher treats this committed file as completion.
 
     def list_surfaces():
         before = snapshot()
@@ -218,6 +221,32 @@ def probe():
                     state.setdefault('startup_dismissed_titles',[]).extend(dismissed)
                     return  # Process ordinary own-window closes at the outer GUI loop.
                 present_owned_fixture_window(native_parent)
+                if only_shading:
+                    import dsh_viewport
+                    display=state['scene'].curViewport().settings()
+                    sets=[display.displaySet(getattr(hou.displaySetType,name)) for name in
+                          ('CurrentModel','DisplayModel','SceneObject','SelectedObject')]
+                    before=(hou.frame(),[item.shadedMode() for item in sets])
+                    read=bridge.run_code("__result__=str(hou.ui.curDesktop().paneTabOfType(hou.paneTabType.SceneViewer).curViewport().settings().displaySet(hou.displaySetType.DisplayModel).shadedMode())",read_only=True)
+                    assert read['ok'],read
+                    seen=[];original=dsh_viewport._screenshot_readable
+                    def observe_shading(path):
+                        seen.append([item.shadedMode() for item in sets])
+                        return original(path)
+                    dsh_viewport._screenshot_readable=observe_shading
+                    try:
+                        result=bridge.run_code("__result__=viewport_screenshot(frame=5,frame_target='/obj/existing_surface_fixture',shading='Smooth')")
+                    finally:
+                        dsh_viewport._screenshot_readable=original
+                    assert result['ok'],result
+                    assert seen and all(mode==hou.glShadingType.Smooth for row in seen for mode in row)
+                    assert before==(hou.frame(),[item.shadedMode() for item in sets])
+                    assert result['images']==[os.path.abspath(result['result']['path'])]
+                    finish({'ok':True,'houdini':hou.applicationVersionString(),'capture':result,
+                            'read_only_settings':read['ok'],'requested_shading_observed':True,
+                            'frame_and_shading_restored':True,
+                            'scope':'Native GUI Bridge read/capture, actual pixels and all four shading sets; no user scene or semantic quality claim'})
+                    return
                 (output / 'parent-identities.json').write_text(json.dumps({
                     'main': QtCompat.getCppPointer(hou.qt.mainWindow()),
                     'pane_parent': QtCompat.getCppPointer(native_parent),
@@ -445,15 +474,15 @@ def main():
     parser.add_argument('--houdini', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--only-size-shadow',action='store_true',help='run the real observed QWidget.size attribute shadow regression only')
+    parser.add_argument('--only-shading',action='store_true',help='check native viewport temporary shading and restoration only')
     args = parser.parse_args()
     output = args.output.resolve()
     if output.is_relative_to(ROOT) or output.exists() and any(output.iterdir()):
         parser.error('--output must be an empty directory outside the repository')
     output.mkdir(parents=True, exist_ok=True)
-    source_spec = importlib.util.spec_from_file_location('source_gui_job', ROOT / 'tools/tests/dsh-source-webview.test.py')
-    source_gui = importlib.util.module_from_spec(source_spec); source_spec.loader.exec_module(source_gui)
+    sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
+    from dsh_worker_limits import WorkerJob
     with tempfile.TemporaryDirectory(prefix='dsh-ui-surfaces-') as temp:
-        job = source_gui.GuiProcessJob()
         env = isolated_environment(temp, executable=args.houdini, gui=True)
         script = 'import runpy\nrunpy.run_path(%r)["probe"]()\n' % str(Path(__file__).resolve())
         for major, version in (('21.0', '3.11'), ('22.0', '3.13')):
@@ -473,17 +502,26 @@ def onCreateInterface():
 ]]></script><includeInPaneTabMenu menu_position="700" create_separator="false"/></interface></pythonPanelDocument>''', encoding='utf-8')
         env['DSH_UI_SURFACES_OUTPUT'] = str(output)
         env['DSH_UI_SURFACES_SIZE_SHADOW_ONLY'] = '1' if args.only_size_shadow else '0'
+        env['DSH_UI_SURFACES_SHADING_ONLY'] = '1' if args.only_shading else '0'
         info = subprocess.STARTUPINFO(); info.dwFlags |= subprocess.STARTF_USESHOWWINDOW; info.wShowWindow = 4
         with (output / 'gui-process.log').open('w', encoding='utf-8') as log:
             process = subprocess.Popen([str(args.houdini.resolve()), '-foreground', '-geometry=1000x800+20+20'],
                 cwd=launch_directory(args.houdini), env=env, stdout=log, stderr=log, startupinfo=info)
-            job.assign(process)
+            try:
+                job = WorkerJob(process, 8192)
+            except BaseException:
+                process.kill(); process.wait(timeout=20)
+                raise
             try:
                 deadline = time.monotonic() + 120
                 while process.poll() is None and not (output / 'ui-surfaces-result.json').exists() and time.monotonic() < deadline:
                     time.sleep(.2)
             finally:
-                cleanup = job.close(); process.wait(timeout=20)
+                try:
+                    job.reap(); cleanup={'tree_reaped':True,'scope':'owned test GUI process tree only'}
+                finally:
+                    job.close()
+                process.wait(timeout=20)
         report = output / 'ui-surfaces-result.json'
         result = json.loads(report.read_text(encoding='utf-8')) if report.exists() else {'ok':False, 'error':'no GUI report'}
         result['gui_process_tree'] = cleanup

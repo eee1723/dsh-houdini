@@ -183,6 +183,7 @@ function analyzeTrace(file) {
       durationMs: source.durationMs,
       canonical: compact ? undefined : source.canonical,
       canonicalStatus: source.canonicalStatus,
+      executionScopes: source.executionScopes,
       recoveredExecution: source.recoveredExecution,
       executionReplay: source.executionReplay,
       turn: source.turn,

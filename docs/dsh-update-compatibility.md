@@ -77,7 +77,7 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 [更新查询](../src/plugin-updates.ts)只读本仓库正式 Release 的 `release-manifest.json`，要求对应完整包已经公开、支持当前宿主与平台；不选择 Draft、预发布或历史私有工作台包。使用 DSH 公开版本/兼容检查，按明确受影响范围优先推荐适用修复，再比较版本。发布摘要与修复范围维护在[发行提示](../release-update.json)，[发布构建器](../tools/build-release.py)与客户端使用同一校验函数；必要修复必须有有效范围，不能由联网失败、版本更大或字段错误推断。可选更新的忽略目标通过 DSH 原生 settings 单字段持久化，只在保存成功后隐藏；只读设置不显示假操作，必要修复不沿用可选忽略。已有重要建议在临时断网后保留并标明旧结果。正常状态保持安静；首次进入模式及返回前台低频检查，Host 成功结果缓存十二小时、失败一分钟，不在现场轮询里发外网请求。
 
-[组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。只有同一安装位置、预期 Package 已准备好且已加载身份不同才提示重开；身份未知保留未知。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[更新检查](../tools/tests/plugin-updates.test.mjs)、[工程菜单](../tools/tests/executor-picker.test.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。
+[组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。安装事实与加载事实分别返回：当前进程内容正确但Package缺失时提示安装修复，不报告整条链已就绪；磁盘未知或来自其他安装位置保持未知。只有同一安装位置、预期Package已准备好且已加载身份不同才提示重开。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[更新检查](../tools/tests/plugin-updates.test.mjs)、[工程菜单](../tools/tests/executor-picker.test.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。
 
 仅在 GitHub API 明确返回 403 且额度剩余为零时，改读同仓库公开的 `releases/latest` 正式发行跳转，再核对同 tag 清单和安装包 HEAD。此路径只确认一个正式发行，不冒充完整版本查询；取得可用候选时标明其他信息未读全，未取得适用版本仍为未知，并提供真实说明入口。临时受限不能清除已有更重要的修复建议。不从缺少预发布标志的 Atom 订阅推断正式发行。[GitHub 官方入口](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases)。
 

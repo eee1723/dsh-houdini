@@ -1,4 +1,10 @@
 {
   "concurrency": 2,
-  "requestsPerSecond": 1
+  "requestsPerSecond": 1,
+  "limits": {
+    "concurrency": 64,
+    "requestsPerSecond": 100,
+    "maxChunks": 100,
+    "maxRetries": 100
+  }
 }

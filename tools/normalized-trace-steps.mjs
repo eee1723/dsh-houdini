@@ -6,7 +6,7 @@ import {
   processOutcomeFor,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
-import { executionResult } from '../lib/dsh-adapter.js';
+import { executionResult, returnedExecutions, isHoudiniTool } from '../lib/dsh-adapter.js';
 import { mergeRequestStatus, isPendingRequestStatus } from '../lib/execution-history.js';
 
 function nestedResultContent(message) {
@@ -134,13 +134,15 @@ export function normalizeTraceSteps(events) {
     const code = typeof args.code === 'string' ? args.code : '';
     const resultText = toolResultText(message);
     const outcome = executionResult(event),canonical = outcome?.value;
-    const isHoudini = String(call.name).startsWith('houdini_') || call.name === 'job_output' && outcome?.producer === 'live-job';
+    const isHoudini = isHoudiniTool(call.name) || call.name === 'job_output' && outcome?.producer === 'live-job';
     // Isolated operation=read returns the same retained report/images without
     // the run response's top-level ok. Keep its exact public wrapper; nested
     // report executions remain independent and are not flattened into live HOM.
     const envelope = isHoudini && canonical && typeof canonical === 'object'
       && (typeof canonical.ok === 'boolean' || canonical.kind === 'isolated-houdini') ? canonical : null;
-    const observation = envelope?.execution;
+    const scoped=returnedExecutions(outcome?.tool??call.name,envelope);
+    const live=scoped.find(item=>item.domain==='live')?.execution;
+    const observation = live?.execution;
     const executionKey = typeof observation?.runtime_id === 'string' && Number.isFinite(observation.sequence)
       ? `${observation.runtime_id}:${observation.sequence}` : null;
     const executionReplay = executionKey !== null && executions.has(executionKey);
@@ -188,6 +190,9 @@ export function normalizeTraceSteps(events) {
       rollback: envelope?.rollback ?? parseJsonBlock(resultText, 'rollback'),
       transaction: envelope?.transaction ?? parseJsonBlock(resultText, 'transaction'),
       canonical: envelope,
+      executionScopes:scoped.map(({domain,archive,execution})=>({domain,archive,
+        runtime_id:execution.execution?.runtime_id??null,sequence:execution.execution?.sequence??null,
+        details:execution.details??null})),
       recoveredExecution: envelope?.requestReceipt?.retrieved === true,
       executionReplay,
       canonicalStatus: envelope ? nested ? 'retained_in_dispatch' : 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',

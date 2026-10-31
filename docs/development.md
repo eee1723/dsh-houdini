@@ -153,6 +153,8 @@ npm test
 | 批量 SOP 构建 | [dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py) |
 | multiparm结构与通道恢复 | [dsh-multiparm-restoration](../tools/tests/dsh-multiparm-restoration.test.py) |
 
+视口临时着色用[dsh-viewport-screenshot](../tools/tests/dsh-viewport-screenshot.test.py)核对成功、部分setter失败和恢复失败；[原生GUI入口](../tools/tests/dsh-ui-surfaces-gui.test.py)的`--only-shading`核对H21/H22实际Bridge只读settings、捕获期间着色、图像与恢复。该入口复用自有WorkerJob回收，独立工程目录必须在源码树外。
+
 通过 [houdini_test_environment](../tools/houdini_test_environment.py) 创建临时偏好、空 package 环境和目标安装路径；启动目录使用指定安装的 bin。Python 通过 PYTHONPATH/测试入口兼容 H21/H22，不继承用户插件、Qt override 或模型凭据。隔离检查不连接 live，也不加载用户 HIP。部署运行器的纯 Python 检查由普通 CLI 解释器执行一次；显式hython只执行HOM与实际启动隔离检查，避免把Houdini运行成本混入普通进程／内存夹具。
 
 领域改动选对应回归，例如 [node-knowledge](../tools/tests/dsh-node-knowledge.test.py)、[参数与绑定](../tools/tests/dsh-parameter-controls.test.py)、[控制恢复](../tools/tests/dsh-control-state-restoration.test.py)、[COP](../tools/tests/dsh-cop-contracts.test.py)。不机械把每个领域套件加到普通模块整理上。
@@ -235,6 +237,8 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 USD继承输出用[camera-framing](../tools/tests/dsh-camera-framing.test.py)在H21/H22核对实际stage/settings选择、Husk文件名、多个磁盘raster、部分缺失、checkpoint未验证、显式覆盖和预检帧恢复；只替换原生render方法来控制文件产出，不据此宣称Karma出图。需要验证真实渲染时显式运行[isolated-render](../tools/tests/dsh-isolated-render.test.py)，覆盖低分辨率Karma CPU的显式图片和原生RenderProduct继承，分别保留进程、文件与像素事实；不加载用户HIP或连接live，不认证场景美术效果。
 
 ## 隔离执行与开发工具
+
+文件序列沿[同源输入政策](../houdini/isolated-execution-policy.json)，[公共反例](../tools/tests/fixtures/isolated-file-sequences.json)由唯一Python解析器验证，覆盖步长、负帧、重复、缺失、范围与越界；Host回归消费规划结果，核对每帧原生读取政策和清单字节摘要，真实团队循环检查纯规划在原生job准入之前完成、worker消费展开文件、canonical保留完整执行报告及模型展示摘要。运行清单的读取采用报告预算，作者manifest仍使用独立小文档限额。
 
 `houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与明确所选登记的静态安装事实，或显式HFS；登记断连不要求live健康。无登记的固定Bridge配置保留在线安装信息入口。复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。builder/check的原归档沿同一`houdini_resource`分页入口按hash读取；路径来自本对话原生/嵌套回执，不猜文件名、不另存副本，[详情回归](../tools/tests/result-details.test.mjs)覆盖跨目录、失败检查、进度、伪造嵌套字段与损坏文件。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
 

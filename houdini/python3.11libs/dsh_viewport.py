@@ -138,9 +138,74 @@ def _screenshot_readable(path: str) -> bool:
             or _readable_tga(path))
 
 
+class _DisplayOverrides:
+    """One lifecycle for temporary viewport display properties, including groups.
+
+    Snapshot every requested property before any setter. A setter may change a
+    value then fail; record it before dispatch. Restore all attempted changes,
+    then read back after all setters so dependent display sets cannot hide drift.
+    """
+    def __init__(self):
+        self.changes = []
+        self.attempted = []
+
+    def add(self, label, read, write, desired):
+        before = read()
+        if before != desired:
+            self.changes.append((label, read, write, before, desired))
+
+    def apply(self):
+        for change in self.changes:
+            self.attempted.append(change)
+            change[2](change[4])
+        for label, read, _write, _before, desired in self.changes:
+            if read() != desired:
+                raise RuntimeError(label + ': requested display state was not applied')
+
+    def restore(self):
+        errors = []
+        for label, _read, write, before, _desired in reversed(self.attempted):
+            try: write(before)
+            except Exception as error: errors.append(f'{label}: {error}')
+        for label, read, _write, before, _desired in self.attempted:
+            try:
+                if read() != before: raise RuntimeError('restore readback mismatch')
+            except Exception as error: errors.append(f'{label}: {error}')
+        return errors
+
+
+def _plan_display_overrides(changes, viewer, st, clean, textures, backface_cull, shading):
+    if clean:
+        try:
+            plane = viewer.referencePlane()
+            plane.isVisible()
+        except Exception:
+            plane = None
+        if plane is not None:
+            changes.add('reference plane', plane.isVisible, plane.setIsVisible, False)
+        for name in _CLEAN_GUIDES:
+            guide = getattr(hou.viewportGuide, name, None)
+            if guide is None: continue
+            try: st.guideEnabled(guide)
+            except Exception: continue  # clean covers supported guides only.
+            changes.add('viewport guide ' + name, lambda guide=guide: bool(st.guideEnabled(guide)),
+                        lambda value, guide=guide: st.enableGuide(guide, value), False)
+    if textures is not None:
+        changes.add('textures', st.displayTextures, st.setDisplayTextures, bool(textures))
+    if backface_cull:
+        changes.add('backface culling', st.removeBackfaces, st.setRemoveBackfaces, True)
+    if shading is not None:
+        displays = [st.displaySet(getattr(hou.displaySetType, name)) for name in
+                    ('CurrentModel', 'DisplayModel', 'SceneObject', 'SelectedObject')]
+        def write_modes(modes):
+            for display, mode in zip(displays, modes): display.setShadedMode(mode)
+        changes.add('shading', lambda: tuple(display.shadedMode() for display in displays),
+                    write_modes, (shading,) * len(displays))
+
+
 def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
                         textures=None, backface_cull=False, *,
-                        output_policy: str = "managed") -> dict:
+                        output_policy: str = "managed", shading=None) -> dict:
     """Capture the selected viewport with bounded freshness and full restoration.
 
     Managed output (the default) accepts only an omitted filename or safe
@@ -164,6 +229,11 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
     if vp is None:
         raise ValueError("Scene Viewer 没有活动视口")
     st = vp.settings()
+    shading_mode = None
+    if shading is not None:
+        if shading not in ('Wire', 'Flat', 'FlatWire', 'Smooth', 'SmoothWire'):
+            raise ValueError('shading must be null, Wire, Flat, FlatWire, Smooth or SmoothWire')
+        shading_mode = getattr(hou.glShadingType, shading)
 
     # Resolve identity only. Geometry is evaluated after path validation and
     # after switching to the requested frame inside the protected lifecycle.
@@ -256,11 +326,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
     dispatch_attempted = False
     capture_settled = False
     restore_errors = []
-    saved_guides = []
-    saved_textures = None
-    saved_backface = None
-    refplane = None
-    refplane_was = False
+    display_overrides = _DisplayOverrides()
     lock_attempted = detach_attempted = detached = False
 
     try:
@@ -268,6 +334,8 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         before_files = {candidate: fingerprint(candidate) for candidate in candidates()}
+
+        _plan_display_overrides(display_overrides, viewer, st, clean, textures, backface_cull, shading_mode)
 
         # A linked camera is detached before frame or viewport manipulation.
         if target_node is not None and linked_camera is not None:
@@ -286,31 +354,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         if float(hou.frame()) != f:
             raise RuntimeError('requested capture frame was not applied')
 
-        if clean:
-            try:
-                refplane = viewer.referencePlane()
-                refplane_was = bool(refplane.isVisible())
-            except Exception:
-                refplane = None
-            if refplane is not None and refplane_was:
-                refplane.setIsVisible(False)
-            for name in _CLEAN_GUIDES:
-                guide = getattr(hou.viewportGuide, name, None)
-                if guide is None:
-                    continue
-                try:
-                    enabled = bool(st.guideEnabled(guide))
-                except Exception:
-                    continue
-                if enabled:
-                    saved_guides.append(guide)
-                    st.enableGuide(guide, False)
-        if textures is not None:
-            saved_textures = bool(st.displayTextures())
-            st.setDisplayTextures(bool(textures))
-        if backface_cull:
-            saved_backface = bool(st.removeBackfaces())
-            st.setRemoveBackfaces(True)
+        display_overrides.apply()
         if target_node is not None:
             vp.frameBoundingBox(_display_bbox(target_node))
 
@@ -351,35 +395,8 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         if dispatch_attempted and not capture_settled:
             capture_unresolved = True
     finally:
-        # Restore display state first while the viewport remains safely detached.
-        if refplane is not None and refplane_was:
-            try:
-                refplane.setIsVisible(True)
-                if not refplane.isVisible():
-                    raise RuntimeError('readback remained hidden')
-            except Exception as error:
-                restore_errors.append(f'reference plane: {error}')
-        for guide in saved_guides:
-            try:
-                st.enableGuide(guide, True)
-                if not st.guideEnabled(guide):
-                    raise RuntimeError('readback remained disabled')
-            except Exception as error:
-                restore_errors.append(f'viewport guide: {error}')
-        if saved_textures is not None:
-            try:
-                st.setDisplayTextures(saved_textures)
-                if bool(st.displayTextures()) != saved_textures:
-                    raise RuntimeError('readback mismatch')
-            except Exception as error:
-                restore_errors.append(f'textures: {error}')
-        if saved_backface is not None:
-            try:
-                st.setRemoveBackfaces(saved_backface)
-                if bool(st.removeBackfaces()) != saved_backface:
-                    raise RuntimeError('readback mismatch')
-            except Exception as error:
-                restore_errors.append(f'backface culling: {error}')
+        # Display properties restore together before reattaching the camera.
+        restore_errors.extend(display_overrides.restore())
 
         # If detachment partially failed, retry a safe detach before any
         # viewport-camera snapshot is applied. Never setDefaultCamera while a
@@ -483,6 +500,7 @@ def viewport_screenshot(path=None, frame=None, clean=True, frame_target=None,
         'restore_errors': [],
         'scope': 'frame, copied flipbook settings, changed viewport guides/display settings, framing camera and camera association',
         'clean': bool(clean),
+        'shading': shading,
     }
     if framed is not None:
         result['framed'] = framed

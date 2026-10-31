@@ -23,9 +23,9 @@ const bridgeVersion = Number(bridge.match(/_EXECUTION_CONTRACT_VERSION = (\d+)/)
 assert.ok(generatedVersion > 0);
 assert.equal(generatedVersion, bridgeVersion, 'host/bridge semantic execution version drifted');
 const execution = fs.readFileSync(path.join(root, 'houdini', 'python3.11libs', 'dsh_execution.py'), 'utf8');
-const registry = execution.match(/_VERBS:\s*dict\[str, object\]\s*=\s*\{([\s\S]*?)\n\}/)?.[1] || '';
-const bridgeNames = [...registry.matchAll(/^\s*"([A-Za-z_]\w*)":/gm)].map((match) => match[1]).sort();
-assert.deepEqual(bridgeNames, catalogNames, 'running bridge registry source drifted from tool-design.md');
+const registry = execution.match(/_VERB_DEFINITIONS\s*=\s*\{([\s\S]*?)\n\}/)?.[1] || '';
+const bridgeNames = [...registry.matchAll(/^\s*['"]([A-Za-z_]\w*)['"]:\s*VerbDefinition\(/gm)].map((match) => match[1]).sort();
+assert.deepEqual(bridgeNames, catalogNames, 'verb declaration source drifted from tool-design.md; runtime behavior is checked by HOM regressions');
 assert.match(bridge, /"verbCatalog":\s*\{/);
 
 console.log(`verb contract tests passed (${catalogNames.length} verbs, ${expectedHash.slice(0, 12)})`);

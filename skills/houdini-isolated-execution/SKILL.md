@@ -5,7 +5,7 @@ description: 用houdini_isolated在一次性独立hython中构建或检查明确
 
 # Houdini Isolated Execution
 
-`houdini_isolated`是Host工具，不是`verb_help`中的Houdini动词：为本次调用启动独立的Houdini Python进程（hython），执行完成后退出。它消费明确文件，不接管live现场，也不为子agent长期保留执行端。DSH团队负责分工和消息；各作者可在自己的任务中调用该工具，无需插件另建团队或完成账本。
+`houdini_isolated`是Host工具，不是`verb_help`中的Houdini动词：为本次调用启动独立的Houdini Python进程（hython），执行完成后退出。它消费明确文件，不接管live现场，也不为子agent长期保留执行端。DSH团队负责分工和消息；各作者可在自己的任务中调用该工具。
 
 ## 何时使用
 
@@ -35,7 +35,9 @@ description: 用houdini_isolated在一次性独立hython中构建或检查明确
 
 manifest至少声明`script`或`hip`之一。两者同时存在时，driver先加载声明的HIP副本并登记该次节点身份，再以同一隔离作者执行脚本作为准备操作，最后运行checks；脚本不自行load/clear。`hip/script/files`是输入根下的安全相对路径；输入根默认manifest目录，也可用`input_root`明确指定绝对目录或相对manifest的目录。这样HIP可留在工程根，准备脚本和manifest留在源码目录；不必为路径绕行复制源文件或把控制文件散放工程根。
 
-`files`列出额外输入并保留相对结构。`checks`可省略或为空数组，适合接口发现、独立断言或只需builder返回值的试验；不为这类任务额外制造几何输出。需要检查SOP、缓存或ROP时再列明每项唯一`id`、`kind`（cook/cache/render）、实际`node`与`frame`；cache/render另给相对输出`file`。可选`expect`只支持cook/cache的`points`与`primitives`计数，部件关系和控制行为在builder中用相应动词实测。
+`files`列出额外输入并保留相对结构；帧序列用`{"pattern":"cache/points.$F4.bgeo.sc","start":1,"end":240}`，可加正整数`step`，端点包含在范围内。每项可以是文件名或序列对象，不需枚举几百个路径；仅展开一个`$F`或`$F1..$F8`，不执行变量、表达式或通配扫描。所有展开文件都须存在并通过DSH读取政策，重复/别名拒绝；上限为10000项输入（含HIP/script）、共2 GiB。清单语法、序列和checks由同一纯规划入口在作业准入前检查，不执行Houdini或打开依赖；每个依赖仍由Host按DSH政策读取。Host授权的manifest原字节在执行前再核对，提交后改清单会在执行前拒绝，不能悄悄换一批依赖。
+
+`checks`可省略或为空数组，适合接口发现、独立断言或只需builder返回值的试验；不为这类任务额外制造几何输出。需要检查SOP、缓存或ROP时再列明每项唯一`id`、`kind`（cook/cache/render）、实际`node`与`frame`；cache/render另给相对输出`file`。可选`expect`只支持cook/cache的`points`与`primitives`计数，部件关系和控制行为在builder中用相应动词实测。
 
 例如自验证一个2米宽的可编辑源件，`build.py`使用worker已注入的环境：
 

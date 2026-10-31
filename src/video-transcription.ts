@@ -13,7 +13,7 @@ import {workspaceOf,type HoudiniConnection} from './tool-runtime.js'
 import {VIDEO_TOOLS} from './tool-catalog.js'
 import {resolveVideoRuntime} from './video-runtime.js'
 import {registerLocalVideoTool,releaseVideoChildLock} from './video-process.js'
-import {videoSelection,videoConfiguration,resolveVideoRoute,configureVideo,VIDEO_SETTINGS as SETTINGS} from './video-configuration.js'
+import {videoSelection,videoConfiguration,resolveVideoRoute,configureVideo,VIDEO_DEFAULTS,VIDEO_LIMITS,VIDEO_SETTINGS as SETTINGS} from './video-configuration.js'
 
 const SCRIPT=fileURLToPath(new URL('../skills/houdini-video-tutorial/scripts/video_tutorial.py',import.meta.url))
 const KEY_ENV='DSH_VIDEO_TRANSCRIPTION_KEY'
@@ -91,12 +91,12 @@ export async function transcribeVideo(ctx:any,exec:any,args:VideoTranscribeArgs,
   const chosen=videoSelection(ctx),route=resolveVideoRoute(ctx,chosen,args)
   const {provider,model,protocol,endpoint,authentication}=route
   if(route.dataLocation==='network'&&args.allow_upload!==true)throw Error('Cloud audio upload requires the user’s authorization and allow_upload=true')
-  const maximum=args.max_chunks??100,retries=args.max_retries??(args.retry_failed?1:0)
+  const maximum=args.max_chunks??VIDEO_LIMITS.maxChunks,retries=args.max_retries??(args.retry_failed?1:0)
   const concurrency=args.concurrency??chosen.concurrency,rate=args.requests_per_second??chosen.requestsPerSecond
-  if (!Number.isInteger(concurrency)||concurrency<1||concurrency>64) throw Error('concurrency must be 1..64')
-  if (!Number.isFinite(rate)||rate<=0||rate>100) throw Error('requests_per_second must be greater than 0 and at most 100')
-  if (!Number.isInteger(maximum)||maximum<1||maximum>100) throw Error('max_chunks must be 1..100')
-  if (!Number.isInteger(retries)||retries<0||retries>100||(!args.retry_failed&&retries!==0)) throw Error('Retries require retry_failed=true and max_retries within 0..100')
+  if (!Number.isInteger(concurrency)||concurrency<1||concurrency>VIDEO_LIMITS.concurrency) throw Error(`concurrency must be 1..${VIDEO_LIMITS.concurrency}`)
+  if (!Number.isFinite(rate)||rate<=0||rate>VIDEO_LIMITS.requestsPerSecond) throw Error(`requests_per_second must be greater than 0 and at most ${VIDEO_LIMITS.requestsPerSecond}`)
+  if (!Number.isInteger(maximum)||maximum<1||maximum>VIDEO_LIMITS.maxChunks) throw Error(`max_chunks must be 1..${VIDEO_LIMITS.maxChunks}`)
+  if (!Number.isInteger(retries)||retries<0||retries>VIDEO_LIMITS.maxRetries||(!args.retry_failed&&retries!==0)) throw Error(`Retries require retry_failed=true and max_retries within 0..${VIDEO_LIMITS.maxRetries}`)
   if (args.chunks!==undefined && (!Array.isArray(args.chunks)||!args.chunks.length||args.chunks.some(id=>!/^\d{5}$/.test(id))||new Set(args.chunks).size!==args.chunks.length))
     throw Error('chunks must contain unique five-digit chunk IDs from the manifest')
   const options:Record<string,unknown>={}
@@ -170,26 +170,26 @@ export function registerVideoTools(ctx:Context,connection?:HoudiniConnection) {
       model:{type:'string',description:'Exact ASR model ID; it does not need a fake chat catalog entry.'},
       protocol:{type:'string',description:'Explicit supported file adapter: openai-transcriptions, qwen-chat-asr or dashscope-asr; never infer from model name.'},
       authentication:{type:'string',description:'bearer for native secure key entry, none for explicitly unauthenticated services.'},
-      concurrency:{type:'number',description:'Optional confirmed account/resource limit, default 2. Local services often use 1.'},
-      requests_per_second:{type:'number',description:'Optional request dispatch limit, default 1; independent of in-flight concurrency.'},
+      concurrency:{type:'number',description:`Optional confirmed account/resource limit, default ${VIDEO_DEFAULTS.concurrency}. Local services often use 1.`},
+      requests_per_second:{type:'number',description:`Optional request dispatch limit, default ${VIDEO_DEFAULTS.requestsPerSecond}; independent of in-flight concurrency.`},
       expected_revision:{type:'number',description:'Optional revision returned by video_models to preserve concurrent configuration edits.'}},
     output,presentCall:()=>({card:'generic',kind:'execute',title:VIDEO_TOOLS.video_configure.label}),
     execute:args=>configureVideo(ctx,args)}))
   ctx.tools.register(defineTool({name:'video_transcribe',description:VIDEO_TOOLS.video_transcribe.purpose+
-    ' Reads prepared audio through the bundled worker; original attempt/outcome files own resumability. Defaults to 2 concurrent requests and 1 start/second; overload drains in-flight work then lowers toward 1 for untouched chunks within the same budget. Authentication, semantic and local failures stop. Failed/unknown chunks are never automatically retried. No HOM or provider substitution. Network upload authorization must cover this service and audio.',
+    ` Reads prepared audio through the bundled worker; original attempt/outcome files own resumability. Defaults to ${VIDEO_DEFAULTS.concurrency} concurrent requests and ${VIDEO_DEFAULTS.requestsPerSecond} start/second; overload drains in-flight work then lowers toward 1 for untouched chunks within the same budget. Authentication, semantic and local failures stop. Failed/unknown chunks are never automatically retried. No HOM or provider substitution. Network upload authorization must cover this service and audio.`,
     parameters:{work:{type:'string',required:true,description:'Absolute task directory created by video_tutorial.py prepare.'},
       provider:{type:'string',description:'DSH configured API route; omitted uses Tutorial Video settings.'},
       model:{type:'string',description:'Exact ASR model ID; omitted uses Tutorial Video settings. It need not be a chat model.'},
       protocol:{type:'string',description:'Optional explicit supported file protocol override, not inferred from model name.'},
       allow_upload:{type:'boolean',description:'Required true for network services only after user authorization. Loopback processing does not need an external-upload confirmation.'},
-      max_chunks:{type:'number',description:'Maximum total submissions this call including explicitly authorized retries, default 100, range 1..100.'},
-      concurrency:{type:'number',description:'Maximum in-flight requests, default 2, range 1..64. Overload drains then lowers toward 1 for untouched chunks; 1 stops on further failure. Not a provider quota promise.'},
-      requests_per_second:{type:'number',description:'Dispatch rate, default 1 request/second. Range >0..100; actual provider limits still apply.'},
+      max_chunks:{type:'number',description:`Maximum total submissions this call including explicitly authorized retries, default ${VIDEO_LIMITS.maxChunks}, range 1..${VIDEO_LIMITS.maxChunks}.`},
+      concurrency:{type:'number',description:`Maximum in-flight requests, default ${VIDEO_DEFAULTS.concurrency}, range 1..${VIDEO_LIMITS.concurrency}. Overload drains then lowers toward 1 for untouched chunks; 1 stops on further failure. Not a provider quota promise.`},
+      requests_per_second:{type:'number',description:`Dispatch rate, default ${VIDEO_DEFAULTS.requestsPerSecond} request/second. Range >0..${VIDEO_LIMITS.requestsPerSecond}; actual provider limits still apply.`},
       vocabulary:{type:'array',items:{type:'object',properties:{word:{type:'string',required:true},weight:{type:'number',required:true}},additionalProperties:false},description:'Native Qwen-Audio only: explicit domain words with weights 1..5 (or 50); preserved in task configuration.'},
       speaker_diarization:{type:'boolean',description:'Qwen-Audio 3.1 only; true requests its provider sentence collection and is saved in the transcription configuration.'},
       chunks:{type:'array',items:{type:'string'},description:'Optional exact chunk IDs from the existing manifest.'},
       retry_failed:{type:'boolean',description:'Explicit authorization to resubmit failed/unknown chunks; default false.'},
-      max_retries:{type:'number',description:'Retry request budget this call; default 0 (or 1 with retry_failed).'}},
+      max_retries:{type:'number',description:`Retry request budget this call; default 0 (or 1 with retry_failed).`}},
     output,presentCall:args=>({card:'generic',kind:'execute',title:VIDEO_TOOLS.video_transcribe.label,rawInput:args}),
     execute:(args,exec)=>transcribeVideo(ctx,exec,args,runVideoProcess,connection)}))
 }

@@ -39,7 +39,7 @@
 
                 Use DSH teammates for useful independent work and continue existing members when their context remains relevant. For an independent Houdini experiment or saved-snapshot computation, use houdini-isolated-execution. Keep shared inputs explicit; the live author integrates the result and verifies it in the whole project. Delegate by dependency, without a fixed team size or separate review role.
 
-                Use houdini-video-tutorial when reconstructing a tutorial; its demonstrated method takes precedence over ordinary preferences. Load rigging, tool development, COP and Solaris methods when those operations become current. For editable deliverables, use houdini-parameter-ui when deciding how users will make meaningful revisions.
+                Use houdini-video-tutorial for video references or tutorial reconstruction; it distinguishes matching an effect from restoring a demonstrated method. Use houdini-simulation-workflow for feedback solvers, coupled simulation and cache-dependent edits. Load rigging, tool development, COP and Solaris methods when those operations become current. For editable deliverables, use houdini-parameter-ui when deciding how users will make meaningful revisions.
 
                 When choosing or delegating visible surface detail, use houdini-surface-workflow to choose its representation and editing interface. To continue an earlier style or detail standard, inspect its actual images and project evidence, then translate useful characteristics into the current scale and editing needs; descriptions alone do not establish visible quality.
 

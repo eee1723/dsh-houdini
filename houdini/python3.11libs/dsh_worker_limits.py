@@ -3,10 +3,13 @@ import ctypes
 from ctypes import wintypes
 import os
 import math
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 import time
+
+WORKER_POLICY = json.loads((Path(__file__).resolve().parent.parent / 'isolated-execution-policy.json').read_text(encoding='utf-8'))
 
 
 class WorkerJob:
@@ -73,7 +76,14 @@ class WorkerJob:
             time.sleep(.05)
 
 
-def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_file=None):
+def validate_worker_budgets(timeout, memory_mb):
+    if type(memory_mb) is not int or not WORKER_POLICY['minMemoryMb'] <= memory_mb <= WORKER_POLICY['maxMemoryMb']:
+        raise ValueError('memory_mb must be %d..%d' % (WORKER_POLICY['minMemoryMb'], WORKER_POLICY['maxMemoryMb']))
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= WORKER_POLICY['maxTimeoutSeconds']:
+        raise ValueError('timeout must be finite and in 0..%d seconds' % WORKER_POLICY['maxTimeoutSeconds'])
+
+
+def run_gated_worker(command, *, cwd, env, timeout=WORKER_POLICY['defaultTimeoutSeconds'], memory_mb=WORKER_POLICY['defaultMemoryMb'], cancel_file=None):
     """Worker must wait for a GO line before loading user assets or executing code.
 
     Job caps committed memory for this tree, not GPU allocations or the whole host.
@@ -83,8 +93,7 @@ def run_gated_worker(command, *, cwd, env, timeout=120, memory_mb=4096, cancel_f
     Startup failures retain phase/error without releasing work.
     """
     if os.name!='nt':raise RuntimeError('worker limits currently require Windows')
-    if type(memory_mb) is not int or not 128<=memory_mb<=65536:raise ValueError('memory_mb must be 128..65536')
-    if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=86400:raise ValueError('timeout must be finite and in 0..86400 seconds')
+    validate_worker_budgets(timeout, memory_mb)
     cancel=Path(cancel_file) if cancel_file else None
     if cancel and cancel.exists():
         return {'status':'cancelled_before_start','returncode':None,'output':'','started':False,

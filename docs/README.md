@@ -29,6 +29,8 @@
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
 
+[模拟工作流](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时间与数据接口、缓存/重新修改和动态观察；由[src/skill.ts](../src/skill.ts)注册，机制验证复用[开发维护](development.md)的隔离执行与视口入口，效果与自然采用仍需任务验证。
+
 [任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域的模块粒度、依赖、逐模块观察与集成；[完整源组件](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护SOP的组件内部构造、布局与装配分工。由preset按需路由，注册入口为[src/skill.ts](../src/skill.ts)，上下文与方法验证见[开发维护](development.md)。
 
 [曲线方法](../skills/houdini-sop-workflow/references/curves-and-routing.md)维护稀疏锚点、原生编辑、平滑、绕行、截面朝向与折线净空反馈的选择；`curve_path`与`geo_curve_clearance`由[dsh_curve_paths.py](../houdini/python3.11libs/dsh_curve_paths.py)实现，[曲线回归](../tools/tests/dsh-curve-paths.test.py)核对其声明范围。节点事实由同源操作卡提供，[节点知识回归](../tools/tests/dsh-node-knowledge.test.py)核对实际修改及最终消费者，任意避障和自然造型质量不由这些机制检查认证。
@@ -43,13 +45,14 @@
 [复现协议](../skills/houdini-video-tutorial/references/reconstruction.md)，由video skill进入复现阶段时读取。
 视频资料分层、章节/模块索引、定向取证、原文分页与真实测试方法唯一维护在
 [视频运行与证据契约](../skills/houdini-video-tutorial/references/video-processing.md)；原始材料和单次结果不进入docs。
+[视频资料工作流](../skills/houdini-video-tutorial/references/analysis-workflow.md)按需维护讲解转录、索引、纠错与教学步骤；效果短片走主skill的直接抽帧路径，不强制加载完整资料协议。源码为随包video_tutorial.py，命令与验证入口见[架构](architecture.md)和[视频回归](../tools/tests/video-tutorial.test.py)。
 首次语音服务设置按[教程引导设置](../skills/houdini-video-tutorial/references/transcription-setup.md)只补缺项，使用原生settings/credentials，验证入口为[配置边界](../tools/tests/video-configuration.test.mjs)与[真实Host媒体链](../tools/tests/dsh-video-transcription-smoke.test.py)。
 
 [COP workflow](../skills/houdini-cop-workflow/SKILL.md)维护 Copernicus 图层、关系验证与纹理交付，
 由教程复现按当前阶段加载，不用于只解析视频或仅消费贴图；来源/版本与验证入口见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)，注册由 `src/skill.ts` 维护。
 
-[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)维护跨任务的参考分析、表面细化程度、纹理来源、UV与SOP统一预览；[生成贴图](../skills/houdini-surface-workflow/references/generated-textures.md)维护图像角色、提示词、文件消费与混合加工；[COP图案方法](../skills/houdini-cop-workflow/references/pattern-design.md)维护可编辑图层设计。注册、模型上下文传输及隔离SOP显示验证见[开发维护](development.md)，正式渲染沿Solaris/Karma。
+[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)维护跨任务的参考分析、表面细化程度、纹理来源、UV与实际SOP/渲染消费者；[生成贴图](../skills/houdini-surface-workflow/references/generated-textures.md)维护图像角色、提示词、文件消费与混合加工；[COP图案方法](../skills/houdini-cop-workflow/references/pattern-design.md)维护可编辑图层设计。注册、模型上下文传输及隔离SOP显示验证见[开发维护](development.md)，正式渲染沿Solaris/Karma。
 
 HDA封装、PythonModule/回调、脚本打包、Shelf/Tab、快捷键及Panel/Viewer State由
 [Houdini 工具开发 skill](../skills/houdini-tool-development/SKILL.md)维护；共享控制定义、参数UI组件与绑定由

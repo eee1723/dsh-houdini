@@ -3227,6 +3227,22 @@ Capture the user viewport for diagnosis, or a requested delivery image. This obs
         "explicit"
       ],
       "description": "managed defaults to $HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>. delivery allocates under $HIP/dsh-artifacts/renders/<HIPNAME>. Both require a named HIP and an omitted path or safe basename; explicit uses a caller destination."
+    },
+    "shading": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        null,
+        "Wire",
+        "Flat",
+        "FlatWire",
+        "Smooth",
+        "SmoothWire"
+      ],
+      "default": null,
+      "description": "Optional temporary shading for CurrentModel/DisplayModel/SceneObject/SelectedObject. Null preserves current modes. Overrides and restoration are read back; failures remain explicit."
     }
   }
 }
@@ -3278,6 +3294,16 @@ __result__ = viewport_screenshot(path='viewport.png', output_policy='delivery')
 ```
 
 Read the actual path and artifact before present. fresh and user_state_restored describe capture/recovery; semantic_status remains unverified until the image is actually inspected.
+
+### Observe a surface without wire overlays, restoring user shading
+
+调用工具：`houdini_exec`。
+
+```python
+__result__ = viewport_screenshot(frame=24, shading='Smooth')
+```
+
+Inspect the delivered image. This preserves current framing and restores frame and all changed shading modes, including after capture failure.
 
 ### 接口边界
 

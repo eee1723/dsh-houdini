@@ -1,0 +1,30 @@
+{
+  "valid": [
+    {"files":["single.txt",{"pattern":"cache/p.$F4.bgeo.sc","start":1,"end":5,"step":2}],"expected":["build.py","single.txt","cache/p.0001.bgeo.sc","cache/p.0003.bgeo.sc","cache/p.0005.bgeo.sc"]},
+    {"files":[{"pattern":"缓存/p.$F4.bgeo.sc","start":-2,"end":1}],"expected":["build.py","缓存/p.-002.bgeo.sc","缓存/p.-001.bgeo.sc","缓存/p.0000.bgeo.sc","缓存/p.0001.bgeo.sc"]},
+    {"files":[{"pattern":"p.$F.txt","start":9,"end":11}],"expected":["build.py","p.9.txt","p.10.txt","p.11.txt"]}
+  ],
+  "invalid": [
+    null,
+    [{"pattern":"p.$F4.txt","start":1,"end":2,"step":null}],
+    [{"pattern":"p.$F4.txt","start":true,"end":2}],
+    [{"pattern":"p.$F4.txt","start":1,"end":2,"step":0}],
+    [{"pattern":"p.$F4.txt","start":1,"end":2,"step":1.5}],
+    [{"pattern":"p.$F4.txt","start":2,"end":1}],
+    [{"pattern":"p.$F4.txt","start":1,"end":10000}],
+    [{"pattern":"p.$F4.txt","start":1000001,"end":1000001}],
+    [{"pattern":"p.$F4.txt","start":1,"end":2,"unknown":1}],
+    [{"pattern":"p.$F0.txt","start":1,"end":2}],
+    [{"pattern":"p.$F04.txt","start":1,"end":2}],
+    [{"pattern":"p.$F9.txt","start":1,"end":2}],
+    [{"pattern":"p.$F4.$F4.txt","start":1,"end":2}],
+    [{"pattern":"p.$FF.txt","start":1,"end":2}],
+    [{"pattern":"p.*.txt","start":1,"end":2}],
+    [{"pattern":"$HIP/p.$F4.txt","start":1,"end":2}],
+    [{"pattern":"../p.$F4.txt","start":1,"end":2}],
+    [{"pattern":"C:/p.$F4.txt","start":1,"end":2}],
+    ["p.0001.txt",{"pattern":"p.$F4.txt","start":1,"end":2}],
+    ["build.py"],
+    [null]
+  ]
+}

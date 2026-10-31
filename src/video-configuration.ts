@@ -12,7 +12,10 @@ export const VIDEO_ADAPTERS=[
 export type VideoProtocol=typeof VIDEO_ADAPTERS[number]['id']
 export type VideoSelection={provider:string;model:string;python:string;protocol:string;endpoint:string;
   authentication:'bearer'|'none';credentialRef:string;concurrency:number;requestsPerSecond:number}
-export const VIDEO_DEFAULTS=JSON.parse(readFileSync(new URL('../skills/houdini-video-tutorial/scripts/transcription-policy.json',import.meta.url),'utf8')) as {concurrency:number;requestsPerSecond:number}
+const VIDEO_POLICY=JSON.parse(readFileSync(new URL('../skills/houdini-video-tutorial/scripts/transcription-policy.json',import.meta.url),'utf8')) as {
+  concurrency:number;requestsPerSecond:number;limits:{concurrency:number;requestsPerSecond:number;maxChunks:number;maxRetries:number}}
+export const VIDEO_DEFAULTS={concurrency:VIDEO_POLICY.concurrency,requestsPerSecond:VIDEO_POLICY.requestsPerSecond}
+export const VIDEO_LIMITS=VIDEO_POLICY.limits
 export const VIDEO_SETTINGS={section:'houdini-video',model_section:'models'}
 const FIELDS={provider:'videoProvider',model:'videoModel',protocol:'videoProtocol',endpoint:'videoEndpoint',
   authentication:'videoAuthentication',concurrency:'videoConcurrency',requests_per_second:'videoRequestsPerSecond'} as const
@@ -112,8 +115,8 @@ export async function configureVideo(ctx:any,input:Record<string,unknown>) {
   const before=videoSelection(ctx),next={...before},patch:Record<string,unknown>={}
   for(const [field,value] of Object.entries(input)) {
     if(['expected_revision','expected_provider_revision'].includes(field))continue
-    if(field==='concurrency') {if(!Number.isInteger(value)||Number(value)<1||Number(value)>64)throw Error('并发应为 1..64；默认 2，先用短段确认额度。');next.concurrency=Number(value)}
-    else if(field==='requests_per_second') {if(typeof value!=='number'||!Number.isFinite(value)||value<=0||value>100)throw Error('请求速率应大于 0 且不超过 100。');next.requestsPerSecond=value}
+    if(field==='concurrency') {if(!Number.isInteger(value)||Number(value)<1||Number(value)>VIDEO_LIMITS.concurrency)throw Error(`并发应为 1..${VIDEO_LIMITS.concurrency}；默认 ${VIDEO_DEFAULTS.concurrency}，先用短段确认额度。`);next.concurrency=Number(value)}
+    else if(field==='requests_per_second') {if(typeof value!=='number'||!Number.isFinite(value)||value<=0||value>VIDEO_LIMITS.requestsPerSecond)throw Error(`请求速率应大于 0 且不超过 ${VIDEO_LIMITS.requestsPerSecond}。`);next.requestsPerSecond=value}
     else {if(typeof value!=='string'||value.length>2048)throw Error('配置字段必须是有限长度文字。');(next as any)[field]=value.trim()}
     patch[(FIELDS as any)[field]]=typeof value==='string'?value.trim():value
   }

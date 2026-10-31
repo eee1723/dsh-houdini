@@ -11,18 +11,21 @@ const execute=promisify(execFile)
 const pluginRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const key=(p:string)=>process.platform==='win32'?path.resolve(p).toLowerCase():path.resolve(p)
 type Plan={helper:string;targets:string[];package:{env:Record<string,string>[]};migration:{conflicts:unknown[]}}
-export type ComponentUpdate={state:'install'|'restart'|'unknown'|'current';loadedHelperId?:string;installedHelperId?:string}
+export type ComponentUpdate={state:'install'|'restart'|'unknown'|'current';
+  loaded:'current'|'different'|'unknown';installation:'current'|'missing'|'unknown'|'other_installation';
+  loadedHelperId?:string;installedHelperId?:string}
 
 /** A loaded build difference is advisory; only the execution contract determines
  * whether the scene tools are available. */
 export function componentUpdate(health:BridgeHealth,expectedId:string,installed:boolean|null,sameInstallation=true):ComponentUpdate {
   const loaded=health.helper?.id??undefined
   const details={...(loaded?{loadedHelperId:loaded}:{}),...(installed?{installedHelperId:expectedId}:{})}
-  if(loaded===expectedId)return {state:'current',...details}
-  if(installed===true&&loaded&&sameInstallation)return {state:'restart',...details}
-  if(!sameInstallation)return {state:'unknown',...details}
-  if(installed===false)return {state:'install',...details}
-  return {state:'unknown',...details}
+  const facts:Pick<ComponentUpdate,'loaded'|'installation'>={
+    loaded:loaded===expectedId?'current':loaded?'different':'unknown',
+    installation:!sameInstallation?'other_installation':installed===true?'current':installed===false?'missing':'unknown'}
+  const state:ComponentUpdate['state']=facts.installation==='missing'?'install':facts.installation!=='current'?'unknown':
+    facts.loaded==='current'?'current':facts.loaded==='different'?'restart':'unknown'
+  return {state,...facts,...details}
 }
 
 export class ComponentInstallation {
@@ -67,6 +70,6 @@ export class ComponentInstallation {
     const sameInstallation=plan&&/^[0-9a-f]{16}$/.test(path.basename(installation))
       &&path.basename(path.dirname(installation)).toLowerCase()==='helpers'&&key(path.resolve(installation,'../..'))===plan.root
     return plan?componentUpdate(health,plan.expectedId,plan.installed,!!sameInstallation):
-      {state:'unknown',...(health.helper?.id?{loadedHelperId:health.helper.id}:{})}
+      {state:'unknown',loaded:'unknown',installation:'unknown',...(health.helper?.id?{loadedHelperId:health.helper.id}:{})}
   }
 }

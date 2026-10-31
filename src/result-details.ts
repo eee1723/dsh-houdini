@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import {readFileSync} from 'node:fs'
 import path from 'node:path'
 import type { ExecResult } from './bridge.js'
-import {executionCall,executionResult,isHoudiniTool} from './dsh-adapter.js'
+import {executionCall,executionResult,isHoudiniTool,returnedExecutions} from './dsh-adapter.js'
 import type {SessionEvent} from './execution-history.js'
 import {RESULT_DIRECTORY} from './project-paths.js'
 
@@ -26,20 +26,12 @@ export function recordedResultPath(events:readonly SessionEvent[],ref:string):st
     const result=executionResult(event)
     if(!result||result.isError||!calls.has(result.callId)
       ||calls.get(result.callId)==='job_output'&&result.producer!=='live-job')continue
-    const value=result.value,isolated=calls.get(result.callId)==='houdini_isolated'&&value?.kind==='isolated-houdini'
-    // Isolated archives keep their producer-declared run and execution name.
-    // Never register a lookalike path from arbitrary authored result data.
-    const executions=isolated
-      ?[value.report?.result,value.progress].flatMap(report=>report
-        ?[{execution:report.builder,archive:'builder.json'},
-          ...(Array.isArray(report.checks)?report.checks.map((check:any)=>({execution:check.execution,archive:`check-${check.id}.json`})):[])] : [])
-      :[{execution:value,archive:undefined}]
-    for(const {execution,archive} of executions){
+    for(const {execution,archive,runDirectory,domain} of returnedExecutions(result.tool??calls.get(result.callId)!,result.value)){
       const detail=execution?.details
       if(detail?.stored!==true||detail.sha256!==ref||detail.format!=='returned_bridge_envelope_json'
         ||typeof detail.path!=='string')continue
-      if(isolated&&(typeof value.run_directory!=='string'||!path.isAbsolute(value.run_directory)
-        ||path.dirname(detail.path)!==path.join(value.run_directory,'executions')
+      if(domain==='isolated'&&(typeof runDirectory!=='string'||!path.isAbsolute(runDirectory)
+        ||path.dirname(detail.path)!==path.join(runDirectory,'executions')
         ||path.basename(detail.path)!==archive))continue
       retained=detail.path
     }

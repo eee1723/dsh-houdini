@@ -1,3 +1,5 @@
+import {houdiniToolKind} from '../../../lib/tool-catalog.js';
+
 function tryJson(text) {
   if (typeof text !== 'string') return text;
   try { return JSON.parse(text); }
@@ -473,7 +475,7 @@ export function classifyVisionEvidence(step) {
 
 /** Metrics that separate vocabulary breadth from actual execution adoption. */
 export function isStructuredHoudiniCall(step) {
-  return ['houdini_ui_list','houdini_ui_screenshot'].includes(step.tool)
+  return houdiniToolKind(step.tool)==='ui'
     || step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
 }
 
@@ -483,17 +485,17 @@ export function isHoudiniDetailRead(step) {
 }
 
 export function isHoudiniHostCall(step) {
-  return isHoudiniDetailRead(step) || ['houdini_capabilities', 'houdini_job_cancel'].includes(step.tool) || step.tool === 'houdini_product'
+  return isHoudiniDetailRead(step) || ['host','isolated','submission','receipt'].includes(houdiniToolKind(step.tool))
     || (step.tool === 'houdini_query' && Boolean(step.args?.capabilities));
 }
 
-/** Classify evidence, not arbitrary Python semantics. Kept dependency-free so
- * the generated Trace client uses exactly the same rules as offline reports.
+/** Classify evidence, not arbitrary Python semantics. Tool categories come from the runtime catalog;
+ * this offline consumer does not maintain a second tool-name taxonomy.
  * Gate "read_only" describes static raw scanning, even for mutating verbs;
  * no_scene_change excludes neither file I/O nor module/global side effects.
  */
 export function classifyRawEffect(step) {
-  if (isStructuredHoudiniCall(step)) return null;
+  if (isStructuredHoudiniCall(step) || isHoudiniHostCall(step)) return null;
   const usage = step.canonical?.rawUsage ?? step.rawUsage;
   const failed = step.failed || step.canonical?.ok === false;
   const outcome = usage?.gateOutcome;
@@ -515,6 +517,8 @@ export function classifyRawEffect(step) {
 
 export function collectVerbAdoption(steps) {
   const detailReads = steps.filter(isHoudiniDetailRead);
+  const isolated = steps.filter(step => houdiniToolKind(step.tool)==='isolated');
+  const submissions=steps.filter(step=>houdiniToolKind(step.tool)==='submission');
   const hostProducts = steps.filter(step => step.tool === 'houdini_product');
   const hostCapabilities = steps.filter(step => step.tool === 'houdini_capabilities'
     || (step.tool === 'houdini_query' && step.args?.capabilities));
@@ -533,6 +537,11 @@ export function collectVerbAdoption(steps) {
   const pct = (part, total) => total ? Math.round((part / total) * 1000) / 10 : null;
   return {
     houdiniCalls: houdini.length,
+    ...(submissions.length?{liveSubmissionCalls:submissions.length}:{}),
+    ...(isolated.length ? {isolatedCalls:isolated.length,
+      isolatedRunCalls:isolated.filter(step=>(step.args?.operation??'run')==='run').length,
+      isolatedReadCalls:isolated.filter(step=>step.args?.operation==='read').length,
+      isolatedScope:'Host submissions/report reads, not live Python or proof of verb absence; inspect the original run builder/check envelopes.'} : {}),
     hostResultDetailReads: detailReads.length,
     ...(hostProducts.length ? {hostProductCalls:hostProducts.length} : {}),
     ...(hostCapabilities.length ? {hostCapabilityReads:hostCapabilities.length} : {}),

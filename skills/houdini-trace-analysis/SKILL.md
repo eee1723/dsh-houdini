@@ -40,6 +40,7 @@ node <skill-dir>/../../tools/trace-report.mjs <session-file-or-directory> --out 
 - 终端工具返回成功不等于子进程退出成功。分别读取`processFailures`、`processInterruptions`和原始退出事实；缺少结构化退出字段或明确尾标时保持unknown，不从stdout含Error或没有报错推断。
 - 实际 runtime、execution sequence、request_ref 与 session/author 身份不可互相代替。未知响应必须用同一请求和运行代际查回，后续成功查询或已有文件不能证明原请求没执行。
 - `capabilitySnapshots` 描述当时曝光；当前目录只提供现役背景。目录广度、调用含动词率、动词密度、只读裸探针、Gate 拦截、成功裸修改候选与未知副作用分别解释。
+- 独立执行提交和报告读取单列，不因顶层没有动词就计作裸HOM或未知修改。需要讨论builder采用率时读取原run的执行归档，不能从提交回执推断，也不将同一报告重复读取累计为执行。
 - 图片资料访问、附件送达、返回内容描述、正确语义核对分别记录。`read_image` 成功只证明访问通道；视觉工具的描述也是待核证据。逐图核对原图、版本/目标、后续描述与最终声称，没有核图保持语义未验证。像素、bbox、亮度与变化不能自动认证对象、连接或质量。
 - 数据测量保留 output、piece/稳定 ID、局部坐标、实体覆盖、关系类型与阈值来源；上游 driver、整体 bbox 和响应非零不能替代最终实体关系。unsupported 与未覆盖维度保持 unverified。
 - 动画、控制、HDA 回调与重开检查按用户目标选证据；声明动态需最终输出的时序证据，声明可调关系需相应修改观察。无需为普通改名、节点维护或网络交付强制艺术渲染和长流程。

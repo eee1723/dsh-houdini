@@ -94,6 +94,19 @@ _GATE_MUTATING_PREFIXES = (
 _GATE_READ_ONLY_PREFIX_COLLISIONS = {"displayNode", "renderNode"}
 
 
+def _mutation_method_name(name):
+    """Match a verb word, not arbitrary text such as settings or copysign.
+
+    HOM uses camelCase; Python extension helpers can use snake_case. This is
+    a discovery heuristic, not a proof about arbitrary Python side effects.
+    Known covered operations are still matched independently above this rule.
+    """
+    return name not in _GATE_READ_ONLY_PREFIX_COLLISIONS and any(
+        name == prefix or name.startswith(prefix) and
+        (name[len(prefix)].isupper() or name[len(prefix)] == '_')
+        for prefix in _GATE_MUTATING_PREFIXES)
+
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -982,8 +995,7 @@ def _raw_usage_from_tree(tree: ast.AST) -> dict:
         for attr in _referenced_methods(callables.get(id(node))):
             if attr in _RAW_HOU_VERB_MAP:
                 covered[attr] = covered.get(attr, 0) + 1
-            elif (attr not in _GATE_READ_ONLY_PREFIX_COLLISIONS
-                  and attr.startswith(_GATE_MUTATING_PREFIXES)):
+            elif _mutation_method_name(attr):
                 suspected[attr] = suspected.get(attr, 0) + 1
     return {
         "directCalls": [

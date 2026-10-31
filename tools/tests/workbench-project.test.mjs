@@ -83,6 +83,8 @@ const toRestart=uiContext.houdiniPresence(liveView,componentSnapshot({contractMi
 assert.equal(toRestart.label,'更新待生效')
 assert.match(toRestart.detail,/组件已安装/)
 const compatibleRestart=uiContext.houdiniPresence(liveView,componentSnapshot({componentUpdate:{state:'restart'}}))
+const currentButMissing=uiContext.houdiniPresence(liveView,componentSnapshot({componentUpdate:{state:'install',loaded:'current',installation:'missing'}}))
+assert.equal(currentButMissing.status,'online','installation repair advice does not invalidate a compatible running scene')
 assert.equal(compatibleRestart.status,'online','an optional helper build update does not disable a compatible running scene')
 assert.match(compatibleRestart.detail,/可以继续使用/)
 assert.equal(uiContext.houdiniPresence(liveView,componentSnapshot({contractMismatch:true,runtimeId:'different',componentUpdate:{state:'restart'}})).state,'changed',

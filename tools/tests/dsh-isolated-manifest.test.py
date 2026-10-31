@@ -30,6 +30,45 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     save(valid)
 
     assert runner.load_manifest(file)==valid
+    cases=json.loads((ROOT/'tools/tests/fixtures/isolated-file-sequences.json').read_text(encoding='utf-8'))
+    for case in cases['valid']:
+        assert runner.manifest_inputs({'script':'build.py','files':case['files']})==case['expected']
+    for files in cases['invalid']:
+        rejects(lambda:runner.manifest_inputs({'script':'build.py','files':files}))
+    # A short simulation's two 240-frame dependencies are ordinary input, not
+    # 480 model-authored strings and not a reason to move computation to live.
+    sequences=[{'pattern':'cache/'+name+'.$F4.txt','start':1,'end':240} for name in ('points','surface')]
+    sequence_manifest={'script':'build.py','files':sequences,'checks':[]}
+    (root/'cache').mkdir()
+    for name in runner.manifest_inputs(sequence_manifest)[1:]:
+        (root/name).write_text('exact frame input',encoding='utf-8')
+    save(sequence_manifest)
+    assert runner.load_manifest(file)==sequence_manifest
+    assert len(runner.manifest_inputs(sequence_manifest))==481
+    plan_bytes=json.dumps(sequence_manifest).encode('utf-8')
+    with patch.object(runner,'regular_file',side_effect=AssertionError('planning must not read dependencies')):
+        plan=runner.plan_manifest_bytes(plan_bytes)
+    assert len(plan['files'])==481 and plan['input_root']=='.'
+    assert plan['files'][0]=={'path':'build.py','max_bytes':1048576}
+    planned=subprocess.run([sys.executable,str(ROOT/'tools/isolated-houdini-check.py'),'--plan'],
+                           input=plan_bytes,capture_output=True,check=True)
+    assert json.loads(planned.stdout)['plan']==plan
+    for budgets in ({'memory_mb':127},{'memory_mb':65537},{'timeout':86401},{'timeout':float('nan')}):
+        rejects(lambda:runner.plan_manifest_bytes(plan_bytes,**budgets))
+    # Future manifest fields/limits cannot pass the Host and fail only after a
+    # job starts: the pure planner uses the same complete validator as staging.
+    for bad in ({'files':[]},{'script':'build.py','checks':[{'kind':'bogus'}]},
+                {'script':'build.py','input_root':None}):
+        rejects(lambda:runner.plan_manifest_bytes(json.dumps(bad).encode('utf-8')))
+    authorized=runner.digest(file)
+    assert runner.load_manifest(file,expected_sha256=authorized)==sequence_manifest
+    save(valid)
+    rejects(lambda:runner.check(file,root/'unused-hython',root/'manifest-drift',trusted=True,manifest_sha256=authorized))
+    assert not (root/'manifest-drift').exists(), 'manifest drift rejects before staging or worker creation'
+    (root/'cache/surface.0240.txt').unlink()
+    save(sequence_manifest)
+    rejects(lambda:runner.load_manifest(file))
+    save(valid)
     for probe in ({'script':'build.py'}, {'script':'build.py','checks':[]}):
         save(probe)
         assert runner.load_manifest(file)=={'script':'build.py','checks':[]}
@@ -322,6 +361,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     runner.write_json(staging/'report.json',{'ok':False,'finished':False,'phase':'staging','run_id':'a'*32})
     state=runner.status(staging,cancel=True)
     assert state['phase']=='staging' and state['cancel_requested'] and not state['finished']
+    # A bounded manifest may expand to a larger staged inventory. Worker and
+    # status readers use the run budget, not the small authored-manifest budget.
+    expanded={'run_id':'a'*32,'inputs':[{'file':('segment/'*50)+str(i)+'.txt','sha256':'a'*64,'bytes':1}
+                                    for i in range(9000)]}
+    runner.write_json(staging/'request.json',expanded)
+    assert (staging/'request.json').stat().st_size>4*1024*1024
+    assert runner.read_json(staging/'request.json',runner.MAX_ARCHIVE_BYTES)==expanded
+    assert runner.status(staging)['phase']=='staging'
     runner.write_json(staging/'request.json',{'run_id':'b'*32,'inputs':[]})
     rejects(lambda:runner.status(staging))
 print('isolated manifest, trust, path aliases, result completeness/runtime and packaging contracts passed')

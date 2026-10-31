@@ -16,6 +16,10 @@ import dsh_bridge
 assert dsh_bridge._raw_gate is True
 assert len(dsh_bridge._VERB_NAMES) == len(dsh_bridge._VERBS)
 assert len(dsh_bridge._VERB_CATALOG_HASH) == 64
+contracts=dsh_bridge.run_code("__result__=verb_help(['scene_info','set_parms','render_frame'])",read_only=True)
+assert contracts['ok'],contracts
+assert [(item['call_mode'],item['content_invalidation']) for item in contracts['result']['items']]==[
+    ('query_or_exec','none'),('exec','node'),('exec','none')],contracts
 
 namespace_read = dsh_bridge.run_code("__result__ = len(globals().copy())", read_only=True)
 assert namespace_read['ok'] and namespace_read['result'] > 0, namespace_read

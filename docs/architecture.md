@@ -63,6 +63,8 @@ Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该
 
 `houdini_isolated`为本次调用在新hython中执行明确builder或已保存HIP的副本，复用[隔离检查器](../tools/isolated-houdini-check.py)、输入依赖复制与自有进程回收。结果保留本次输入版本、实际执行、进程退出、检查和产物；原生图像沿DSH附件返回，长任务沿DSH既有作业机制承载。
 
+输入文件与有界帧序列使用同一清单，限制由[输入政策](../houdini/isolated-execution-policy.json)维护；Python检查器的纯规划入口是清单语法、序列展开和检查定义的唯一实现。Host将经DSH读取的原字节交给该入口；规划不读取依赖或调用HOM，Host再逐文件消费DSH读取政策。校验失败在作业准入前返回；worker用同一解析器并核对授权字节摘要后复制输入。原生canonical完整保存检查器返回的报告；工具展示与后台通知分别按交互用途投影，通知只携带定位信息和数量，不再复制全部输入异常。完整执行的地址由DSH适配器returnedExecutions统一识别，只走生产者声明的live或isolated槽位；详情读取和离线审计复用它，不递归猜测用户返回值。
+
 DSH团队负责创建子任务、上下文和消息；每个作者可以调用同一工具完成独立构建与自验证，不需要常驻子作者执行端或新的会话状态机。同一live现场仍只有一个修改作者。团队默认交付builder及输入/入口和实际检查；现场作者通过现有exec/job的script入口执行并观察实际消费者，不自动合并或重放。需保留已有节点真实状态时按需使用原生片段；未保存现场与未声明依赖不属于独立检查的证据范围。按需方法见[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)。
 
 ### 现役分层
@@ -98,7 +100,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 
 | 源码 | 维护职责 |
 |---|---|
-| [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具的职责唯一源，注册、节点交付及[工具说明](tools.md)共用 |
+| [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具职责与调用种类的唯一源，注册、适配、离线分类及[工具说明](tools.md)共用；历史工具名只参与解码，不重新注册 |
 | [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息与原生/嵌套持久工具日志适配；精确live job结果解码唯一源，节点交付生成器复用；日志原值与展示限额分离，不从普通作业文本猜Houdini事实 |
 | [src/live-jobs.ts](../src/live-jobs.ts) | 先原生jobs准入再提交现场任务，按原runtime观察/请求队列取消，卸载释放本机观察；不重放代码、不把断线或取消意图冒充HOM终态 |
 | [src/execution-facts.ts](../src/execution-facts.ts) | 同源增量执行事实转换；在线只维护待处理事实和必要锚点，冷历史读取可捕获原始记录；不建立任务完成账本 |
@@ -141,7 +143,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
 | [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；普通详情及独立run的builder/check从原生/嵌套回执取原路径，加载警告从原生恢复记录取原路径，跨目录/重启仍可查；不执行HOM |
-| [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域模块与反馈方法，[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
+| [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域模块与反馈方法，[模拟skill](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时序与缓存消费，[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |

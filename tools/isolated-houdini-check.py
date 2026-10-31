@@ -26,6 +26,10 @@ from houdini_test_environment import isolated_environment, launch_directory
 DETAIL_POLICY = json.loads((ROOT / 'houdini/result-detail-policy.json').read_text(encoding='utf-8'))
 DETAIL_THRESHOLD = DETAIL_POLICY['detailThresholdChars']
 MAX_ARCHIVE_BYTES = DETAIL_POLICY['maxArchiveBytes']
+INPUT_POLICY = json.loads((ROOT / 'houdini/isolated-execution-policy.json').read_text(encoding='utf-8'))
+if INPUT_POLICY.get('schemaVersion') != 1 or any(type(INPUT_POLICY.get(key)) is not int or INPUT_POLICY[key] <= 0
+        for key in ('maxFiles', 'maxInputBytes', 'maxFrame', 'maxPadding')):
+    raise ValueError('Unsupported isolated input policy')
 
 SCOPE = ('Disposable process; trusted builder or exact copied saved HIP; optional explicit output checks. '
          'Without checks, success proves only builder execution or snapshot loading. '
@@ -64,7 +68,10 @@ def _observe_source_inputs(input_root, inputs, declared_inputs):
     return observations
 
 
-def read_json(path, max_bytes=4 * 1024 * 1024):
+MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+
+
+def decode_json(data, max_bytes=MAX_MANIFEST_BYTES, *, expected_sha256=None):
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -74,9 +81,17 @@ def read_json(path, max_bytes=4 * 1024 * 1024):
         return result
     def invalid(value):
         raise ValueError('nonfinite JSON value: ' + value)
-    if path.stat().st_size > max_bytes:
+    if len(data) > max_bytes:
         raise ValueError('JSON exceeds the %d byte read limit' % max_bytes)
-    return json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=unique, parse_constant=invalid)
+    if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError('Manifest changed after Host input authorization; submit the intended manifest again')
+    return json.loads(data.decode('utf-8'), object_pairs_hook=unique, parse_constant=invalid)
+
+
+def read_json(path, max_bytes=MAX_MANIFEST_BYTES, *, expected_sha256=None):
+    with path.open('rb') as stream:
+        data = stream.read(max_bytes + 1)
+    return decode_json(data, max_bytes, expected_sha256=expected_sha256)
 
 
 def write_json(path, value):
@@ -297,32 +312,50 @@ def manifest_input_root(path, manifest):
 
 
 def manifest_inputs(manifest):
-    return [manifest[key] for key in ('hip', 'script') if key in manifest] + manifest.get('files', [])
+    """Same bounded file declarations used by the Host's DSH read-policy check."""
+    inputs = [relative_file(manifest[key]) for key in ('hip', 'script') if key in manifest]
+    files = manifest.get('files', [])
+    if not isinstance(files, list):
+        raise ValueError('files must be an array of relative files or frame sequences')
+    for item in files:
+        if isinstance(item, str):
+            inputs.append(relative_file(item))
+        else:
+            if not isinstance(item, dict) or set(item) - {'pattern', 'start', 'end', 'step'}:
+                raise ValueError('File sequence requires pattern/start/end and optional positive step')
+            pattern, start, end, step = item.get('pattern'), item.get('start'), item.get('end'), item.get('step', 1)
+            if (not isinstance(pattern, str) or any(type(value) is not int for value in (start, end, step))
+                    or not 0 < step <= 9007199254740991 or end < start or max(abs(start), abs(end)) > INPUT_POLICY['maxFrame']):
+                raise ValueError('File sequence requires integer start <= end, positive step and bounded frames')
+            tokens = list(re.finditer(r'\$F([0-9]*)(?![A-Za-z0-9])', pattern))
+            padding = int(tokens[0][1] or 1) if len(tokens) == 1 else 0
+            if (len(tokens) != 1 or not 1 <= padding <= INPUT_POLICY['maxPadding']
+                    or tokens[0][1] and tokens[0][1] != str(padding)):
+                raise ValueError('File sequence pattern requires exactly one $F or $F1..$F%d token' % INPUT_POLICY['maxPadding'])
+            frames = range(start, end + 1, step)
+            if len(frames) > INPUT_POLICY['maxFiles'] - len(inputs):
+                raise ValueError('Declared inputs exceed %d files' % INPUT_POLICY['maxFiles'])
+            token = tokens[0]
+            inputs.extend(relative_file(pattern[:token.start()] + str(frame).zfill(padding) + pattern[token.end():])
+                          for frame in frames)
+        if len(inputs) > INPUT_POLICY['maxFiles']:
+            raise ValueError('Declared inputs exceed %d files' % INPUT_POLICY['maxFiles'])
+    if len(set(value.casefold() for value in inputs)) != len(inputs):
+        raise ValueError('duplicate/aliased input file')
+    return inputs
 
 
-def load_manifest(path):
-    data = read_json(path)
+def validate_manifest(data):
+    """The sole syntax, sequence and check contract. No filesystem/HOM access."""
     if not isinstance(data, dict) or set(data) - {'script', 'hip', 'input_root', 'files', 'checks'} or not ({'script', 'hip'} & set(data)):
         raise ValueError('manifest requires script and/or hip, plus optional input_root/files/checks')
     if 'script' in data and not relative_file(data['script']).endswith('.py'):
         raise ValueError('script must be a trusted .py builder, not a HIP')
     if 'hip' in data and not relative_file(data['hip']).lower().endswith(('.hip','.hiplc','.hipnc')):
         raise ValueError('hip must be an explicit saved HIP file')
-    files = data.get('files', [])
-    if not isinstance(files, list) or len(files) > 32:
-        raise ValueError('files must contain at most 32 explicit relative files')
-    inputs = [relative_file(value) for value in manifest_inputs(data)]
-    if len(set(value.casefold() for value in inputs)) != len(inputs):
-        raise ValueError('duplicate/aliased input file')
-    size = 0
-    input_root = manifest_input_root(path, data)
-    for name in inputs:
-        source = regular_file(input_root, name)
-        size += source.stat().st_size
-        if name == data.get('script') and source.stat().st_size > 1024 * 1024:
-            raise ValueError('builder exceeds 1 MiB')
-    if size > 2 * 1024 ** 3:
-        raise ValueError('declared inputs exceed 2 GiB')
+    if 'input_root' in data and (not isinstance(data['input_root'], str) or not data['input_root'].strip()):
+        raise ValueError('input_root must be an explicit nonempty directory path')
+    manifest_inputs(data)
     checks = data.get('checks', [])
     if not isinstance(checks, list) or len(checks) > 16:
         raise ValueError('checks must contain 0..16 explicit operations')
@@ -364,9 +397,42 @@ def load_manifest(path):
     return data
 
 
+def manifest_requirements(manifest):
+    return [{'path': name, **({'max_bytes': 1024 * 1024} if name == manifest.get('script') else {})}
+            for name in manifest_inputs(manifest)]
+
+
+def plan_manifest_bytes(data, *, timeout=INPUT_POLICY['defaultTimeoutSeconds'], memory_mb=INPUT_POLICY['defaultMemoryMb']):
+    """Describe declared files from Host-authorized bytes, without opening any."""
+    sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
+    from dsh_worker_limits import validate_worker_budgets
+    validate_worker_budgets(timeout, memory_mb)
+    manifest = validate_manifest(decode_json(data))
+    return {'schema_version': 1, 'manifest_sha256': hashlib.sha256(data).hexdigest(),
+            'input_root': manifest.get('input_root', '.'),
+            'files': manifest_requirements(manifest),
+            'max_input_bytes': INPUT_POLICY['maxInputBytes'],
+            'budgets': {'timeout_seconds': timeout, 'memory_mb': memory_mb}}
+
+
+def load_manifest(path, *, expected_sha256=None):
+    manifest = validate_manifest(read_json(path, expected_sha256=expected_sha256))
+    input_root = manifest_input_root(path, manifest)
+    size = 0
+    for requirement in manifest_requirements(manifest):
+        name = requirement['path']
+        source = regular_file(input_root, name)
+        size += source.stat().st_size
+        if 'max_bytes' in requirement and source.stat().st_size > requirement['max_bytes']:
+            raise ValueError('declared input exceeds %d bytes: %s' % (requirement['max_bytes'], name))
+    if size > INPUT_POLICY['maxInputBytes']:
+        raise ValueError('declared inputs exceed %d bytes' % INPUT_POLICY['maxInputBytes'])
+    return manifest
+
+
 def worker(request_file):
     # The caller has assigned this process to its limited Job before GO.
-    request = read_json(request_file)
+    request = read_json(request_file, MAX_ARCHIVE_BYTES)
     directory = request_file.parent
     result_file = directory / 'worker-result.json'
     result = {'ok': False, 'run_id': request['run_id'], 'phase': 'initialize', 'checks': [], 'scope': SCOPE}
@@ -507,11 +573,11 @@ def worker(request_file):
     return 0 if result['ok'] else 1
 
 
-def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memory_mb=4096, cancel_file=None):
+def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POLICY['defaultTimeoutSeconds'], memory_mb=INPUT_POLICY['defaultMemoryMb'], cancel_file=None, manifest_sha256=None):
     if trusted is not True:
         raise ValueError('explicit trusted=True/--trusted authorization is required to execute the builder and dependencies')
     manifest_path, hython, output_dir = Path(manifest_path).resolve(), Path(hython).resolve(), Path(output_dir).resolve()
-    manifest = load_manifest(manifest_path)
+    manifest = load_manifest(manifest_path, expected_sha256=manifest_sha256)
     input_root = manifest_input_root(manifest_path, manifest)
     output_dir.mkdir()  # exclusive run directory; never overwrite prior evidence
     cancel_file = Path(cancel_file).resolve() if cancel_file is not None else output_dir / 'cancel.request'
@@ -637,7 +703,7 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=120, memo
 def status(directory, cancel=False):
     directory=Path(directory).resolve()
     report=read_json(directory/'report.json', MAX_ARCHIVE_BYTES)
-    request=(read_json(directory/'request.json') if (directory/'request.json').exists()
+    request=(read_json(directory/'request.json', MAX_ARCHIVE_BYTES) if (directory/'request.json').exists()
              else {'run_id':report.get('run_id'),'inputs':report.get('inputs',[])})
     if not re.fullmatch('[0-9a-f]{32}',str(report.get('run_id',''))):raise ValueError('invalid run report identity')
     if report.get('run_id')!=request.get('run_id'):raise ValueError('run report identity mismatch')
@@ -670,17 +736,30 @@ def status(directory, cancel=False):
 
 
 def main():
+    if sys.argv[1:2] == ['--plan']:
+        parser = argparse.ArgumentParser(description='Pure isolated input planning; no dependency reads or HOM')
+        parser.add_argument('--timeout', type=float, default=INPUT_POLICY['defaultTimeoutSeconds'])
+        parser.add_argument('--memory-mb', type=int, default=INPUT_POLICY['defaultMemoryMb'])
+        args = parser.parse_args(sys.argv[2:])
+        try:
+            plan = plan_manifest_bytes(sys.stdin.buffer.read(MAX_MANIFEST_BYTES + 1), timeout=args.timeout, memory_mb=args.memory_mb)
+            print(_encoded({'ok': True, 'plan': plan}))
+            return 0
+        except (ValueError, TypeError) as error:
+            print(_encoded({'ok': False, 'phase': 'preflight', 'error': str(error)}))
+            return 1
     if len(sys.argv) == 3 and sys.argv[1] == '--worker':
         if sys.stdin.readline().strip() != 'GO':
             return 2
         return worker(Path(sys.argv[2]))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path)
+    parser.add_argument('--manifest-sha256', help='Host-authorized manifest bytes; reject edits before staging')
     parser.add_argument('--hython', type=Path)
     parser.add_argument('--output-dir', required=True, type=Path)
     parser.add_argument('--trusted', action='store_true')
-    parser.add_argument('--timeout', type=float, default=120)
-    parser.add_argument('--memory-mb', type=int, default=4096)
+    parser.add_argument('--timeout', type=float, default=INPUT_POLICY['defaultTimeoutSeconds'])
+    parser.add_argument('--memory-mb', type=int, default=INPUT_POLICY['defaultMemoryMb'])
     parser.add_argument('--cancel-file', type=Path)
     parser.add_argument('--status',action='store_true',help='Read durable progress/result without executing Houdini')
     parser.add_argument('--cancel',action='store_true',help='Request cancellation of this run only; does not start or retry work')
@@ -691,7 +770,8 @@ def main():
     if args.manifest is None or args.hython is None:parser.error('--manifest and --hython required for execution')
     try:
         result = check(args.manifest, args.hython, args.output_dir, trusted=args.trusted,
-                       timeout=args.timeout, memory_mb=args.memory_mb, cancel_file=args.cancel_file)
+                       timeout=args.timeout, memory_mb=args.memory_mb, cancel_file=args.cancel_file,
+                       manifest_sha256=args.manifest_sha256)
     except Exception as error:
         result = {'ok': False, 'phase': 'preflight', 'error': str(error) or type(error).__name__}
     print(json.dumps(status(args.output_dir) if result.get('run_id') else result, ensure_ascii=False, separators=(',',':')))

@@ -353,6 +353,7 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num">${totalVerbCalls}</div><div class="cap">动词调用</div></div>
       <div class="card"><div class="num">${verbAdoption.callsWithVerbs}/${verbAdoption.houdiniCalls}</div><div class="cap">Houdini 调用含动词（${verbAdoption.callCoveragePct ?? 0}%）</div></div>
       <div class="card"><div class="num">${verbAdoption.verbDensity}</div><div class="cap">每次 Houdini 调用动词数</div></div>
+      ${verbAdoption.isolatedCalls ? `<div class="card"><div class="num">${verbAdoption.isolatedRunCalls} / ${verbAdoption.isolatedReadCalls}</div><div class="cap">独立执行提交 / 报告读取（不计入现场裸调用）</div></div>` : ''}
       <div class="card"><div class="num">${usedVerbs}/${catalogVerbs}</div><div class="cap">目录广度（非合规率）</div></div>
       <div class="card"><div class="num">${verbAdoption.rawReadOnlyCalls}</div><div class="cap">无动词只读 query（守卫范围）</div></div>
       <div class="card"><div class="num">${verbAdoption.rawSuspectedEffectCalls}</div><div class="cap">无动词疑似副作用 / 外部操作</div></div>

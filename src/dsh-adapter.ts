@@ -4,7 +4,7 @@ import type {Agent} from '@deepseek-ai/dsh-agent'
 import {boundContextSummary,createUserMessage,type ContentBlock,type ContextFormed} from '@deepseek-ai/dsh-llm'
 import type {JobEvent} from '@deepseek-ai/dsh-jobs'
 import type { SessionEvent } from './execution-history.js'
-import { HOUDINI_TOOLS } from './tool-catalog.js'
+import { houdiniToolKind } from './tool-catalog.js'
 import {renderJobObservation} from './tool-output.js'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -18,7 +18,23 @@ export const HOUDINI_SOURCE='dsh-houdini' as const
 export const isHoudiniSource=(source:any):boolean =>
   source?.kind===HOUDINI_SOURCE || source?.kind==='plugin:dsh-houdini'
 export const isHoudiniTool=(name:unknown):name is string => typeof name==='string'
-  &&(Object.hasOwn(HOUDINI_TOOLS,name)||name==='houdini_job_status'||name==='houdini_job_cancel')
+  &&houdiniToolKind(name)!==undefined
+
+/** Traverse only producer-defined execution slots. A report read, request
+ * receipt and a HOM execution are different objects even when nested together.
+ * Consumers share these addresses; none recursively searches authored data. */
+export function returnedExecutions(tool:string,value:any):{domain:'live'|'isolated';execution:any;archive?:string;runDirectory?:string}[] {
+  if(tool==='houdini_isolated'){
+    if(value?.kind!=='isolated-houdini')return []
+    return [value.report?.result,value.progress].flatMap(report=>report?[
+      {domain:'isolated' as const,execution:report.builder,archive:'builder.json',runDirectory:value.run_directory},
+      ...(Array.isArray(report.checks)?report.checks.map((check:any)=>({domain:'isolated' as const,
+        execution:check.execution,archive:`check-${check.id}.json`,runDirectory:value.run_directory})):[]),
+    ].filter(row=>row.execution):[])
+  }
+  return ['python','receipt','ui'].includes(houdiniToolKind(tool)??'')&&value&&typeof value==='object'
+    ?[{domain:'live',execution:value}]:[]
+}
 
 export const LIVE_JOB_KIND='houdini-live'
 export const LIVE_JOB_RESULT='dsh-houdini/live-job-result-v1'

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "maxFiles": 10000,
+  "maxInputBytes": 2147483648,
+  "maxFrame": 1000000,
+  "maxPadding": 8,
+  "defaultTimeoutSeconds": 120,
+  "maxTimeoutSeconds": 86400,
+  "defaultMemoryMb": 4096,
+  "minMemoryMb": 128,
+  "maxMemoryMb": 65536
+}

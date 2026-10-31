@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {createHash} from 'node:crypto'
-import {executeIsolated,registerIsolatedTool,isolatedInstallationRuntime} from '../../lib/isolated-execution.js'
+import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary} from '../../lib/isolated-execution.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
 
 // DSH resolves local paths to their real spelling, including Windows TEMP aliases.
@@ -16,7 +16,7 @@ const inputStats=[],jsonReads=[]
 const ctx={fs:{resolve:async(filename,options={})=>({targetKey:await canonical(path.resolve(options.cwd??root,filename))}),
   processPath:ref=>ref.targetKey,processPathFromHostPath:value=>value,
   contains:(base,target)=>{const value=path.relative(base.targetKey,target.targetKey);return value===''||(!value.startsWith('..')&&!path.isAbsolute(value))},
-  stat:ref=>{inputStats.push(ref.targetKey);if(ref.targetKey===deniedInput)throw Error('DSH input read policy denied');return fs.stat(ref.targetKey)},
+  stat:async ref=>{inputStats.push(ref.targetKey);if(ref.targetKey===deniedInput)throw Error('DSH input read policy denied');const stat=await fs.stat(ref.targetKey);return {type:stat.isFile()?'file':'directory',size:stat.size}},
   readBytes:async(ref,_signal,limit)=>{jsonReads.push({path:ref.targetKey,limit});if(ref.targetKey===unreadableReport)throw Error('report read failed');const value=await fs.readFile(ref.targetKey);assert(value.length<=limit);return value}},
   sandboxPolicy:{resolve:()=>({mode,workspaceRoot:root})},
   llm:{resolveModelInfo:async()=>({inputModalities:['text','image']})},
@@ -41,7 +41,34 @@ async function runner(request){
   await fs.writeFile(path.join(request.output,'report.json'),JSON.stringify(report))
   return {exit_code:0,cancel_requested:false,stderr:''}
 }
+let plannedExtraFiles
+// Host tests consume a planner response; syntax/sequence semantics are tested
+// at their sole Python producer and by the real DSH integration.
+const planner=async(_runtime,bytes,_signal,budgets)=>{
+  const value=JSON.parse(bytes)
+  return {schema_version:1,manifest_sha256:createHash('sha256').update(bytes).digest('hex'),
+    input_root:value.input_root??'.',max_input_bytes:2147483648,
+    budgets:{timeout_seconds:budgets.timeout,memory_mb:budgets.memory},
+    files:[value.hip,value.script,...(plannedExtraFiles??value.files??[])].filter(value=>value!==undefined)
+      .map(name=>({path:name,...(name===value.script?{max_bytes:1048576}:{})}))}
+}
+const executeIsolated=(ctx,exec,args,resolver,runner)=>executeIsolatedNative(ctx,exec,args,resolver,runner,planner)
 try {
+  const inventory={report_path:'original/report.json',report:{ok:false,error:'worker error',
+    inputs:Array.from({length:480},(_,i)=>({file:`p.${i}.bgeo`,bytes:17})),
+    input_observations:Array.from({length:480},(_,i)=>({file:`p.${i}.bgeo`,status:i===479?'unavailable':'unchanged',...(i===479?{error:'source removed'}:{})}))}}
+  const presented=isolatedPresentation(inventory)
+  assert.equal(inventory.report.inputs.length,480,'native canonical rows are not mutated')
+  assert.equal(presented.report.inputs.count,480)
+  assert.deepEqual(presented.report.input_observations.status_counts,{unchanged:479,unavailable:1})
+  assert.equal(presented.report.input_observations.preview[0].error,'source removed')
+  assert.equal(presented.report.error,'worker error')
+  assert(JSON.stringify(presented).length<1500)
+  const failedInventory={...inventory,ok:false,process:{exit_code:1}}
+  const summaryInventory=isolatedJobSummary(failedInventory)
+  assert.equal(summaryInventory.error,'worker error')
+  assert.deepEqual(summaryInventory.input_observations.status_counts,{unchanged:479,unavailable:1})
+  assert(Buffer.byteLength(JSON.stringify(summaryInventory))<16000,'native job output does not lose its error to a long source inventory')
   const manifest=path.join(root,'manifest.json')
   await fs.writeFile(path.join(root,'build.py'),'__result__={"width":5}')
   await fs.writeFile(manifest,JSON.stringify({script:'build.py',checks:[{id:'geometry',kind:'cook',node:'/obj/a/OUT',frame:1}]}))
@@ -57,17 +84,23 @@ try {
   }
   const output=path.join(root,'run')
   const result=await executeIsolated(ctx,exec,{manifest,output_dir:output},runtimeResolver,runner)
+  assert.equal(processRequests[0].manifestSha256,createHash('sha256').update(await fs.readFile(manifest)).digest('hex'))
   assert.equal(result.kind,'isolated-houdini');assert.equal(result.report.result.builder.result.width,5)
-  assert.equal(result.report.result.builder.stdout,'Measured width: 5 m')
+  assert.equal(result.report.result.builder.stdout,'[verb] set_parms echo\nMeasured width: 5 m')
+  assert.deepEqual(result.report.result.builder.verbs,[{verb:'set_parms'}])
+  assert.equal(isolatedPresentation(result).report.result.builder.stdout,'Measured width: 5 m')
   assert.equal(result.report.result.builder.stderr,'Authored diagnostic')
-  assert.equal(result.report.worker.output,undefined,'verbose process output remains in the retained report')
+  assert.equal(result.report.worker.output,'verbose process log','native canonical preserves the original report')
+  assert.equal(isolatedPresentation(result).report.worker.output,undefined,'model display alone omits verbose process output')
   assert.equal(result.execution,undefined,'independent execution never projects a live observation')
   assert.equal(result.process.exit_code,0);assert.equal(savedImages,1)
   assert(!HOUDINI_SCENE_TOOLS.has('houdini_isolated'))
   const definitions=new Map()
-  registerIsolatedTool({...ctx,tools:{register:def=>definitions.set(def.name,def)}},{},{runtimeResolver,runner})
+  registerIsolatedTool({...ctx,tools:{register:def=>definitions.set(def.name,def)}},{},{runtimeResolver,runner,planner})
   const tool=definitions.get('houdini_isolated')
   const read=await tool.execute({operation:'read',output_dir:output},exec)
+  assert.deepEqual(read.report,JSON.parse(await fs.readFile(path.join(output,'report.json'),'utf8')),
+    'native canonical reads preserve every report field; presentation cannot erase execution evidence')
   assert.equal(runtimeReads,1,'reading a completed run never resolves the current Houdini')
   assert.equal(tool.output.render({},read).filter(item=>item.type==='image').length,1)
   assert.deepEqual(JSON.parse(JSON.stringify(read)),read,'public canonical values are lossless JSON')
@@ -109,7 +142,7 @@ try {
     const summary=JSON.parse(sourceTerminal.result)
     assert.equal(summary.ok,true);assert.equal(summary.error,null)
     assert.equal(summary.inputs_unchanged,sourceStatus==='changed'?false:null)
-    assert.deepEqual(summary.input_observations,[observation],'compact output keeps exceptional source facts from the report')
+    assert.deepEqual(summary.input_observations.status_counts,{[sourceStatus]:1,unchanged:1},'job summary retains the report counts without duplicating its inventory')
     assert.match(summary.next_action,/declared staged inputs/)
     const sourceRead=await executeIsolated(ctx,exec,{operation:'read',output_dir:sourceRun.run_directory},runtimeResolver,sourceRunner)
     assert.deepEqual(sourceRead.report.input_observations,[observation,{file:'build.py',status:'unchanged',before_sha256:'c',after_sha256:'c'}])
@@ -172,15 +205,15 @@ try {
   for(const file of ['saved.hip','setup.py','assets/helper.txt'])assert(inputStats.includes(path.join(sourceRoot,file)),
     'HIP, post-load setup and every dependency must pass DSH read policy: '+file)
   deniedInput=path.join(sourceRoot,'setup.py')
-  const beforeDenied=runtimeReads
+  const beforeDenied=processRequests.length
   await assert.rejects(()=>executeIsolated(ctx,exec,{manifest:combined,output_dir:path.join(root,'denied-setup')},runtimeResolver,runner),/DSH input read policy denied/)
-  assert.equal(runtimeReads,beforeDenied,'a denied setup input fails before resolving Houdini or creating a run')
+  assert.equal(processRequests.length,beforeDenied,'a denied setup input never starts a worker; lexical planning uses only the recorded Python installation')
   assert.equal(await fs.stat(path.join(root,'denied-setup')).catch(()=>null),null)
   deniedInput=undefined
   await fs.writeFile(combined,JSON.stringify({...combinedManifest,input_root:sourceRoot}))
   await executeIsolated(ctx,exec,{manifest:combined,output_dir:path.join(root,'absolute-root')},runtimeResolver,runner)
   await fs.writeFile(combined,JSON.stringify({...combinedManifest,files:['../outside.py']}))
-  await assert.rejects(()=>executeIsolated(ctx,exec,{manifest:combined,output_dir:path.join(root,'escaped-input')},runtimeResolver,runner),/safe relative files/)
+  await assert.rejects(()=>executeIsolated(ctx,exec,{manifest:combined,output_dir:path.join(root,'escaped-input')},runtimeResolver,runner),/outside input_root/)
 
   const legacyDir=path.join(root,'legacy-large');await fs.mkdir(legacyDir)
   const legacy={ok:false,finished:true,phase:'worker_result',run_id:'large-legacy',error:'original geometry check failure',
@@ -195,6 +228,22 @@ try {
   assert.deepEqual(legacyRead.report.result.checks[0].execution.evidence,[{reason:'author assertion'}])
   assert.equal(jsonReads.findLast(value=>value.path===path.join(legacyDir,'report.json')).limit,policy.maxArchiveBytes)
   assert(jsonReads.filter(value=>value.path===manifest).every(value=>value.limit===4*1024*1024),'manifest keeps its separate small-document limit')
+  const sequenceManifest=path.join(root,'sequences.json')
+  const sequenceValue={script:'build.py',files:['points','surface'].map(name=>({pattern:`cache/${name}.$F4.txt`,start:1,end:240}))}
+  await fs.mkdir(path.join(root,'cache'))
+  plannedExtraFiles=['points','surface'].flatMap(name=>Array.from({length:240},(_,i)=>`cache/${name}.${String(i+1).padStart(4,'0')}.txt`))
+  const sequenceInputs=['build.py',...plannedExtraFiles]
+  await Promise.all(sequenceInputs.slice(1).map(name=>fs.writeFile(path.join(root,name),'exact frame input')))
+  await fs.writeFile(sequenceManifest,JSON.stringify(sequenceValue))
+  const sequenceStats=inputStats.length
+  await executeIsolated(ctx,exec,{manifest:sequenceManifest,output_dir:path.join(root,'sequence-run')},runtimeResolver,runner)
+  assert.deepEqual(inputStats.slice(sequenceStats),sequenceInputs.map(name=>path.join(root,name)),
+    'every expanded frame is resolved through native DSH policy')
+  const runsBeforeDenial=processRequests.length
+  deniedInput=path.join(root,'cache/surface.0240.txt')
+  await assert.rejects(()=>executeIsolated(ctx,exec,{manifest:sequenceManifest,output_dir:path.join(root,'denied-sequence')},runtimeResolver,runner),/DSH input read policy denied/)
+  assert.equal(processRequests.length,runsBeforeDenial,'a denied last frame never starts a worker')
+  deniedInput=undefined;plannedExtraFiles=undefined
 
   const compactDir=path.join(root,'compact');await fs.mkdir(compactDir)
   const details={stored:true,path:path.join(compactDir,'executions/builder.json'),sha256:'a'.repeat(64),bytes:99999,format:'returned_bridge_envelope_json'}

@@ -21,6 +21,8 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 [工具运行层](../src/tool-runtime.ts)负责身份、执行端路由和图像附件；[资源读取](../src/tool-query.ts)只消费历史材料。结果正文或来源不成为新的现场观察、授权或任务指令。DSH 已有的文件、终端、网络与会话工具按其原生职责使用。
 
+动词的函数注册、只读/执行准入和内容失效范围在`dsh_execution._VERB_DEFINITIONS`同一处声明；帮助与执行器派生所需视图，不再维护平行名称名单。准入与内容失效是不同维度：会cook、临时改状态或写文件的观察仍可能要求exec；明确UI导航可以不改模型内容。失效范围只是上下文更新提示，不是外部副作用或恢复保证。
+
 ## 主线程、执行端与归属
 
 所有 HOM 调用经 Bridge 主线程队列串行执行。HTTP 线程只接收、排队和等候回包；泵不可用时拒绝，不退回网络线程执行。GUI 线程不得进行阻塞 socket、进程枚举或 netstat 探测。
@@ -40,7 +42,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 ## 查询、修改与 Raw Gate
 
-inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。直接、导入别名、绑定及literal getattr调用共用词法归属：区分精确内建值、可信标准库API、HOM和未知来源。源码内明确传入或返回的HOM回调保留其修改来源；普通Python函数与方法不因名称或参数无法静态展开成为HOM修改。未知对象方法保留原保守判断，不新增普通裸helper函数的命名门槛。
+inspect 使用只读 namespace 与同一 Python 语法分析结果；exec 提供修改能力。动词是主要修改接口，裸 hou 适用于只读查询及尚无对应动词的低层缺口。Raw Gate 默认开启；已覆盖的 create/set/cook/delete 等操作不能用 allow_raw 旁路。直接、导入别名、绑定及literal getattr调用共用词法归属：区分精确内建值、可信标准库API、HOM和未知来源。源码内明确传入或返回的HOM回调保留其修改来源；普通Python函数与方法不因名称或参数无法静态展开成为HOM修改。未知对象方法的启发式匹配完整动作词及camelCase/snake_case边界，不将settings、copysign等词内前缀视为修改，也不新增普通裸helper函数的命名门槛。此规则不是任意Python副作用证明。
 
 标准库API依据解释器的模块spec与来源判断，不执行待分析import；已加载模块的实际HOM重导出仍按原方法检查。`globals/locals/vars`及显式namespace映射只证明字典只读方法，容器中对象的来源和`setdefault/update`等命名空间修改不获得新保证。遮蔽、重绑定、显式成员覆写及可变namespace外逸会使普通API证明失效，返回值不继承模块身份。此分析不递归解释任意模块、自定义import hook或回调副作用，不能作为通用Python沙箱。导入实例方法的来源未证明时，反馈明确标为unresolved；作者核清本地helper只组合动词或不调用裸HOM后，可按原有一次性`allow_raw`合同执行，不为绕过静态分析改写正常builder，也不按方法名放行未知HOM。
 

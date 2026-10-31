@@ -2580,6 +2580,22 @@
               "explicit"
             ],
             "description": "managed defaults to $HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>. delivery allocates under $HIP/dsh-artifacts/renders/<HIPNAME>. Both require a named HIP and an omitted path or safe basename; explicit uses a caller destination."
+          },
+          "shading": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "Wire",
+              "Flat",
+              "FlatWire",
+              "Smooth",
+              "SmoothWire"
+            ],
+            "default": null,
+            "description": "Optional temporary shading for CurrentModel/DisplayModel/SceneObject/SelectedObject. Null preserves current modes. Overrides and restoration are read back; failures remain explicit."
           }
         }
       },
@@ -2620,6 +2636,12 @@
           "title": "Capture a requested delivery image",
           "code": "__result__ = viewport_screenshot(path='viewport.png', output_policy='delivery')",
           "read_result": "Read the actual path and artifact before present. fresh and user_state_restored describe capture/recovery; semantic_status remains unverified until the image is actually inspected.",
+          "tool": "houdini_exec"
+        },
+        {
+          "title": "Observe a surface without wire overlays, restoring user shading",
+          "code": "__result__ = viewport_screenshot(frame=24, shading='Smooth')",
+          "read_result": "Inspect the delivered image. This preserves current framing and restores frame and all changed shading modes, including after capture failure.",
           "tool": "houdini_exec"
         }
       ],

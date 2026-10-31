@@ -22,7 +22,7 @@ const exec={agent:{id:'video-session',session:{header:{cwd:root}}},signal:new Ab
 const runner=async request=>{calls++;lastRequest=request;return{code:0,stdout:'{"chunk":"00000","status":"saved","characters":10}\n{"submitted":1,"remaining":2,"deferred":[]}\n',stderr:'',cancelled:false}}
 const args={work,allow_upload:true}
 const policy=JSON.parse(await fs.readFile(new URL('../../skills/houdini-video-tutorial/scripts/transcription-policy.json',import.meta.url),'utf8'))
-assert.deepEqual(VIDEO_DEFAULTS,policy)
+assert.deepEqual(VIDEO_DEFAULTS,{concurrency:policy.concurrency,requestsPerSecond:policy.requestsPerSecond})
 let result=await videoModels(context)
 assert.equal(result.service.endpoint,'https://speech.example/v1/audio/transcriptions');assert.equal(result.service.protocol,'openai-transcriptions');assert.equal(result.service.credential.configured,true);assert.equal(result.service.support,'unverified');assert.equal(resolves,0);assert(!JSON.stringify(result).includes(secret))
 selected.model='qwen3-asr-flash-filetrans'

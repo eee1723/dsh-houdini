@@ -1,8 +1,8 @@
 # 当前开发交接
 
-核对日期：2026-10-30
+核对日期：2026-10-31
 
-当前源码使用执行合同118，对话明确选择、节点权限和工程恢复分开维护；节点identity由独立ownership模块维护，公开动词入口不持有执行状态。新产物收在dsh-artifacts/，工程目录由同源角色合同维护；历史依赖和回执保留原路径。交付与领域判断由各skill维护。唯一Houdini模式，0.1.4首选DSH 0.2.1-rc.5并保留rc.3。职责与源码入口见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
+当前源码候选为0.1.5-dev.20261031，使用执行合同119；公开发行仍为0.1.4。对话明确选择、节点权限和工程恢复分开维护；节点identity由独立ownership模块维护，公开动词入口不持有执行状态。新产物收在dsh-artifacts/，工程目录由同源角色合同维护；历史依赖和回执保留原路径。交付与领域判断由各skill维护。唯一Houdini模式，首选DSH 0.2.1-rc.5并保留rc.3。职责与源码入口见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
 
 ## 待交接事项
 
@@ -14,6 +14,7 @@
 - 下一步：回访用户默认profile与系统dsh://菜单唤起；独立资料下的原生窗口、工作区和启动中重开不代替这一真实用户路径。用户自己的多窗口、已有模型/账号配置、复杂工程和长期任务仍须正式入口回访。用户默认profile中的插件更新/停用/卸载、旧helper加载仍须验收，不将临时数据根中的最终tgz安装通过写成用户已经部署。
 - 已有共享记录：6条旧私有Host生成的v4会话头与物理项目目录不一致；已按用户确认在Desktop退出后完整备份并原值暂存至默认数据根的recovery目录，工作区入口已由用户回访确认恢复。暂存清单与字节备份保留，6条暂不在侧栏显示；每条仅有一个generation，不能从有损目录名猜回原始cwd。仍须单独核对原始来源、当前目录事件及详情/附件引用后恢复这些历史，不自动改header或合并整库，不将其余会话头可列出当作全部旧正文已完成迁移。
 - 外部模型验收：自有GPT订阅已停止维护，当前可选社区`dsh-codex-subscription@3.1.8`已通过官方CLI安装并在实际Desktop profile启用；原生页面显示1个组件运行中，Codex设置可打开，标准/Houdini等preset仍可选。下一步由用户亲自完成授权，再核对账户目录（包括GPT-6.1 Terra是否返回）、简单文本、函数工具、图片输入和真实Houdini任务；不读取或迁移旧授权，不把安装或目录可见写成真实推理成功。随包rc4 home-paths与宿主rc3已在同一临时DSH_HOME下核对路径一致，其他真实请求和长期组合仍按实际结果判断。
+- 通用工具故障：须在干净官方Desktop定位pwsh的`grantWrite`/Win32 5和外网`web_fetch`解析到非公网IP的失败，分别核对原生沙箱ACL与代理/DNS实际来源；尚未证明由Houdini插件造成。采用原生配置或窄上游修复，不在插件绕过读取政策、改机器ACL或放宽地址校验。
 - 系统代理缺口：旧适配版的Windows系统代理/PAC/WPAD自动继承，在官方Node Host尚无等价合同。保持原生显式代理环境，按[窄上游方案](dsh-update-compatibility.md#网络与窗口等宿主能力)补齐；不从Houdini插件暗中设置进程级代理。正式分发前须说明这一限制，并在用户实际网络上核对模型与转录路由。
 - 入口：[Desktop通道](../tools/tests/desktop-integration.test.mjs)、[真实官方组合](../tools/tests/dsh-host-smoke.test.py)、[真实页面](../tools/tests/dsh-client-navigation.mjs)、[本端接入](../tools/tests/dsh-desktop-client.test.py)、[安装](../tools/tests/dsh-install-runtime.test.py)、[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)、[原生插件页面](../tools/tests/dsh-distribution-ui.test.py)、[原生窗口生命周期](../tools/tests/dsh-desktop-window.test.py)。
 - 移除条件：两条实际入口、模式隔离、插件启停、真实H21/H22及已有共享历史处置均有完整消费者证据，未交付部分不再混在源码完成状态中。
@@ -51,6 +52,7 @@
 ### H-03 成品质量与性能优化
 
 - 状态：待验证
+- 本轮待用户加载：清单单源规划、原始报告/展示分离、统一动词声明、视口显示整体恢复、安装/加载分离、效果视频分流和按需外观/模拟skill均须随受管发行交付后核对自然采用。源码与隔离机制通过不代表用户现场已加载；效果相似度、连续播放和改参后重算需在同模型新任务观察，不能用功能小样或全帧缓存代替最终整体质量。
 - 工具反馈与自然采用：详情分页按原run及执行名支持builder/check归档，live job复用普通渲染器并遵守原生显示限额；源码修复尚未作为新发行包交付，须在实际Desktop加载后核对长结果、错误与详情读取，以及机械代表件先验关系、实际部件表面观察和首次builder后的局部迭代对新任务返工的影响。结构检查与受控调用不证明自然任务质量或长时自主收尾。
 - 仍需定位的执行问题：重开后同一VEX出现`Preloaded shader is invalid`，加注释后可编译仅是线索，须用自有最小工程区分源码、缓存与运行代际，不自动加盐或重启live。同会话重开后的Sticky Note被判foreign已确认因为可信保存点只记录节点、未记录便签独立ownership；须在自有最小工程核对原生便签身份的重开稳定性，再按独立身份和owner扩展保存/激活，不用父节点所有权或allow_foreign认领。导入实例方法的来源未证明已通过准确反馈及原有单次`allow_raw`路径处理，不新增递归依赖分析或方法名白名单。
 - 表面外观：自然任务已有表面/COP/拆分skill和完整源组件采用，仍须验证连续UV分区、切割新面、构造边界倒角及微细节判断。程序多通道与生成图片经File COP的SOP消费有隔离入口；真实任务自然采用仍待验证。首次显示Constant后切换COP的旧色问题未定位；复杂网络同进程“无警告”与重开后警告不一致的触发仍待定位。入口见[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)。

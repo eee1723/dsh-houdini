@@ -78,14 +78,18 @@ export function apply(ctx){
   const writeManifest=(name,script,render=false)=>{
     fs.writeFileSync(path.join(fixture,name+'.py'),script)
     const file=path.join(fixture,name+'.json')
-    fs.writeFileSync(file,JSON.stringify({script:name+'.py',checks:[
+    fs.writeFileSync(file,JSON.stringify({script:name+'.py',...(render?{files:['points','surface'].map(stem=>({pattern:`cache/${stem}.$F4.txt`,start:1,end:240}))}:{}),checks:[
       {id:'cook',kind:'cook',node:'/obj/team_box/OUT',frame:1,expect:{points:8,primitives:6}},
       ...(render?[{id:'cpu',kind:'render',node:'/stage/usdrender_rop1',frame:1,file:'image.png'}]:[]),
     ]}))
     return file
   }
   const bad=writeManifest('failure',"raise RuntimeError('ISOLATED_TEAM_EXPECTED_FAILURE')\n")
-  const good=writeManifest('success',builder(),true)
+  fs.mkdirSync(path.join(fixture,'cache'))
+  for(const stem of ['points','surface'])for(let frame=1;frame<=240;frame++)
+    fs.writeFileSync(path.join(fixture,'cache',`${stem}.${String(frame).padStart(4,'0')}.txt`),String(frame))
+  const sequenceCheck="from pathlib import Path\nframes=list((Path(__file__).parent/'cache').glob('*.txt'))\nassert len(frames)==480\nassert sum(int(f.read_text()) for f in frames)==57840\n"
+  const good=writeManifest('success',sequenceCheck+builder(),true)
   const invalid=path.join(fixture,'invalid.json')
   fs.writeFileSync(invalid,JSON.stringify({checks:[]}))
   const slow=writeManifest('slow',"import time\ntime.sleep(60)\ng=tab_create('/obj','geo',name='team_box')\nn=tab_create(g,'box',name='OUT')\n")
@@ -108,6 +112,7 @@ export function apply(ctx){
     const file=value.report_path??value.report?.details?.path??value.details?.path
     assert(file&&path.resolve(file)===path.join(runDirectory,'report.json'),'authoritative report path must identify this run')
     const raw=JSON.parse(fs.readFileSync(file,'utf8'));runs[name]={path:file,ok:raw.ok,finished:raw.finished,worker:raw.worker,runtime:raw.result?.runtime,builder:raw.result?.builder}
+    assert.deepEqual(value.report,raw,'native and nested tool consumers retain the exact report; summary is presentation only')
     return raw
   }
   const returnedImage=(value,name)=>{
@@ -181,9 +186,10 @@ export function apply(ctx){
           const visible=(delivered?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
           assert.match(visible,/requires script and\/or hip/,'the next real model request must receive the actionable preflight reason')
           assert(!/FsError|ENOENT/.test(actual.error),'a missing report must not replace the checker diagnosis')
-          assert.equal(actual.process.exit_code,1)
+          assert.equal(actual.phase,'preflight')
+          assert.equal(actual.process,undefined,'manifest planning does not start a Houdini/checker run')
           assert.equal(fs.existsSync(path.join(directory('preflight'),'report.json')),false,'invalid manifest must fail before worker/report creation')
-          runs.preflight={error:actual.error,exit_code:actual.process.exit_code,report_created:false}
+          runs.preflight={error:actual.error,phase:actual.phase,report_created:false}
           checks.push('real Team child receives the checker preflight cause even when no worker/report exists')
           preflightStage++
         }
@@ -196,6 +202,12 @@ export function apply(ctx){
         }
         if(childStage===2){
           const value=native(childId,'child-native'),raw=readFull(value,'native');assert.equal(raw.ok,true)
+          assert.equal(raw.inputs.length,481,'real worker consumes the script plus every declared sequence frame')
+          assert.equal(value.report.inputs.length,481,'native canonical retains complete input provenance')
+          const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-native')
+          const visible=JSON.parse(delivered.content.find(b=>b.type==='text').text)
+          assert.equal(visible.report.inputs.count,481,'the next model request receives a compact inventory')
+          checks.push('two bounded 240-frame sequences reach the actual worker; native canonical keeps 481 inputs while the model receives a compact inventory')
           assert.equal(raw.result.builder.result.marker,'ISOLATED_TEAM_BUILT');assert(raw.result.checks.every(c=>c.status==='passed'))
           nativeImage=returnedImage(value,'native');await observeImages(options,'native-return')
           checks.push('native production tool built, cooked and Karma-rendered a new independent HIP')
@@ -322,8 +334,9 @@ export function apply(ctx){
           const received=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-source-job-end')
           const visible=(received?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
           assert.match(visible,/"inputs_unchanged"\s*:\s*false/,'the actual model-facing job result must expose changed source facts')
-          assert.match(visible,/"status"\s*:\s*"changed"/)
-          assert(visible.includes(sourceBefore),'job summary retains the input version, not just a completed label')
+          assert.match(visible,/"changed"\s*:\s*1/)
+          assert(visible.includes('report_path')&&visible.includes('/input_observations'),
+            'job summary locates the exact original observations instead of copying their per-file hashes')
           childStage++;presentation.after('child-source-read','send_message')
           yield*emit('child-source-read','run_code',{code:'return await tools.houdini_isolated('+JSON.stringify({operation:'read',output_dir:sourceRun})+');',
             description:'Read successful copied-input execution and the separate changed original source evidence'});return

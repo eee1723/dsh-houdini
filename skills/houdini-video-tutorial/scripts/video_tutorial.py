@@ -640,17 +640,17 @@ def transcribe(args, sender=None, get_key=None):
         check(isinstance(key_env, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key_env), "Invalid credential environment variable name")
     sender = sender or (lambda audio, model, key: post(audio, model, key, endpoint, protocol, request_options, authentication))
     get_key = get_key or (lambda: key_from_environment(key_env))
-    check(type(args.max_chunks) is int and 1 <= args.max_chunks <= 100, "max-chunks must be 1..100")
+    check(type(args.max_chunks) is int and 1 <= args.max_chunks <= TRANSCRIPTION_POLICY["limits"]["maxChunks"], f"max-chunks must be 1..{TRANSCRIPTION_POLICY['limits']['maxChunks']}")
     concurrency = getattr(args, "concurrency", TRANSCRIPTION_POLICY["concurrency"])
-    check(type(concurrency) is int and 1 <= concurrency <= 64, "concurrency must be 1..64")
+    check(type(concurrency) is int and 1 <= concurrency <= TRANSCRIPTION_POLICY["limits"]["concurrency"], f"concurrency must be 1..{TRANSCRIPTION_POLICY['limits']['concurrency']}")
     requests_per_second = getattr(args, "requests_per_second", TRANSCRIPTION_POLICY["requestsPerSecond"])
     check(requests_per_second is None or type(requests_per_second) in (int, float)
-          and math.isfinite(requests_per_second) and 0 < requests_per_second <= 100,
-          "requests-per-second must be greater than 0 and at most 100")
+          and math.isfinite(requests_per_second) and 0 < requests_per_second <= TRANSCRIPTION_POLICY["limits"]["requestsPerSecond"],
+          f"requests-per-second must be greater than 0 and at most {TRANSCRIPTION_POLICY['limits']['requestsPerSecond']}")
     retry_budget = getattr(args, "max_retries", None)
     if retry_budget is None:
         retry_budget = 1 if args.retry_failed else 0
-    check(type(retry_budget) is int and 0 <= retry_budget <= 100, "max-retries must be 0..100")
+    check(type(retry_budget) is int and 0 <= retry_budget <= TRANSCRIPTION_POLICY["limits"]["maxRetries"], f"max-retries must be 0..{TRANSCRIPTION_POLICY['limits']['maxRetries']}")
     check(args.retry_failed or retry_budget == 0, "A retry budget requires explicit --retry-failed authorization")
     requested = getattr(args, "chunks", None)
     check(requested is None or isinstance(requested, list) and requested
@@ -2232,11 +2232,11 @@ def main():
     t.add_argument("--key-env", default="DSH_VIDEO_TRANSCRIPTION_KEY", help="Credential environment variable name, never the credential itself")
     t.add_argument("--allow-upload", action="store_true")
     t.add_argument("--retry-failed", action="store_true")
-    t.add_argument("--max-chunks", type=int, default=100, help="Total submissions this invocation, default 100, 1..100")
+    t.add_argument("--max-chunks", type=int, default=TRANSCRIPTION_POLICY["limits"]["maxChunks"], help=f"Total submissions this invocation, default/max {TRANSCRIPTION_POLICY['limits']['maxChunks']}")
     t.add_argument("--concurrency", type=int, default=TRANSCRIPTION_POLICY["concurrency"],
-                   help=f"Concurrent HTTP requests, default {TRANSCRIPTION_POLICY['concurrency']}, 1..64; overload/transport failure drains then lowers through 32/16/1 for new chunks; never retries failed chunks")
+                   help=f"Concurrent HTTP requests, default {TRANSCRIPTION_POLICY['concurrency']}, 1..{TRANSCRIPTION_POLICY['limits']['concurrency']}; overload/transport failure drains then lowers through 32/16/1 for new chunks; never retries failed chunks")
     t.add_argument("--requests-per-second", type=float, default=TRANSCRIPTION_POLICY["requestsPerSecond"],
-                   help=f"Dispatch rate limit, default {TRANSCRIPTION_POLICY['requestsPerSecond']} requests/second, greater than 0 and at most 100")
+                   help=f"Dispatch rate limit, default {TRANSCRIPTION_POLICY['requestsPerSecond']} requests/second, greater than 0 and at most {TRANSCRIPTION_POLICY['limits']['requestsPerSecond']}")
     t.add_argument("--asr-options-file", help="Absolute JSON file for model-specific ASR options; no credentials")
     t.add_argument("--max-retries", type=int,
                    help="Retry requests authorized for this invocation, default 1 with --retry-failed, otherwise 0")

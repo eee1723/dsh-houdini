@@ -74,6 +74,8 @@ class DisplaySettings:
     def __init__(self, *, guide_failure=None, noop_restore=False):
         self.guides = {'guide-one': True}; self.textures = True; self.backfaces = False
         self.guide_failure = guide_failure; self.noop_restore = noop_restore
+        self.sets = {name: DisplaySet(index) for index, name in enumerate(('CurrentModel','DisplayModel','SceneObject','SelectedObject'))}
+    def displaySet(self, kind): return self.sets[kind]
     def guideEnabled(self, guide): return self.guides.get(guide, False)
     def enableGuide(self, guide, value):
         if value and self.noop_restore: return
@@ -84,6 +86,15 @@ class DisplaySettings:
     def setDisplayTextures(self, value): self.textures = bool(value)
     def removeBackfaces(self): return self.backfaces
     def setRemoveBackfaces(self, value): self.backfaces = bool(value)
+
+
+class DisplaySet:
+    def __init__(self, mode): self.mode=mode; self.initial=mode; self.fail_override=False; self.noop_restore=False
+    def shadedMode(self): return self.mode
+    def setShadedMode(self, mode):
+        if self.noop_restore and mode==self.initial: return
+        self.mode=mode
+        if self.fail_override and mode=='Smooth': raise RuntimeError('injected partial shading failure')
 
 
 class Camera:
@@ -140,6 +151,7 @@ class Viewer:
     def name(self): return 'fake-viewer'
     def flipbook(self, *, viewport, settings):
         assert viewport is self.viewport
+        self.captured_shading={name:display.shadedMode() for name,display in viewport.settings().sets.items()}
         self.calls += 1; target = Path(hou.expandStringAtFrame(settings.output(),settings.frameRange()[0]))
         if self.mode == 'raise': raise RuntimeError('injected flipbook failure')
         if self.mode == 'raise-late':
@@ -169,6 +181,8 @@ class FakeHou:
     def __init__(self, viewer):
         self._frame = 1.0; self.frame_calls = []; self.fail_restore = False
         self.paneTabType = SimpleNamespace(SceneViewer=object())
+        self.glShadingType=SimpleNamespace(**{name:name for name in ('Wire','Flat','FlatWire','Smooth','SmoothWire')})
+        self.displaySetType=SimpleNamespace(**{name:name for name in ('CurrentModel','DisplayModel','SceneObject','SelectedObject')})
         self.viewportGuide = SimpleNamespace(**{name: ('guide-one' if index == 0 else f'guide-{index}')
                                                for index, name in enumerate(dsh_viewport._CLEAN_GUIDES)})
         desktop = SimpleNamespace(paneTabOfType=lambda _kind: viewer)
@@ -228,6 +242,40 @@ with tempfile.TemporaryDirectory(prefix='dsh-viewport-shot-') as tmp:
     assert result['artifact']['role'] == 'visual_check'
     assert Path(result['artifact']['project_root']).samefile(base)
     assert not list(Path(result['artifact']['managed_root']).glob('*.reserve'))
+    # Temporary shading belongs to capture, including partial setter failures;
+    # callers need no raw UI mutation or second restoration request.
+    shading_hip=base/'shading-fixture.hip'; shading_hip.touch()
+    # A successful file capture cannot certify an ignored display override.
+    viewer=Viewer()
+    viewer.viewport.settings().setDisplayTextures=lambda _value:None
+    try: run(viewer,shading_hip,textures=False)
+    except dsh_errors.CheckpointError as error:
+        assert 'requested display state was not applied' in str(error)
+        assert error.evidence['user_state_restored'] and viewer.calls==0
+    else: raise AssertionError('a silently ignored texture override was accepted')
+    for mode in ('write','raise'):
+        viewer=Viewer(mode=mode)
+        before={name:display.shadedMode() for name,display in viewer.viewport.settings().sets.items()}
+        try:
+            _,_,shaded=run(viewer,shading_hip,shading='Smooth')
+            assert shaded['ok'] and shaded['shading']=='Smooth'
+        except dsh_errors.CheckpointError as error:
+            assert mode=='raise' and error.evidence['user_state_restored']
+        assert set(viewer.captured_shading.values())=={'Smooth'}
+        assert {name:display.shadedMode() for name,display in viewer.viewport.settings().sets.items()}==before
+    viewer=Viewer()
+    viewer.viewport.settings().sets['DisplayModel'].fail_override=True
+    try: run(viewer,shading_hip,shading='Smooth')
+    except dsh_errors.CheckpointError as error:
+        assert 'partial shading failure' in str(error) and error.evidence['user_state_restored']
+    else: raise AssertionError('partial shading failure was hidden')
+    assert viewer.calls==0 and all(s.shadedMode()==s.initial for s in viewer.viewport.settings().sets.values())
+    viewer=Viewer()
+    viewer.viewport.settings().sets['DisplayModel'].noop_restore=True
+    try: run(viewer,shading_hip,shading='Smooth')
+    except dsh_errors.CheckpointError as error:
+        assert not error.evidence['user_state_restored'] and any('shading' in item for item in error.evidence['restore_errors'])
+    else: raise AssertionError('shading restoration failure was hidden')
     _, _, delivery = run(Viewer(), hip, path='final.png', output_policy='delivery')
     assert delivery['ok'] and delivery['fresh'] and delivery['user_state_restored']
     assert delivery['artifact']['output_policy'] == 'delivery'
