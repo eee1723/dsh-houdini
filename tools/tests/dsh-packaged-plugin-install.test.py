@@ -13,6 +13,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
@@ -29,6 +30,7 @@ from dsh_deployment import _process_started
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--artifact',required=True,type=Path)
+parser.add_argument('--npm',action='store_true',help='Install the frozen artifact name@version from the public npm registry')
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--hfs',type=Path,help='Also verify the installed tarball with one owned real Houdini GUI')
 parser.add_argument('--legacy-components',action='store_true',help='Seed owned legacy entry/data fixtures before automatic component preparation (requires --hfs)')
@@ -39,6 +41,11 @@ args=parser.parse_args()
 if args.legacy_components and not args.hfs:parser.error('--legacy-components requires --hfs')
 artifact=args.artifact.resolve(strict=True)
 assert artifact.is_file() and artifact.suffix=='.tgz','Pass the actual release tarball'
+with tarfile.open(artifact,'r:gz') as archive:
+    expected_manifest=json.load(archive.extractfile('package/package.json'))
+    expected_files={name:hashlib.sha256(archive.extractfile('package/'+name).read()).hexdigest()
+        for name in ['client.js','lib/frontend-host.js','lib/index.js','runtime/video/build-provenance.json']}
+install_spec=expected_manifest['name']+'@'+expected_manifest['version'] if args.npm else str(artifact)
 desktop=args.desktop_root.resolve(strict=True)
 cli=desktop/'resources/runtime/cli/bin/dsh.cmd'
 electron=desktop/'DeepSeek Harness.exe'
@@ -113,8 +120,10 @@ def digest(file):
 immutable=[desktop/'resources/app.asar',electron,desktop/'resources/runtime/versions.json']
 baseline={str(file):digest(file) for file in immutable}
 report={'nativeElectronWindowTested':False,'profile':'web','carrier':str(cli),
-        'artifact':str(artifact),'artifactSha256':digest(artifact),'fixture':str(fixture),'fixtureDocumentsOverride':True}
-command=[str(cli),'plugin','--profile','web','add',str(artifact),'--store-dir',str(fixture/'store')]
+        'artifact':str(artifact),'artifactSha256':digest(artifact),'installSpec':install_spec,
+        'distribution':'npm registry' if args.npm else 'local tarball','fixture':str(fixture),'fixtureDocumentsOverride':True}
+command=[str(cli),'plugin','--profile','web','add',install_spec,'--store-dir',str(fixture/'store')]
+if args.npm:command.extend(['--registry','https://registry.npmjs.org/'])
 # Invoke the public carrier exactly as a user would. There is no direct pnpm,
 # manually authored profile, compatibility exemption or source junction here.
 # cmd strips its outer command quotes; keep the quoted CLI path inside them.
@@ -135,12 +144,14 @@ with (fixture/'plugin-install.log').open('wb') as output:
     try:exit_code=installation.wait(timeout=args.timeout)
     finally:runtime.stop_owned(installation)
 assert exit_code==0,'Native plugin installation failed; inspect '+str(fixture/'plugin-install.log')
-print('PASS native CLI installed the actual tgz into the owned profile',flush=True)
+print('PASS native CLI installed '+('the exact npm package' if args.npm else 'the actual tgz')+' into the owned profile',flush=True)
 assert not (home/'profiles/desktop').exists(),'Test must not initialize the reserved desktop profile'
 profile=home/'profiles/web'
 assert (profile/'package.json').is_file(),'Native manager did not initialize its explicit owned profile'
 profile_manifest=json.loads((profile/'package.json').read_text(encoding='utf-8'))
 assert 'dsh-houdini' in profile_manifest.get('dependencies',{}),profile_manifest
+if args.npm:
+    assert profile_manifest['dependencies']['dsh-houdini'] in (expected_manifest['version'],'^'+expected_manifest['version'],'~'+expected_manifest['version']),profile_manifest
 
 facts_file=fixture/'installed-composition.json'
 inspector=fixture/'inspect.mjs'
@@ -338,7 +349,6 @@ with log.open('wb') as output:
         assert installed.is_relative_to(fixture),'Plugin must be installed into the owned data/store tree'
         assert not installed.is_relative_to(ROOT),'Formal tgz test cannot resolve to the checkout'
         manifest=facts['manifest']
-        expected_manifest=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
         assert manifest['name']=='dsh-houdini' and manifest['engines']['dsh']==expected_manifest['engines']['dsh'],manifest
         if args.expected_helper_id:
             assert len(args.expected_helper_id)==16 and all(char in '0123456789abcdef' for char in args.expected_helper_id)
@@ -403,7 +413,11 @@ with log.open('wb') as output:
             assert result.returncode==0,name+' failed from the installed tarball'
             probes[name]=(result.stdout+result.stderr).decode('utf-8',errors='replace').splitlines()[0]
         assert not (home/'profiles/desktop').exists()
+        assert manifest==expected_manifest,'Installed manifest differs from the frozen release'
+        for name,expected in expected_files.items():
+            assert digest(installed/name)==expected,'Installed file differs from the frozen release: '+name
         report.update(ok=True,version=manifest['version'],engine=manifest['engines']['dsh'],installedRoot=str(installed),
+            installedArtifactFilesSha256=expected_files,dependencySpec=profile_manifest['dependencies']['dsh-houdini'],
             modeIds=[row['id'] for row in presets],rootClientCount=1,prepareBridgeOtherModeRefused=True,
             mediaRoot=str(media),mediaVersion=metadata['ffmpeg']['version'],mediaProbes=probes,
             mediaInventoryFiles=len(provenance['files']),
@@ -417,4 +431,4 @@ if report.get('houdiniGui'):
     gui['ownedProcessExited']=True
 report['desktopImmutableFilesUnchanged']=True
 (fixture/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-print('PASS native Desktop CLI tgz installation + exact packaged Node-mode Host:',fixture,flush=True)
+print('PASS native Desktop CLI '+('npm' if args.npm else 'tgz')+' installation + exact packaged Node-mode Host:',fixture,flush=True)

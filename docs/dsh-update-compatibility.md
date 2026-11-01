@@ -75,6 +75,8 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 受支持的 rc 系列宿主插件页只为按需官方插件提供更新；运行中的 `installBundle` 对已安装的第三方包拒绝 `already-installed`。关闭 Desktop 后，官方 CLI 的 `plugin --profile desktop add <spec>` 可以替换已安装依赖，因此当前选择复用这条公开维护入口，操作方法见[安装说明](setup.md#connection--support连接与维护)。官方 alpha.2 的 `listVersions/updateBundle` 仅覆盖 registry 包名依赖，GitHub tgz、path/link/git 安装不进入版本查询，详情页或手动刷新触发检查；不将预览分支能力写成 rc 系列现役合同。[官方界面合同](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-alpha.2/packages/client/ui-plugin-manager/README.md#updating-a-registry-bundle)。
 
+分发与宿主更新分开推进：先通过npm发布同一完整发行包，用户经官方管理器将安装来源迁移为包名依赖；这不改变当前精确兼容范围，也不证明rc已有原生更新按钮。待官方更新能力进入rc并完成真实更新、失败恢复及其他模式保持验证后，再接入其公开合同、移除对应GitHub只读查询。Houdini内已加载helper仍按真实身份判断是否需要保存重开，不以Desktop热更新成功替代现场加载事实。
+
 [更新查询](../src/plugin-updates.ts)只读本仓库正式 Release 的 `release-manifest.json`，要求对应完整包已经公开、支持当前宿主与平台；不选择 Draft、预发布或历史私有工作台包。使用 DSH 公开版本/兼容检查，按明确受影响范围优先推荐适用修复，再比较版本。发布摘要与修复范围维护在[发行提示](../release-update.json)，[发布构建器](../tools/build-release.py)与客户端使用同一校验函数；必要修复必须有有效范围，不能由联网失败、版本更大或字段错误推断。可选更新的忽略目标通过 DSH 原生 settings 单字段持久化，只在保存成功后隐藏；只读设置不显示假操作，必要修复不沿用可选忽略。已有重要建议在临时断网后保留并标明旧结果。正常状态保持安静；首次进入模式及返回前台低频检查，Host 成功结果缓存十二小时、失败一分钟，不在现场轮询里发外网请求。
 
 [组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。安装事实与加载事实分别返回：当前进程内容正确但Package缺失时提示安装修复，不报告整条链已就绪；磁盘未知或来自其他安装位置保持未知。只有同一安装位置、预期Package已准备好且已加载身份不同才提示重开。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[更新检查](../tools/tests/plugin-updates.test.mjs)、[工程菜单](../tools/tests/executor-picker.test.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。

@@ -63,10 +63,13 @@ async function install(spec,label,enable){
  await cdp.call('Input.insertText',{text:spec})
  await shot(label+'-spec')
  await click(button('/^(安装|Install)$/',`[...document.querySelectorAll('[role=dialog]')].at(-1)`),'Native install submit')
- const installed=await until(async()=>{const row=await bundle();return row?.installed?row:null},label+' actual installed bundle')
+ await until(button('/^(立即启用|Enable now)$/'),label+' completed Native dialog')
+ const installed=await until(async()=>{const row=await bundle();return row?.installed&&typeof row.version==='string'?row:null},label+' actual installed bundle')
+ assert.equal(installed.version,config.expectedVersion,'Native UI installed another release version')
+ if(config.npmSpec)assert(['','^','~'].some(prefix=>installed.source==='dsh-houdini@'+prefix+config.expectedVersion),
+  'Native dependency must use the registry package name: '+installed.source)
  assert.equal(installed.enabled,false,'Native custom installation must remain disabled until the person enables it')
  report[label]={installed:true,enabledBeforeExplicitAction:installed.enabled,version:installed.version,source:installed.source}
- await until(button('/^(立即启用|Enable now)$/'),label+' completed Native dialog')
  await shot(label+'-installed-disabled')
  if(enable){
   await click(button('/^(立即启用|Enable now)$/'),'Native explicit enable')
@@ -128,7 +131,7 @@ try{
  assert(!(await bundle()),'Fixture must begin without the product installed')
  const before=await rpc('agentPresets/list');assert(before.presets.some(row=>row.id==='standard'&&row.isDefault));assert(!before.presets.some(row=>row.id==='houdini'))
  report.initialNativeProfileWithoutPlugin=true
- await install(config.remoteOnly?config.remoteTarball:config.artifact,config.remoteOnly?'ownedHttpTarball':'localTarball',true)
+ await install(config.remoteOnly?config.remoteInstallSpec:config.artifact,config.npmSpec?'npmPackage':config.remoteOnly?'remoteTarball':'localTarball',true)
  report.installedByNativeUi=true
  if(!config.remoteOnly){
  // Return to the exact existing native blank, then use its real mode menu.

@@ -85,9 +85,13 @@ npm run docs:check
 
 `docs:check` 只检查生成漂移、文档索引、模块覆盖和 Markdown 链接，不自动修文档。改动生成源后先 build，再检查最终一致性。
 
-正式包由 `python tools/build-release.py --output <目录>` 构建；`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或Release。维护者在验证最终包、获得发布授权后，将该tgz及校验文件作为同一GitHub Release资产发布，再用正式HTTPS地址核对原生插件页的安装、启用与实际Houdini接入；下载地址不可由Draft、源码push或本地成功推断。npm包名分发需要单独的发布账户，不能用未发布包名替代GitHub完整包直链。
+正式包由 `python tools/build-release.py --output <目录>` 构建；`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或发布。GitHub与npm分发同一个冻结tgz，不为npm另打缺少Houdini/媒体资源的包，不从源码根执行`npm publish`。维护者在验证最终包、获得发布授权后公开发行；下载地址或包名可用性不能由Draft、源码push或本地预演推断。已公开渠道与安装方式见[安装说明](setup.md)，未完成上架只进handoff。
+
+npm首次发布由维护者通过`npm login --registry=https://registry.npmjs.org`完成官方账号授权，并满足npm要求的发布二次验证。对已经验证的同一个tgz先运行`npm publish <完整tgz路径> --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org`，再去掉`--dry-run`正式发布；不把密码、验证码或token写入仓库。已发布的name/version不可覆盖，发布前先核对`npm view dsh-houdini@<版本> dist.integrity`；若该版本已存在，核对完整性而不重发。发布后读取官方registry的版本、兼容声明和`dist.integrity`，与冻结包的SHA512完整性一致，再核对实际下载的SHA256及原生包名安装。GitHub Actions可信发布可在包建立后作为独立的维护者配置接入；源码CI和候选构建不隐式发布。
 
 正式地址的原生安装界面回访使用[分发检查](../tools/tests/dsh-distribution-ui.test.py)的`--remote-only --remote-url <正式tgz的HTTPS地址>`，同时提供本地冻结包与`--expected-sha256`核对安装内容。报告明确区分正式HTTPS来源和自有回环HTTP夹具，两种结果分别保留。
+
+npm分发回访仍使用上述现有入口：分发检查传`--remote-only --npm`，从`--artifact`内读取精确包名和版本，在原生插件页安装、启用、停用、重新启用及卸载；[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)传`--npm --artifact <冻结tgz>`核对registry依赖记录、同包manifest/文件、模式隔离与完整媒体资源。按需沿`--hfs`核对真实Houdini加载。验证使用自有profile，不修改用户现有安装；同包只换分发渠道时不重复整套HOM回归。
 
 [Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。浏览器连接和原故障的现场复现分别判断；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
 
