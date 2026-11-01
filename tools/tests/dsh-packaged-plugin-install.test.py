@@ -117,13 +117,15 @@ report={'nativeElectronWindowTested':False,'profile':'web','carrier':str(cli),
 command=[str(cli),'plugin','--profile','web','add',str(artifact),'--store-dir',str(fixture/'store')]
 # Invoke the public carrier exactly as a user would. There is no direct pnpm,
 # manually authored profile, compatibility exemption or source junction here.
-native_command=[os.environ.get('COMSPEC','C:/Windows/System32/cmd.exe'),'/d','/s','/c',subprocess.list2cmdline(command)]
+# cmd strips its outer command quotes; keep the quoted CLI path inside them.
+# Node must pass that command verbatim instead of escaping its quotes for CRT.
+native_command=[os.environ.get('COMSPEC','C:/Windows/System32/cmd.exe'),'/d','/s','/c','"'+subprocess.list2cmdline(command)+'"']
 installer_wrapper=fixture/'run-native-cli.mjs'
 installer_arguments=fixture/'native-cli-arguments.json'
 installer_arguments.write_text(json.dumps(native_command),encoding='utf-8')
 installer_wrapper.write_text("import fs from 'node:fs';import {spawn} from 'node:child_process';"
     "const [command,...args]=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));"
-    "const child=spawn(command,args,{stdio:'inherit',env:process.env,windowsHide:true});"
+    "const child=spawn(command,args,{stdio:'inherit',env:process.env,windowsHide:true,windowsVerbatimArguments:true});"
     "child.once('error',error=>{console.error(error);process.exitCode=1});"
     "child.once('exit',code=>process.exitCode=code??1);",encoding='utf-8')
 with (fixture/'plugin-install.log').open('wb') as output:

@@ -1,13 +1,13 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前 **0.1.4** 发行包面向 **Windows x64**，支持 **DSH 0.2.1-rc.3 / 0.2.1-rc.5**，首选 rc.5。精确范围与验证边界由[兼容清单](../dsh-runtime-compatibility.json)维护。Houdini 侧支持 21.0 和 22.0，实测构建为 21.0.440 和 22.0.368。产品使用同一份 DSH 原生会话，不另启动 Qt 聊天窗口或私有 DSH Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前 **0.1.5** 发行包面向 **Windows x64**，支持 **DSH 0.2.1-rc.3 / 0.2.1-rc.5**，首选 rc.5。精确范围与验证边界由[兼容清单](../dsh-runtime-compatibility.json)维护。Houdini 侧支持 21.0 和 22.0，实测构建为 21.0.440 和 22.0.368。产品使用同一份 DSH 原生会话，不另启动 Qt 聊天窗口或私有 DSH Host。
 
 ## 普通安装
 
 标准发行单元是包含 Houdini 和媒体资源的 `.tgz`，通过 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases) 分发。在 Desktop 原生「插件 → 添加插件」中粘贴下方完整地址，即可直接安装指定版本；无需先下载或解压：
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.4/dsh-houdini-0.1.4.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.5/dsh-houdini-0.1.5.tgz
 ```
 
 当前使用 GitHub 正式包直链，未发布 npm 包名。不要只填 `dsh-houdini` 或仓库首页地址；历史独立工作台包和 GitHub 自动生成的 Source code ZIP 也不适用于这条标准插件安装路径。发布页同时提供 SHA256 校验文件；源码 push、tag 或 Draft 本身不等于包已公开可用。
