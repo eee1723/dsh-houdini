@@ -1,8 +1,7 @@
 /** DSH 0.2 message producers and native/nested execution-log adapter. */
 import type { Context } from '@deepseek-ai/cordis'
 import type {Agent} from '@deepseek-ai/dsh-agent'
-import {boundContextSummary,createUserMessage,type ContentBlock,type ContextFormed} from '@deepseek-ai/dsh-llm'
-import type {JobEvent} from '@deepseek-ai/dsh-jobs'
+import {createUserMessage,type ContentBlock,type ContextFormed} from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from './execution-history.js'
 import { houdiniToolKind } from './tool-catalog.js'
 import {renderJobObservation} from './tool-output.js'
@@ -75,56 +74,6 @@ export function recordHoudiniContext(agent:Pick<Agent,'session'|'inject'>,messag
 }
 
 const LOG_KIND='dsh-houdini/execution-v1'
-type SettledJob=Extract<JobEvent,{type:'settled'}>
-
-/** Native tool-jobs suppresses a model-killed job even when cancellation loses
- * to a real completion. Track only that in-flight call until native settlement. */
-function installHoudiniJobCompletion(ctx:Context):void {
-  ctx.inject(['jobs','agents'],scope=>{
-    const pending=new Map<string,{confirmed:boolean;event?:SettledJob}>()
-    const deliver=(event:SettledJob)=>{
-      if(event.awaited||event.cause!=='kill'||event.job.status==='killed'||!event.job.owner)return
-      const owner=scope.agents.get(event.job.owner)
-      if(!owner)return
-      const message=createUserMessage({content:[{type:'text',text:
-        `Houdini background job ${event.job.id} finished with local status: ${event.job.status} after a cancellation request. `
-        +'Cancellation did not establish that the original Houdini execution stopped. Read job_output for the actual receipt; '
-        +'use its original houdini_request reference if observation was interrupted. Never resubmit the scene code.'}],
-        source:{kind:HOUDINI_SOURCE,form:'notice',summary:boundContextSummary(`Houdini job ${event.job.id}: ${event.job.status}`)}})
-      if(owner.status==='idle')owner.followup(message)
-      else owner.inject(message)
-    }
-    scope.on('tools/execute',async(exec,next)=>{
-      const jobId=(exec.arguments as any)?.job_id
-      if(exec.name!=='job_kill'||typeof jobId!=='string'||!exec.agent||pending.has(jobId))return next()
-      let job
-      try {job=scope.jobs.get(jobId as any,exec.agent.id)}catch{return next()}
-      if(job.kind!==LIVE_JOB_KIND||!['running','stopping'].includes(job.status))return next()
-      const entry:{confirmed:boolean;event?:SettledJob}={confirmed:false}
-      pending.set(jobId,entry)
-      try {
-        const result=await next()
-        const value=result.isError?undefined:result.value as any
-        if(value?.outcome!=='cancellation-requested'||value.job?.kind!==LIVE_JOB_KIND)pending.delete(jobId)
-        else {
-          entry.confirmed=true
-          if(entry.event){pending.delete(jobId);deliver(entry.event)}
-        }
-        return result
-      }catch(error){pending.delete(jobId);throw error}
-    })
-    scope.jobs.events.subscribe({owners:'scope'},event=>{
-      if(event.type==='removed'){pending.delete(event.job.id);return}
-      if(event.type!=='settled'||event.job.kind!==LIVE_JOB_KIND)return
-      const entry=pending.get(event.job.id)
-      if(!entry)return
-      if(entry.confirmed){pending.delete(event.job.id);deliver(event)}
-      else entry.event=event
-    })
-    scope.effect(()=>()=>pending.clear())
-  })
-}
-
 /** Use the public per-agent shadowing contract; never mutate the native tool.
  * Other jobs retain their exact execution and rendering. An absent native
  * projector becomes JSON null because output projectors cannot return undefined. */
@@ -147,7 +96,6 @@ function installHoudiniJobOutput(ctx:Context):void {
  * domain summary. DSH remains the sole durable session and job owner. */
 export function installHoudiniExecutionLog(ctx:Context):void {
   installHoudiniJobOutput(ctx)
-  installHoudiniJobCompletion(ctx)
   ctx.on('tools/post-execute',async(exec,result,next)=>{
     const decision=await next()
     if(decision.kind!=='accept'||decision.content||'value' in decision)return decision

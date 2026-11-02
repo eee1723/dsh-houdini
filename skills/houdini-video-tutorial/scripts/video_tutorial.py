@@ -126,15 +126,17 @@ def directory(value, new=False):
 @contextmanager
 def lock(work):
     path = work / ".lock"
+    owner = os.environ.get("DSH_VIDEO_LOCK_OWNER") or str(os.getpid())
     try:
         with path.open("x", encoding="ascii") as stream:
-            stream.write(str(os.getpid()))
+            stream.write(owner)
     except FileExistsError:
         raise Failure("Task locked; verify prior process before manually resolving stale lock") from None
     try:
         yield
     finally:
-        path.unlink()
+        if not path.is_symlink() and path.exists() and path.read_text(encoding="ascii").strip() == owner:
+            path.unlink()
 
 
 def run(command, *, stderr=False):

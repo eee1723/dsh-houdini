@@ -33,7 +33,7 @@ DSH公开接口、插件安装与Bridge的耦合分类、维护源及升级检�
 
 两条入口走同一套会话、绑定与执行合同。菜单减少可由当前现场确定的步骤，不改变DSH存储含义或文件授权，也不从目录内全部历史猜测关联；未保存HIP不自动保存。绑定已有现场要求该Houdini已加载兼容Bridge，发现进程或HIP路径不等于取得控制连接。打开其他HIP默认新进程，不隐式替换已有未保存场景。
 
-Houdini侧Package/helper由显式组件准备和真正新开Houdini前的同一安装路径部署；Host消费安装器结构回执，准备失败或取消时不继续启动进程。标准用户在官方插件UI安装并启用tgz后即可从Houdini模式使用，无须另找Install.cmd。Desktop插件版本、helper版本、Houdini安装及Bridge执行合同分别识别。Host插件目录与Bridge安装目录可以不同，不以相同物理路径证明兼容。宿主插件管理拥有Node侧安装，插件只管理自己的Houdini侧组件与兼容信息，不替换Desktop运行时。
+Houdini侧Package/helper由显式组件准备和真正新开Houdini前的同一安装路径部署；Host消费安装器结构回执，启动路径使用回执中的固定版本helper，不再把可更新的Node插件目录加入Python搜索路径。环境清理复用DSH的scrubbedParentEnv，仅显式传入本次接入事实；Houdini作为独立应用可在Desktop退出后继续运行。准备失败或调用中止时不继续启动进程。标准用户在官方插件UI安装并启用tgz后即可从Houdini模式使用，无须另找Install.cmd。Desktop插件版本、helper版本、Houdini安装及Bridge执行合同分别识别。Host插件目录与Bridge安装目录可以不同，不以相同物理路径证明兼容。宿主插件管理拥有Node侧安装，插件只管理自己的Houdini侧组件与兼容信息，不替换Desktop运行时。
 
 菜单通过插件认证窄通道提交明确意图，由原生工作区/会话接口准备并在前端核对所选任务、preset和现场后确认。`dsh://open`只负责唤起窗口，不携带宿主owner权限；其余接线在插件内完成，没有修改Desktop主程序。标准路径已移除独立Qt工作台与私有运行包，尚欠验收只维护于[H-06](handoff.md#h-06-官方dsh共存与插件边界)。
 
@@ -115,7 +115,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/video-transcription.ts](../src/video-transcription.ts) | 教程ASR发现与执行，复用DSH的环境清理后仅显式传入本次凭据；传递明确并发/速率与模型选项，原生/PTC消费同一转录结果，attempt/outcome仍由视频脚本维护，无HOM和自动重试 |
 | [src/video-runtime.ts](../src/video-runtime.ts) | 普通Python与插件私有FFmpeg/ffprobe路径及真实命令诊断；明确设置优先，已选安装使用静态登记，无现场时使用已发现Houdini，不为分析教程先唤起HOM，不依赖全局PATH或安装推理包 |
 | [src/video-configuration.ts](../src/video-configuration.ts) | 教程专用非秘密设置、显式文件协议与安全状态；复用DSH凭据引用、按origin隔离自定义服务key，不造聊天模型或第二套密钥存储 |
-| [src/video-process.ts](../src/video-process.ts) | 随包离线媒体/证据CLI的Host入口，消费DSH文件策略与选定执行器运行时，直接返回原JSON/退出事实；无shell/凭据/云/HOM，不另建证据记录 |
+| [src/video-process.ts](../src/video-process.ts) | 随包离线媒体/证据CLI入口及与ASR共用的DSH subprocess消费者；官方服务负责进程树、取消和Host退出，插件负责JSON输出限额及本次调用锁，确认整树退出后才清锁。离线入口沿DSH文件策略且不带凭据/云/HOM；ASR仅显式传入所选凭据，不另建证据记录 |
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |

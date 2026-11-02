@@ -15,6 +15,7 @@ import {projectedExecutorState} from './executor-identity-projection.js'
 import {targetMatchesRecord,targetSnapshot,type ExecutorRecord} from './executor-routing.js'
 import {acquireDesktopLease,processStarted as systemProcessStarted} from './desktop-process.js'
 import {ComponentInstallation,type ComponentUpdate} from './component-installation.js'
+import {scrubbedParentEnv} from '@deepseek-ai/dsh-subprocess'
 
 const execute=promisify(execFile)
 const id=()=>randomUUID().replaceAll('-','')
@@ -466,12 +467,14 @@ export class DesktopIntegration {
         const directory=path.join(startup,'python'+version+'libs');await fs.mkdir(directory,{recursive:true})
         await fs.writeFile(path.join(directory,'uiready.py'),'from dsh_workbench_entry import after_ui_ready\nafter_ui_ready()\n')
       }
-      const environment={...process.env}
+      // Houdini outlives Desktop, so it is deliberately not a managed child.
+      // Reuse the host's credential/environment boundary without its lifetime.
+      const environment=scrubbedParentEnv()
       for(const field of Object.keys(environment))if(/^(QT_|QTWEBENGINE_|QML|PYSIDE|SHIBOKEN)/i.test(field)
-        ||['PYTHONHOME','PYTHONPATH','NODE_OPTIONS','NODE_PATH','DSH_HOUDINI_MANAGED_CONTEXT','DSH_HOUDINI_WORKBENCH_CONTEXT','DSH_HOUDINI_EXECUTOR_ID','DSH_HOUDINI_BRIDGE_URL'].includes(field))delete environment[field]
+        ||['PYTHONHOME','PYTHONPATH','NODE_OPTIONS','NODE_PATH'].includes(field.toUpperCase()))delete environment[field]
       environment.HFS=selected.hfs
-      environment.HOUDINI_PATH=[startup,path.join(pluginRoot,'houdini'),process.env.HOUDINI_PATH||'&'].join(path.delimiter)
-      environment.PYTHONPATH=path.join(pluginRoot,'houdini/python3.11libs')
+      environment.HOUDINI_PATH=[startup,path.join(preparation.helperRoot,'houdini'),environment.HOUDINI_PATH||'&'].join(path.delimiter)
+      environment.PYTHONPATH=path.join(preparation.helperRoot,'houdini/python3.11libs')
       environment.DSH_HOUDINI_DESKTOP_DESCRIPTOR=this.paths.descriptor
       environment.DSH_HOUDINI_LAUNCH_TICKET=filename
       environment.DSH_HOUDINI_EXECUTOR_REGISTRY=this.paths.registry

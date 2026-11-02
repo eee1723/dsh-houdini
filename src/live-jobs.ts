@@ -55,7 +55,7 @@ export class LiveJobs {
           if(!handle.jobId||!original||cancellation)return
           cancellation=original.cancelJob(handle.jobId,owner,controller.signal).then(status=>{
             cancelled=status.status==='cancelled'
-            job.updateProgress(cancelled?'排队任务已取消':'原生计算已运行，保留其实际结果，完成后通知')
+            job.updateProgress(cancelled?'排队任务已取消':'原生计算已运行；用 job_output 查回实际结果，取消不代表已停止')
           }).catch(error=>{
             if(!controller.signal.aborted)job.updateProgress('取消尚未确认；仍在观察原执行：'+String(error))
           })

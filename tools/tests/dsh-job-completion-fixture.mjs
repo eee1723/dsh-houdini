@@ -9,8 +9,8 @@ import {pathToFileURL} from 'node:url';
 const root=path.resolve(import.meta.dirname,'../..'),runtime=path.resolve(process.argv[2]??root);
 const require=createRequire(path.join(runtime,'package.json'));
 const load=name=>import(pathToFileURL(require.resolve('@deepseek-ai/'+name)).href);
-const target=JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).preferredVersion;
-assert.equal(JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version,target);
+const target=JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version;
+assert(JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).releases.some(row=>row.dshVersion===target),'test an explicitly supported official runtime');
 const [{Context},{default:SystemPrompt},{default:ToolRuntime},{default:AgentRegistry},{default:LocalJobs},ToolJobs,
   {Session},{createToolResultMessage},SpillPolicy,{createScope}]=await Promise.all([
   load('cordis'),load('dsh-system-prompt'),load('dsh-tools'),load('dsh-agent'),load('dsh-jobs-local'),load('dsh-tool-jobs'),
@@ -27,10 +27,10 @@ const deferred=()=>{let resolve;const promise=new Promise(yes=>{resolve=yes});re
 async function settled(id,owner){const end=Date.now()+1500;while(['running','stopping'].includes(ctx.jobs.get(id,owner).status)&&Date.now()<end)await tick();
   assert(!['running','stopping'].includes(ctx.jobs.get(id,owner).status),'owned fixture did not settle');await tick()}
 async function ownerFor(id,houdini){
-  const notices=[],session=Session.create(id),owner={id,session,status:'idle',ctx:undefined,
-    followup:message=>notices.push(message),inject:message=>notices.push(message)};
+  const notices=[],wakeups=[],session=Session.create(id),owner={id,session,status:'idle',ctx:undefined,
+    followup:message=>{wakeups.push(message);notices.push(message)},inject:message=>notices.push(message)};
   const scope=createScope(ctx,owner,houdini?{parent:presetKey}:{});owner.ctx=scope.ctx;
-  await ctx.agents.register(owner);return {owner,scope,notices};
+  await ctx.agents.register(owner);return {owner,scope,notices,wakeups};
 }
 const selected=await ownerFor('houdini-job-owner',true),other=await ownerFor('standard-job-owner',false);
 let ordinal=0,callId=0;
@@ -64,11 +64,13 @@ try {
     running.finish(status);await settled(running.id,selected.owner.id);
     assert.equal(running.cancels(),1);
     assert.equal(ctx.jobs.get(running.id,selected.owner.id).status,status==='done'?'completed':status==='failed'?'failed':'killed');
-    assert.equal(selected.notices.length-before,status==='cancelled'?0:1,'only cancellation-lost actual results need the missing notice');
+    assert.equal(selected.notices.length-before,0,'DSH owns suppression after a model-requested kill, independently of the actual outcome');
+    const collected=await call(selected.owner,'job_output',{job_id:running.id});
+    assert.equal(JSON.parse(collected.meta.canonical.text).value.status,status,'all actual terminal outcomes remain collectible');
   }
   const immediate=await start({cancelFinishes:true}),beforeImmediate=selected.notices.length;
   await call(selected.owner,'job_kill',{job_id:immediate.id});await settled(immediate.id,selected.owner.id);
-  assert.equal(selected.notices.length-beforeImmediate,1,'settlement before the kill tool returns is still delivered once');
+  assert.equal(selected.notices.length-beforeImmediate,0,'early settlement follows the same native model-kill suppression');
   for(const modelKill of [false,true]) {
     const running=await start(),before=selected.notices.length;
     if(modelKill)await call(selected.owner,'job_kill',{job_id:running.id});else ctx.jobs.kill(running.id,selected.owner.id);
@@ -125,7 +127,14 @@ try {
   assert(dispatch,'official PTC records the actual nested dispatch');
   assert.equal(JSON.parse(dispatch.data.meta.canonical.text).value.stdout,payload,'nested durable metadata retains the full producer value');
   assert.ok(spillCopies.length>0,'real native spill policy ran without deleting canonical metadata');
+  await controls.dispose();controls=await ctx.plugin(ToolJobs,{completionDelivery:'quiet',maxConsecutiveWakes:1});
+  const quietOwner=await ownerFor('quiet-job-owner',true),quiet=bridgeFor(),quietExec={agent:quietOwner.owner,callId:'quiet-submit',signal:new AbortController().signal};
+  const quietAdmission=await live.submit({code:'owned_fixture()'},quietExec,quiet.bridge,{sessionId:quietOwner.owner.id,callId:quietExec.callId});
+  await call(quietOwner.owner,'job_kill',{job_id:quietAdmission.job_id});quiet.finish();await settled(quietAdmission.job_id,quietOwner.owner.id);
+  assert.equal(quietOwner.wakeups.length,0,'Houdini may not bypass native quiet delivery or wake budgets after cancellation');
+  const quietResult=await call(quietOwner.owner,'job_output',{job_id:quietAdmission.job_id});
+  assert.equal(JSON.parse(quietResult.meta.canonical.text).value.status,'done','suppressed notification never discards the original execution');
   await preset.dispose();
-  assert.equal(ctx.tools.get('job_output',selected.owner),native,'plugin unload removes the scoped definition while keeping the Agent');
-  console.log(JSON.stringify({ok:true,runtime,dshVersion:target,checks:['real-native-jobs','cancellation-lost-completed-and-failed','actual-kill-suppressed','early-settlement','waiter-not-duplicated','UI-kill-not-duplicated','native-and-nested-full-metadata','display-retention','single-consumption','other-modes-unchanged','other-job-native-output','plugin-unload']}));
+  assert.equal(ctx.tools.get('job_output',selected.owner),ctx.tools.get('job_output'),'plugin unload removes the scoped definition while keeping the Agent');
+  console.log(JSON.stringify({ok:true,runtime,dshVersion:target,checks:['real-native-jobs','cancellation-lost-completed-and-failed','native-model-kill-suppression','quiet-delivery-preserved','early-settlement','waiter-not-duplicated','UI-kill-not-duplicated','native-and-nested-full-metadata','display-retention','single-consumption','other-modes-unchanged','other-job-native-output','plugin-unload']}));
 }finally{await ctx.fiber.dispose()}

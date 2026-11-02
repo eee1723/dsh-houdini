@@ -75,7 +75,7 @@ if args.hfs:
 from pathlib import Path
 import hou
 from hutil.Qt import QtCore
-_root=Path(os.environ['DSH_HOUDINI_TEST_MENU_ROOT'])
+_root=Path(__DSH_TEST_MENU_ROOT__)
 _request=_root/(str(os.getpid())+'.menu-request.json')
 _result=_root/(str(os.getpid())+'.menu-result.json')
 _timer=QtCore.QTimer(hou.qt.mainWindow())
@@ -100,12 +100,12 @@ def _check():
     dsh_launcher.open_workspace()
 _timer.timeout.connect(_check);_timer.start(100)
 '''
+    menu_source=menu_source.replace('__DSH_TEST_MENU_ROOT__',repr(str(fixture)))
     for python_version in ['3.11','3.13']:
         directory=hook/('python'+python_version+'libs');directory.mkdir(parents=True)
         (directory/'dsh_packaged_menu_fixture.py').write_text(menu_source,encoding='utf-8')
         (directory/'uiready.py').write_text('import dsh_packaged_menu_fixture\n',encoding='utf-8')
     env['HOUDINI_PATH']=str(hook)+os.pathsep+'&'
-    env['DSH_HOUDINI_TEST_MENU_ROOT']=str(fixture)
     env['HOUDINI_ANONYMOUS_STATISTICS']='0'
     env['HOUDINI_NO_START_PAGE_SPLASH']='1'
 
@@ -165,6 +165,11 @@ export function apply(ctx) {
       const require=createRequire(path.join(process.env.DSH_HOME,'profiles/web/package.json'));
       const file=require.resolve('dsh-houdini/package.json'),root=fs.realpathSync(path.dirname(file));
       const manifest=JSON.parse(fs.readFileSync(file,'utf8'));
+      const pluginRequire=createRequire(file),projectionFile=require.resolve('@deepseek-ai/dsh-session-projection/package.json');
+      const hostRequire=createRequire(projectionFile),projection=JSON.parse(fs.readFileSync(projectionFile,'utf8'));
+      const dependencyVersions={pluginZod:JSON.parse(fs.readFileSync(pluginRequire.resolve('zod/package.json'),'utf8')).version,
+        hostProjectionZod:JSON.parse(fs.readFileSync(hostRequire.resolve('zod/package.json'),'utf8')).version,
+        hostProjectionRequiresZod:projection.dependencies?.zod};
       const roster=await ctx.agentPresets.remoteExportList();
       const modes={};
       for(const id of ['houdini','standard']){
@@ -172,7 +177,7 @@ export function apply(ctx) {
         try{modes[id]=ctx.tools.schemas(lease.key).map(row=>row.name)}finally{await lease[Symbol.asyncDispose]()}
       }
       const graph=ctx.clientModules.graph();
-      const result={root,manifest,roster,modes,graph,
+      const result={root,manifest,roster,modes,graph,dependencyVersions,
         prepareBridge:typeof ctx.get('houdiniFrontend').prepareBridge==='function',
         rootEntries:[...ctx.loader.entries()].map(row=>({name:row.options.name,disabled:row.disabled}))};
       if(!disposed)fs.writeFileSync(process.env.DSH_PACKAGED_TEST_FACTS,JSON.stringify(result,null,2));
@@ -274,7 +279,8 @@ def verify_real_houdini(installed,workspace_id):
         return value
     ready=wait_until(status,240,'installed tgz real Houdini launch')
     listing=rpc('houdiniTargets/list',{'input':{'sessionId':session['sessionId']}})
-    target=listing['selectedTarget'];assert listing['state']['status']=='selected'
+    (fixture/'selected-target.json').write_text(json.dumps(listing,ensure_ascii=False,indent=2),encoding='utf-8')
+    target=listing['selectedTarget'];assert listing['state']['status']=='selected',listing['state']
     record=next(row for row in listing['candidates'] if row['executor_id']==target['executor_id'])
     assert runtime.owns_pid(record['pid']),'Houdini must belong to this fixture Job'
     birth=_process_started(record['pid']);assert birth is not None
@@ -426,9 +432,12 @@ with log.open('wb') as output:
             probes[name]=(result.stdout+result.stderr).decode('utf-8',errors='replace').splitlines()[0]
         assert not (home/'profiles/desktop').exists()
         assert manifest==expected_manifest,'Installed manifest differs from the frozen release'
+        assert facts['dependencyVersions']['pluginZod']==expected_manifest['dependencies']['zod'],facts['dependencyVersions']
+        if facts['dependencyVersions'].get('hostProjectionRequiresZod'):
+            assert facts['dependencyVersions']['hostProjectionZod']==facts['dependencyVersions']['hostProjectionRequiresZod'],facts['dependencyVersions']
         for name,expected in expected_files.items():
             assert digest(installed/name)==expected,'Installed file differs from the frozen release: '+name
-        report.update(ok=True,version=manifest['version'],engine=manifest['engines']['dsh'],installedRoot=str(installed),
+        report.update(ok=True,version=manifest['version'],engine=manifest['engines']['dsh'],installedRoot=str(installed),dependencyVersions=facts['dependencyVersions'],
             installedArtifactFilesSha256=expected_files,dependencySpec=profile_manifest['dependencies']['dsh-houdini'],
             modeIds=[row['id'] for row in presets],rootClientCount=1,prepareBridgeOtherModeRefused=True,
             mediaRoot=str(media),mediaVersion=metadata['ffmpeg']['version'],mediaProbes=probes,

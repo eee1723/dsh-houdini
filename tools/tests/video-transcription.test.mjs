@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import {videoModels,transcribeVideo,registerVideoTools,runVideoProcess,tutorialRuntime} from '../../lib/video-transcription.js'
+import {videoModels,transcribeVideo,registerVideoTools,tutorialRuntime} from '../../lib/video-transcription.js'
+import {runVideoProcess,localVideoEnvironment} from '../../lib/video-process.js'
+import {Context} from '@deepseek-ai/cordis'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import {configureVideo,customVideoCredential,VIDEO_DEFAULTS} from '../../lib/video-configuration.js'
 const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-video-host-')))
 const work=path.join(root,'教程 audio');await fs.mkdir(work)
@@ -90,21 +93,29 @@ context.sessionProjections={stateOf:()=>({selectedTarget:{executor_id:'a'.repeat
 const connection={resolveRuntime:async()=>{staticRuntimeCalls++;return{runtime:{python:fakePython,hfs:fakeHfs}}}}
 assert.equal((await tutorialRuntime(context,'',exec,connection)).python,fakePython);assert.equal(staticRuntimeCalls,1)
 
-// Exercise the actual process transport, including cancellation and exact-child lock cleanup.
+// Exercise the shared official process transport and invocation lock cleanup.
+const truncated=await transcribeVideo(context,exec,args,async()=>({code:0,stdout:'{"submitted":1,"remaining":0}',stderr:'output budget exceeded',cancelled:false,output_truncated:true}))
+assert.equal(truncated.ok,false,'a retained summary cannot certify a truncated transcription response')
+assert.equal(truncated.output_truncated,true)
+const host=new Context();await host.plugin(LocalSubprocessRuntime)
+const run=request=>runVideoProcess(request,host.subprocess)
+try {
 const childScript=path.join(root,'worker.mjs')
-await fs.writeFile(childScript,`import fs from 'node:fs';fs.writeFileSync(process.argv[2]+'/.lock',String(process.pid));console.log('ready');setInterval(()=>{},1000);`)
+await fs.writeFile(childScript,`import fs from 'node:fs';fs.writeFileSync(process.argv[2]+'/.lock',process.env.DSH_VIDEO_LOCK_OWNER);console.log('ready');setInterval(()=>{},1000);`)
 const controller=new AbortController()
-const pending=runVideoProcess({executable:process.execPath,args:[childScript,work],env:process.env,cwd:root,work,signal:controller.signal})
-for (let i=0;i<100;i++) {if(await fs.stat(path.join(work,'.lock')).catch(()=>null))break;await new Promise(resolve=>setTimeout(resolve,10))}
+const pending=run({executable:process.execPath,args:[childScript,work],env:localVideoEnvironment(),cwd:root,work,signal:controller.signal})
+for (let i=0;i<1000;i++) {if(await fs.stat(path.join(work,'.lock')).catch(()=>null))break;await new Promise(resolve=>setTimeout(resolve,10))}
 assert(await fs.stat(path.join(work,'.lock')))
 controller.abort();result=await pending
 assert.equal(result.cancelled,true)
 assert.equal(await fs.stat(path.join(work,'.lock')).catch(()=>null),null)
 await fs.writeFile(path.join(work,'.lock'),'other-worker')
-result=await runVideoProcess({executable:process.execPath,args:['-e','process.stdout.write("ok")'],env:process.env,cwd:root,work})
+result=await run({executable:process.execPath,args:['-e','process.stdout.write("ok")'],env:localVideoEnvironment(),cwd:root,work})
 assert.equal(result.code,0);assert.equal(result.stdout,'ok')
 assert.equal(await fs.readFile(path.join(work,'.lock'),'utf8'),'other-worker')
-await assert.rejects(()=>runVideoProcess({executable:path.join(root,'missing-python'),args:[],env:process.env,cwd:root,work}),/Cannot start/)
+const missing=await run({executable:path.join(root,'missing-python'),args:[],env:localVideoEnvironment(),cwd:root,work})
+assert.equal(missing.code,null);assert.match(missing.stderr,/confirmed exit/)
+} finally {await host.fiber.dispose()}
 const registered=[];registerVideoTools({tools:{register:tool=>registered.push(tool)}})
 assert.deepEqual(registered.map(tool=>tool.name),['video_process','video_models','video_configure','video_transcribe'])
 console.log('video transcription Host routing, credential isolation, validation and child cancellation passed')

@@ -29,6 +29,17 @@ spec.loader.exec_module(video)
 
 
 class VideoTests(unittest.TestCase):
+    def test_managed_lock_uses_invocation_identity_and_preserves_replacement(self):
+        with tempfile.TemporaryDirectory(prefix="dsh-managed-lock-") as temporary:
+            work = Path(temporary)
+            with patch.dict(os.environ, {"DSH_VIDEO_LOCK_OWNER": "fixture-invocation"}):
+                with video.lock(work):
+                    self.assertEqual((work / ".lock").read_text(), "fixture-invocation")
+                self.assertFalse((work / ".lock").exists())
+                with video.lock(work):
+                    (work / ".lock").write_text("another-worker")
+                self.assertEqual((work / ".lock").read_text(), "another-worker")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="dsh-video-test-")
         self.addCleanup(self.temp.cleanup)

@@ -27,6 +27,8 @@
 
 插件通过 engines.dsh 与实际 peer 合同声明支持范围，由官方加载器核对。[原生兼容检查](https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/packages/boot/app-boot/src/plugin-compatibility.ts)之外，还需验证 Houdini helper 的当次执行合同。插件不自动升级/降级 Desktop 或覆盖其内置包。
 
+插件自己的Zod依赖独立固定版本，源码也不使用全局override重写官方包的精确依赖。两份依赖按各自包根解析；升级后需核对实际官方组合能读取插件的投影schema。受支持宿主仅调用schema.parse，却在ProjectionDefinition声明完整Zod链式API；[投影注册入口](../src/executor-identity-projection.ts)只在这两个schema字段隔离跨版本TypeScript类型，状态、事件及视图仍受类型检查，运行时保留原Zod对象及完整校验。公开声明收窄为实际解析协议后移除该类型边界，不加运行时适配器或扩大编译内存。生产依赖审计与包含开发宿主的全依赖审计分开解释；宿主公告沿官方修复版本验证，不通过插件替换其共享库。
+
 ## DSH耦合点与升级维护
 
 | 边界 | 唯一实现与验证入口 |
@@ -38,6 +40,10 @@
 | Bridge 与领域执行 | [执行契约](execution-contract.md)、[开发维护](development.md#修改与验证)中的隔离 H21/H22 检查 |
 
 开发验证使用[官方宿主准备器](../tools/prepare-dsh-runtime.mjs)，只安装未修改的精确官方包，不应用核心补丁。运行时缓存不属于用户发行物。工作区、账户、网络、通知等通用问题先核对官方版本和公开接口，再按开发规范比较解决方案，不能恢复整套私有核心差异作为默认修复。
+
+后台完成的通知与唤醒完全由原生tool-jobs处理，包括quiet、唤醒预算及模型调用job_kill后的通知抑制。插件不在settled回调自行followup。取消请求不证明HOM已停止；需要其结果时用job_output等待，观察中断后用原request_ref恢复，实际终态仍保留于原生canonical回执。
+
+媒体与转录共用公开subprocess服务的进程树生命周期，不维护taskkill/PID探测或另一套转录进程管理。插件只负责本次调用的JSON协议、输出限额与工作锁；服务不能证明整树退出时保留锁并返回未确认。独立GUI Houdini需要在Desktop退出后继续运行，因此保持独立启动，仅复用官方环境清理。隔离hython的Python监督器另有内存预算和取消回执合同，不能用GUI或媒体的生命周期替代。该方案无需核心补丁或新宿主依赖，维护范围限定于领域输入/输出；官方合同变更时沿精确版本资格流程核对。
 
 ## 模型提供方与账户验收
 

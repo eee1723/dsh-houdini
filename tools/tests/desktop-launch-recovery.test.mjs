@@ -35,7 +35,7 @@ async function fixture(name){
  const services=[],create=()=>{
   process.env.DSH_HOME=home
   const service=new DesktopIntegration(ctx,targets,async()=>[{hfs:home,version:'22.0.368',series:'22.0',executable:record.runtime.executable}],
-   async()=>{state.probes++;return state.birth},()=>{state.spawns++;if(state.failSpawn)throw Error('fixture: not submitted')
+   async()=>{state.probes++;return state.birth},(_executable,_args,options)=>{state.launchEnvironment=options.env;state.spawns++;if(state.failSpawn)throw Error('fixture: not submitted')
     return Object.assign(new EventEmitter(),{pid:process.pid,exitCode:null,unref(){}})},async()=>({ok:true,helperId:'a'.repeat(16),helperRoot:home,requiresRestart:true,
       migration:{reportPath:null,disabledCount:0,reviewCount:0},message:'fixture helper ready'}))
   services.push(service);return service
@@ -60,6 +60,27 @@ async function aliasedFixture(name){
  return f
 }
 try{
+ const inherited={DEEPSEEK_API_KEY:'fixture-secret',DSH_INTERNAL_TOKEN:'fixture-host-token',HOUDINI_LICENSE_SERVER:'fixture-license'}
+ const originalEnvironment=Object.fromEntries(Object.keys(inherited).map(key=>[key,process.env[key]]))
+ const environmentFixture=await fixture('launch-environment'),environmentService=environmentFixture.create();await environmentService.start()
+ const helperRoot=path.join(environmentFixture.home,'installed','helpers','a'.repeat(16))
+ environmentService.installHelper=async()=>({ok:true,helperId:'a'.repeat(16),helperRoot,requiresRestart:true,
+   migration:{reportPath:null,disabledCount:0,reviewCount:0},message:'fixture helper ready'})
+ try {
+  Object.assign(process.env,inherited)
+  const launched=await environmentService.project(environmentFixture.action(),new AbortController().signal)
+  const env=environmentFixture.state.launchEnvironment
+  assert.equal(env.DEEPSEEK_API_KEY,undefined,'Houdini must not inherit the Host model credential')
+  assert.equal(env.DSH_INTERNAL_TOKEN,undefined,'only explicit plugin handoff facts may cross into Houdini')
+  assert.equal(env.HOUDINI_LICENSE_SERVER,inherited.HOUDINI_LICENSE_SERVER)
+  assert.equal(env.PYTHONPATH,path.join(helperRoot,'houdini/python3.11libs'),'launch uses the installed immutable helper')
+  assert.equal(env.HOUDINI_PATH.split(path.delimiter)[1],path.join(helperRoot,'houdini'))
+  assert.equal(env.DSH_HOUDINI_DESKTOP_DESCRIPTOR,path.join(environmentFixture.home,'dsh-houdini/desktop.json'))
+  assert.equal(env.DSH_HOUDINI_LAUNCH_TICKET,path.join(environmentFixture.home,'dsh-houdini/launches',launched.id+'.json'))
+ } finally {
+  for(const [key,value] of Object.entries(originalEnvironment))if(value===undefined)delete process.env[key];else process.env[key]=value
+  await environmentService.dispose()
+ }
  const f=await fixture('resume'),first=f.create();await first.start()
  const t=await first.project(f.action(),new AbortController().signal)
  assert.equal(t.id,f.action().requestId);assert.equal(t.phase,'waiting');assert.equal((await f.disk(t)).schemaVersion,2)

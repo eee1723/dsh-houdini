@@ -4,10 +4,17 @@ import os from 'node:os'
 import path from 'node:path'
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {processLocalVideo,localVideoEnvironment,registerLocalVideoTool,runLocalVideoProcess} from '../../lib/video-process.js'
+import {processLocalVideo,localVideoEnvironment,registerLocalVideoTool,runVideoProcess} from '../../lib/video-process.js'
+import {createRequire} from 'node:module'
+import {pathToFileURL} from 'node:url'
+const require=createRequire(path.resolve(process.argv[2]??'.','package.json'))
+const [{Context},{default:LocalSubprocessRuntime}]=await Promise.all(
+  ['@deepseek-ai/cordis','@deepseek-ai/dsh-subprocess-local'].map(name=>import(pathToFileURL(require.resolve(name)).href)))
 import {videoRuntime} from '../../lib/video-runtime.js'
 const execute=promisify(execFile)
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-video-process-'))
+const host=new Context();await host.plugin(LocalSubprocessRuntime)
+const runLocalVideoProcess=request=>runVideoProcess(request,host.subprocess)
 let mode='workspace-write',requests=[]
 // Resolve the existing prefix like DSH's native filesystem, including symlinks.
 async function canonical(filename){
@@ -16,7 +23,7 @@ async function canonical(filename){
 const context={fs:{resolve:async(filename,options={})=>({targetKey:await canonical(path.resolve(options.cwd??root,filename))}),
   processPath:ref=>ref.targetKey,processPathFromHostPath:value=>value,
   contains:(base,target)=>{const r=path.relative(base.targetKey,target.targetKey);return !r.startsWith('..')&&!path.isAbsolute(r)}},
-  sandboxPolicy:{resolve:()=>({mode,workspaceRoot:root})},credentials:{resolve:()=>assert.fail('local operations never read credentials')}}
+  sandboxPolicy:{resolve:()=>({mode,workspaceRoot:root})},subprocess:host.subprocess,credentials:{resolve:()=>assert.fail('local operations never read credentials')}}
 context.get=name=>context[name]
 const exec={agent:{id:'local-video-session',session:{header:{cwd:root}}},signal:new AbortController().signal}
 const runtime=videoRuntime(process.execPath)
@@ -57,8 +64,43 @@ try{
   assert.equal(failed.ok,false);assert.equal(failed.status,'worker_failed');assert.equal(failed.exit_code,1)
   const cancelled=await processLocalVideo(context,exec,{operation:'query-notes',options:{index:input}},resolveRuntime,async()=>({code:null,stdout:'',stderr:'',cancelled:true}))
   assert.equal(cancelled.status,'cancelled')
+  const truncated=await processLocalVideo(context,exec,{operation:'query-notes',options:{index:input}},resolveRuntime,
+    async()=>({code:0,stdout:'{"plausible":"partial"}',stderr:'output budget exceeded',cancelled:false,output_truncated:true}))
+  assert.equal(truncated.ok,false,'exit zero cannot certify an incomplete worker protocol')
+  assert.equal(truncated.output_truncated,true)
   const tools=[];registerLocalVideoTool({tools:{register:tool=>tools.push(tool)}},resolveRuntime)
   assert.equal(tools[0].name,'video_process');assert(!tools[0].parameters.properties.operation.enum.includes('transcribe'))
+
+  // Real native managed ranges: descendants must stop even if the worker
+  // exits first. This runs without optional Python/FFmpeg configuration.
+  const worker=path.join(root,'managed-worker.mjs')
+  await fs.writeFile(worker,`import fs from 'node:fs';import {spawn} from 'node:child_process';
+const work=process.argv[2],mode=process.argv[3];
+const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});
+fs.writeFileSync(work+'/.lock',process.env.DSH_VIDEO_LOCK_OWNER);
+fs.writeFileSync(work+'/child-pid',String(child.pid));
+console.log('ready');if(mode==='overflow')process.stdout.write('x'.repeat(1100000));
+if(mode==='exit')process.exit(0);setInterval(()=>{},1000);`)
+  for(const action of ['cancel','overflow','exit','dispose']) {
+    const work=path.join(root,action);await fs.mkdir(work)
+    const owner=new Context();await owner.plugin(LocalSubprocessRuntime)
+    const controller=new AbortController()
+    const pending=runVideoProcess({executable:process.execPath,args:[worker,work,action],cwd:root,
+      env:localVideoEnvironment(),work,signal:controller.signal},owner.subprocess)
+    try {
+      const deadline=Date.now()+10000
+      while(!await fs.stat(path.join(work,'child-pid')).catch(()=>null)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10))
+      const childPid=Number(await fs.readFile(path.join(work,'child-pid'),'utf8'))
+      if(action==='cancel')controller.abort()
+      if(action==='dispose')await owner.fiber.dispose()
+      const result=await pending
+      assert.equal(result.termination_error,undefined,JSON.stringify(result))
+      assert.throws(()=>process.kill(childPid,0),/ESRCH|not found|No such process/,'native service owns surviving descendants: '+action)
+      assert.equal(await fs.stat(path.join(work,'.lock')).catch(()=>null),null)
+      if(action==='cancel')assert.equal(result.cancelled,true)
+      if(action==='overflow')assert.match(result.stderr,/budget/)
+    }finally{await owner.fiber.dispose();await pending}
+  }
 
   // Native Python/FFmpeg path: local evidence outputs, then direct query without shell redirection.
   const python=process.env.DSH_VIDEO_PROCESS_TEST_PYTHON,ffmpeg=process.env.DSH_VIDEO_PROCESS_TEST_FFMPEG,ffprobe=process.env.DSH_VIDEO_PROCESS_TEST_FFPROBE
@@ -94,7 +136,7 @@ try{
     assert.equal(inputAlias.ok,false);assert.equal(inputAlias.exit_code,2)
     assert.match(inputAlias.error,/unrecognized arguments/)
     const worker=path.join(root,'tree-worker.py')
-    await fs.writeFile(worker,`import os,sys,subprocess,time\nfrom pathlib import Path\nw=Path(sys.argv[1])\nc=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n(w/'descendant-pid').write_text(str(c.pid))\n(w/'.lock').write_text(str(os.getpid()))\nprint('ready',flush=True)\nif len(sys.argv)>2: print('x'*1100000,flush=True)\ntime.sleep(30)\n`)
+    await fs.writeFile(worker,`import os,sys,subprocess,time\nfrom pathlib import Path\nw=Path(sys.argv[1])\nc=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n(w/'descendant-pid').write_text(str(c.pid))\n(w/'.lock').write_text(os.environ['DSH_VIDEO_LOCK_OWNER'])\nprint('ready',flush=True)\nif len(sys.argv)>2: print('x'*1100000,flush=True)\ntime.sleep(30)\n`)
     for(const overflow of [false,true]){
       const work=path.join(root,overflow?'overflow-tree':'cancel-tree');await fs.mkdir(work)
       const controller=new AbortController()
@@ -112,6 +154,6 @@ try{
     await runLocalVideoProcess({executable:python,args:['-c','print("ok")'],env:localVideoEnvironment(),cwd:root,work:root})
     assert.equal(await fs.readFile(path.join(root,'.lock'),'utf8'),'another-worker')
     console.log('Native local video review/index/query and failure-before-output passed')
-  }else console.log('Native media probe not configured; fake-runner policy/serialization checks only')
-}finally{await fs.rm(root,{recursive:true,force:true})}
+  }else console.log('Native managed-process lifecycle passed; optional Python/FFmpeg media probe not configured')
+}finally{await host.fiber.dispose();await fs.rm(root,{recursive:true,force:true})}
 console.log('Offline tutorial tool preserves DSH file policy, private executables, credential isolation, JSON facts and actual failure states')

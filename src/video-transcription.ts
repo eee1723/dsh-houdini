@@ -3,7 +3,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
-import {spawn} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import type {Context} from '@deepseek-ai/cordis'
 import {defineTool} from '@deepseek-ai/dsh-tools'
@@ -12,7 +11,7 @@ import {hostService} from './api-route.js'
 import {workspaceOf,type HoudiniConnection} from './tool-runtime.js'
 import {VIDEO_TOOLS} from './tool-catalog.js'
 import {resolveVideoRuntime} from './video-runtime.js'
-import {registerLocalVideoTool,releaseVideoChildLock} from './video-process.js'
+import {registerLocalVideoTool,runVideoProcess,type LocalVideoProcessRequest,type LocalVideoRunner} from './video-process.js'
 import {videoSelection,videoConfiguration,resolveVideoRoute,configureVideo,VIDEO_DEFAULTS,VIDEO_LIMITS,VIDEO_SETTINGS as SETTINGS} from './video-configuration.js'
 
 const SCRIPT=fileURLToPath(new URL('../skills/houdini-video-tutorial/scripts/video_tutorial.py',import.meta.url))
@@ -26,11 +25,8 @@ export async function videoModels(ctx:any,query='',provider?:string,exec?:any,co
   return {...state,routes:state.routes.filter(row=>(!provider||row.provider===provider)&&(!query||(row.provider+' '+row.display_name).toLowerCase().includes(query.toLowerCase()))),runtime}
 }
 
-export interface VideoProcessRequest {
-  executable:string;args:string[];env:NodeJS.ProcessEnv;cwd:string;work:string;signal?:AbortSignal
-}
-export interface VideoProcessResult {code:number|null;stdout:string;stderr:string;cancelled:boolean}
-export type VideoProcessRunner=(request:VideoProcessRequest)=>Promise<VideoProcessResult>
+export type VideoProcessRequest=LocalVideoProcessRequest
+export type VideoProcessRunner=LocalVideoRunner
 
 /** The selected executor, rather than the shared Host's parent HFS, owns automatic Python discovery. */
 export async function tutorialRuntime(ctx:any,python:string,exec?:any,connection?:HoudiniConnection) {
@@ -44,26 +40,6 @@ export async function tutorialRuntime(ctx:any,python:string,exec?:any,connection
   if(installed?.length)return {...await resolveVideoRuntime('',{environment:{...process.env,HFS:installed[0].hfs}}),pythonScope:'installed-houdini' as const}
   return resolveVideoRuntime(python)
 }
-
-export const runVideoProcess:VideoProcessRunner=request=>new Promise((resolve,reject)=>{
-  request.signal?.throwIfAborted()
-  const child=spawn(request.executable,request.args,{cwd:request.cwd,env:request.env,shell:false,
-    windowsHide:true,stdio:['ignore','pipe','pipe']})
-  let stdout='',stderr='',overflow=false,cancelled=false,spawnError:Error|undefined
-  const cancel=()=>{cancelled=true;child.kill()}
-  request.signal?.addEventListener('abort',cancel,{once:true})
-  child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8')
-  child.stdout.on('data',(data:string)=>{if (stdout.length+data.length>1_000_000){overflow=true;child.kill()}else stdout+=data})
-  child.stderr.on('data',(data:string)=>{if (stderr.length+data.length>64_000){overflow=true;child.kill()}else stderr+=data})
-  child.on('error',error=>{spawnError=error})
-  child.on('close',async code=>{
-    request.signal?.removeEventListener('abort',cancel)
-    await releaseVideoChildLock(request.work,child.pid)
-    if (spawnError) reject(Error(`Cannot start the configured Python interpreter (${(spawnError as NodeJS.ErrnoException).code??'process error'}); check Tutorial Video settings`))
-    else resolve({code,stdout,stderr:overflow?'Python worker output exceeded its limit; existing ASR attempts are retained.':stderr,cancelled})
-  })
-  if (request.signal?.aborted) cancel()
-})
 
 export interface VideoTranscribeArgs {
   work:string;provider?:string;model?:string;protocol?:string;allow_upload?:boolean;max_chunks?:number;chunks?:string[]
@@ -87,7 +63,7 @@ async function writableWork(ctx:any,exec:any,work:string) {
   return {local,cwd}
 }
 
-export async function transcribeVideo(ctx:any,exec:any,args:VideoTranscribeArgs,runner:VideoProcessRunner=runVideoProcess,connection?:HoudiniConnection) {
+export async function transcribeVideo(ctx:any,exec:any,args:VideoTranscribeArgs,runner?:VideoProcessRunner,connection?:HoudiniConnection) {
   const chosen=videoSelection(ctx),route=resolveVideoRoute(ctx,chosen,args)
   const {provider,model,protocol,endpoint,authentication}=route
   if(route.dataLocation==='network'&&args.allow_upload!==true)throw Error('Cloud audio upload requires the user’s authorization and allow_upload=true')
@@ -136,15 +112,17 @@ export async function transcribeVideo(ctx:any,exec:any,args:VideoTranscribeArgs,
   const facts={provider,model,endpoint,protocol,authentication,data_location:route.dataLocation,work:local,max_chunks:maximum,concurrency,requests_per_second:rate,settings:SETTINGS}
   const redact=(text:string)=>key?text.split(key).join('[redacted]'):text
   try {
-    const run=await runner({executable:runtime.python,args:argv,env:{...scrubbedParentEnv(),...(key?{[KEY_ENV]:key}:{}),PYTHONUTF8:'1'},cwd,work:local,signal:exec.signal})
+    const run=await (runner??(request=>runVideoProcess(request,hostService(ctx,'subprocess'))))({executable:runtime.python,args:argv,env:{...scrubbedParentEnv(),...(key?{[KEY_ENV]:key}:{}),PYTHONUTF8:'1'},cwd,work:local,signal:exec.signal})
     const rows=redact(run.stdout).split(/\r?\n/).filter(Boolean).map(line=>{
       try {return JSON.parse(line)} catch {return null}
     }).filter(row=>row&&typeof row==='object'&&!Array.isArray(row))
     const summary=[...rows].reverse().find(row=>Number.isInteger(row.submitted)&&Number.isInteger(row.remaining))??null
     const progress=rows.filter(row=>typeof row.chunk==='string'&&row.status==='saved')
-    const ok=run.code===0&&summary!==null&&!run.cancelled
+    const ok=run.code===0&&summary!==null&&!run.cancelled&&!run.termination_error&&!run.output_truncated
     return {...facts,ok,status:ok?'processed':run.cancelled?'cancelled':'worker_failed',progress,summary,
       ...(!ok?{error:redact(run.stderr.trim()).slice(0,4000)||'Python worker did not return a completed transcription result.'}:{}),
+      ...(run.termination_error?{termination_error:run.termination_error}:{}),
+      ...(run.output_truncated?{output_truncated:true}:{}),
       retry:'Successful chunks are reused. Failed or unknown attempts stay in the same task directory; no automatic retry was made.',
       next_action:ok?'Use the video script export command to read transcript coverage and unresolved chunks.':'Inspect this task’s retained attempt/outcome files before explicitly authorizing a retry.'}
   } catch(error) {
@@ -191,5 +169,5 @@ export function registerVideoTools(ctx:Context,connection?:HoudiniConnection) {
       retry_failed:{type:'boolean',description:'Explicit authorization to resubmit failed/unknown chunks; default false.'},
       max_retries:{type:'number',description:`Retry request budget this call; default 0 (or 1 with retry_failed).`}},
     output,presentCall:args=>({card:'generic',kind:'execute',title:VIDEO_TOOLS.video_transcribe.label,rawInput:args}),
-    execute:(args,exec)=>transcribeVideo(ctx,exec,args,runVideoProcess,connection)}))
+    execute:(args,exec)=>transcribeVideo(ctx,exec,args,undefined,connection)}))
 }

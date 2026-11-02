@@ -3,8 +3,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
-import {spawn,execFile,type ChildProcess} from 'node:child_process'
-import {promisify} from 'node:util'
+import {randomUUID} from 'node:crypto'
+import {scrubbedParentEnv,type SubprocessRuntime} from '@deepseek-ai/dsh-subprocess'
 import type {Context} from '@deepseek-ai/cordis'
 import {defineTool} from '@deepseek-ai/dsh-tools'
 import {hostService} from './api-route.js'
@@ -25,47 +25,56 @@ export interface LocalVideoArgs {operation:typeof VIDEO_LOCAL_OPERATIONS[number]
 export type LocalVideoRuntime=ReturnType<typeof videoRuntime>
 export type LocalVideoRuntimeResolver=(exec:any)=>Promise<LocalVideoRuntime>
 export interface LocalVideoProcessRequest {executable:string;args:string[];env:NodeJS.ProcessEnv;cwd:string;work?:string;signal?:AbortSignal}
-export type LocalVideoRunner=(request:LocalVideoProcessRequest)=>Promise<{code:number|null;stdout:string;stderr:string;cancelled:boolean;termination_error?:string}>
+export type LocalVideoRunner=(request:LocalVideoProcessRequest)=>Promise<{code:number|null;stdout:string;stderr:string;cancelled:boolean;output_truncated?:boolean;termination_error?:string}>
 
-/** A worker owns only the PID it wrote. A different worker's lock is never removed. */
-export async function releaseVideoChildLock(work:string|undefined,pid:number|undefined){
-  if(!work||!pid)return
+/** The worker and caller share one invocation identity, independent of Host PID ownership. */
+async function releaseVideoChildLock(work:string|undefined,owner:string){
+  if(!work)return
   const filename=path.join(work,'.lock')
   try{
     if((await fs.lstat(filename)).isSymbolicLink())return
-    if((await fs.readFile(filename,'utf8')).trim()===String(pid))await fs.unlink(filename)
+    if((await fs.readFile(filename,'utf8')).trim()===owner)await fs.unlink(filename)
   }catch{/* Missing/changed/unreadable lock is not authority to remove anything else. */}
 }
 
-async function terminateMediaTree(child:ChildProcess){
-  if(!child.pid||child.exitCode!==null||child.signalCode!==null)return
-  if(process.platform==='win32'){
-    await promisify(execFile)(path.join(process.env.SystemRoot??'C:/Windows','System32','taskkill.exe'),
-      ['/PID',String(child.pid),'/T','/F'],{windowsHide:true})
-  }else process.kill(-child.pid,'SIGKILL')
-}
-
-export const runLocalVideoProcess:LocalVideoRunner=request=>new Promise((resolve,reject)=>{
+/** DSH owns process-tree lifetime, cancellation and Host teardown for both
+ * offline media and ASR. This consumer owns only its JSON stream and task lock. */
+export async function runVideoProcess(request:LocalVideoProcessRequest,subprocess:Pick<SubprocessRuntime,'spawn'>) {
   request.signal?.throwIfAborted()
-  const child=spawn(request.executable,request.args,{cwd:request.cwd,env:request.env,shell:false,windowsHide:true,
-    detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']})
-  let stdout='',stderr='',overflow=false,cancelled=false,termination:Promise<void>|undefined,terminationError:string|undefined
-  const stop=()=>{termination??=terminateMediaTree(child).catch(()=>{terminationError='Could not confirm media process-tree termination';child.kill()})}
+  if(!subprocess)throw Error('DSH subprocess service is unavailable; no media worker was started')
+  const owner=randomUUID()
+  // Native env merges onto a scrubbed base. Tombstones preserve the offline
+  // caller's deliberately minimal environment; ASR adds its one selected key.
+  const env:NodeJS.ProcessEnv=Object.fromEntries(Object.keys(scrubbedParentEnv()).map(key=>[key,undefined]))
+  Object.assign(env,request.env,{DSH_VIDEO_LOCK_OWNER:owner})
+  const child=subprocess.spawn({argv:[request.executable,...request.args],cwd:request.cwd,env,
+    stdio:{stdin:'ignore',stdout:'pipe',stderr:'pipe'},graceMs:1000})
+  let stdout='',stderr='',overflow=false,cancelled=false
+  const stop=()=>child.terminate()
   const cancel=()=>{cancelled=true;stop()}
   request.signal?.addEventListener('abort',cancel,{once:true})
-  child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8')
-  child.stdout.on('data',(data:string)=>{if(stdout.length+data.length>1_000_000){overflow=true;stop()}else stdout+=data})
-  child.stderr.on('data',(data:string)=>{if(stderr.length+data.length>64_000){overflow=true;stop()}else stderr+=data})
-  child.once('error',error=>{request.signal?.removeEventListener('abort',cancel);reject(Error('Cannot start the selected tutorial runtime: '+(error as NodeJS.ErrnoException).code))})
-  child.once('close',async code=>{
-    request.signal?.removeEventListener('abort',cancel)
-    await termination
-    await releaseVideoChildLock(request.work,child.pid)
-    resolve({code,stdout,stderr:overflow?'Local video output exceeded its budget; inspect retained files.':stderr,cancelled,
-      ...(terminationError?{termination_error:terminationError}:{})})
-  })
+  child.stdout!.setEncoding('utf8');child.stderr!.setEncoding('utf8')
+  child.stdout!.on('data',(data:string)=>{if(stdout.length+data.length>1_000_000){overflow=true;stop()}else stdout+=data})
+  child.stderr!.on('data',(data:string)=>{if(stderr.length+data.length>64_000){overflow=true;stop()}else stderr+=data})
   if(request.signal?.aborted)cancel()
-})
+  let code:number|null=null,terminationError:string|undefined
+  try {
+    code=(await child.done).exitCode
+  } catch {
+    stderr=[stderr,'The selected media runtime did not return a confirmed exit; inspect retained files before retrying.'].filter(Boolean).join('\n')
+  } finally {
+    request.signal?.removeEventListener('abort',cancel)
+    // A direct-process exit alone is not proof that its descendants stopped.
+    try {
+      child.terminate()
+      if(!await child.waitForExit(AbortSignal.timeout(10000)))throw Error('termination unconfirmed')
+      await releaseVideoChildLock(request.work,owner)
+    } catch {terminationError='Could not confirm media process-tree termination; the task lock was preserved'}
+  }
+  return {code,stdout,stderr:overflow?'Media worker output exceeded its budget; inspect retained files.':stderr,cancelled,
+    ...(overflow?{output_truncated:true}:{}),
+    ...(terminationError?{termination_error:terminationError}:{})}
+}
 
 /** Only OS essentials reach this offline process; DSH provider credentials never do. */
 export function localVideoEnvironment(environment:NodeJS.ProcessEnv=process.env):NodeJS.ProcessEnv {
@@ -74,7 +83,7 @@ export function localVideoEnvironment(environment:NodeJS.ProcessEnv=process.env)
 }
 
 export async function processLocalVideo(ctx:any,exec:any,args:LocalVideoArgs,
-  resolveRuntime:LocalVideoRuntimeResolver,runner:LocalVideoRunner=runLocalVideoProcess) {
+  resolveRuntime:LocalVideoRuntimeResolver,runner?:LocalVideoRunner) {
   if(!VIDEO_LOCAL_OPERATIONS.includes(args.operation))throw Error('Unsupported local video operation; cloud transcription uses video_transcribe')
   if(!args.options||typeof args.options!=='object'||Array.isArray(args.options)||Object.keys(args.options).length>32)
     throw Error('options must be a flat object of bundled CLI options')
@@ -125,13 +134,14 @@ export async function processLocalVideo(ctx:any,exec:any,args:LocalVideoArgs,
   exec.signal?.throwIfAborted()
   const facts={operation:args.operation,runtime,output:args.options.output??null,cloud_request:false,readonly}
   try{
-    const result=await runner({executable:runtime.python,args:argv,env:localVideoEnvironment(),cwd,signal:exec.signal,
+    const result=await (runner??(request=>runVideoProcess(request,hostService(ctx,'subprocess'))))({executable:runtime.python,args:argv,env:localVideoEnvironment(),cwd,signal:exec.signal,
       ...(args.operation==='export'?{work:paths.find(item=>item.input===args.options.work)?.local}:{})})
     const rows=result.stdout.split(/\r?\n/).filter(Boolean).map(line=>{try{return JSON.parse(line)}catch{return null}}).filter(row=>row&&typeof row==='object')
-    const ok=result.code===0&&!result.cancelled&&!result.termination_error&&rows.length>0
+    const ok=result.code===0&&!result.cancelled&&!result.termination_error&&!result.output_truncated&&rows.length>0
     return {...facts,ok,status:ok?'completed':result.cancelled?'cancelled':'worker_failed',exit_code:result.code,
       result:rows.at(-1)??null,progress:rows.slice(0,-1),...(!ok?{error:result.stderr.trim().slice(0,4000)||'Local video worker did not return a completed result.'}:{}),
       ...(result.termination_error?{termination_error:result.termination_error}:{}),
+      ...(result.output_truncated?{output_truncated:true}:{}),
       scope:'Bundled offline media/evidence operation only. Facts, hashes and files remain owned by the Python script; no semantic certification or Houdini scene modification.'}
   }catch(error){return {...facts,ok:false,status:exec.signal?.aborted?'cancelled':'worker_not_started',error:(error as Error).message}}
 }

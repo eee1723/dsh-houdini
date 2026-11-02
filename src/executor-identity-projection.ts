@@ -4,6 +4,7 @@ import type {Session} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection/types'
 import {z} from 'zod'
+import type {ProjectionDefinition} from '@deepseek-ai/dsh-session-projection'
 import {executionCall,executionResult,houdiniSourceMessages} from './dsh-adapter.js'
 import type {SessionEvent} from './execution-history.js'
 import {sectionData} from './prompt-data.js'
@@ -299,7 +300,15 @@ export function recordedLoadWarningPath(events:readonly SessionEvent[],ref:strin
 }
 
 export function registerExecutorIdentityProjection(ctx:Context):void {
-  ctx.sessionProjections.register(executorIdentityProjection)
+  // The qualified Host consumes only schema.parse(), but its declaration
+  // exposes its pinned Zod fluent API. Keep our patched parser and all output
+  // types; do not recursively compare two versions' schema-builder methods.
+  type HostProjection=ProjectionDefinition<'houdiniExecutorIdentity'>
+  const definition={...executorIdentityProjection,
+    stateSchema:State as unknown as HostProjection['stateSchema'],
+    wire:{...executorIdentityProjection.wire,
+      viewSchema:executorIdentityProjection.wire.viewSchema as unknown as NonNullable<HostProjection['wire']>['viewSchema']}} satisfies HostProjection
+  ctx.sessionProjections.register(definition)
 }
 
 export function projectedExecutorBindingState(ctx:Context,session:Session) {

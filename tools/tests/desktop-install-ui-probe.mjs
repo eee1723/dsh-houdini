@@ -63,6 +63,7 @@ async function install(spec,label,enable){
  await cdp.call('Input.insertText',{text:spec})
  await shot(label+'-spec')
  await click(button('/^(安装|Install)$/',`[...document.querySelectorAll('[role=dialog]')].at(-1)`),'Native install submit')
+ await shot(label+'-submitted')
  await until(button('/^(立即启用|Enable now)$/'),label+' completed Native dialog')
  const installed=await until(async()=>{const row=await bundle();return row?.installed&&typeof row.version==='string'?row:null},label+' actual installed bundle')
  assert.equal(installed.version,config.expectedVersion,'Native UI installed another release version')
@@ -104,7 +105,7 @@ function wire(text,outgoing){
   if(!text.includes('credentials/set')){report.secretWrongChannel=true;return}
   report.secretTransport++
  }
- for(const method of ['pluginManager/installBundle','pluginManager/setBundleEnabled','pluginManager/removeBundle','session/prompt','credentials/set']){
+ for(const method of ['pluginManager/inspect','pluginManager/registries','pluginManager/installBundle','pluginManager/setBundleEnabled','pluginManager/removeBundle','session/prompt','credentials/set']){
   if(outgoing&&text.includes('"'+method+'"'))report.uiMethods[method]=(report.uiMethods[method]||0)+1
  }
 }
@@ -118,6 +119,10 @@ try{
  const shown=await main.call('Runtime.evaluate',{expression:`(()=>{if(process.pid!==${config.expectedPid})throw Error('Foreign Native carrier');const e=process.getBuiltinModule('module').createRequire(process.resourcesPath+'/app.asar/package.json')('electron');const w=e.BrowserWindow.getAllWindows().filter(w=>w.webContents.getURL().startsWith('dsh-app://app/'));if(w.length!==1)throw Error('Nonunique owned window');w[0].show();w[0].focus();return process.pid})()`,returnByValue:true})
  assert.equal(shown.result.value,config.expectedPid)
  cdp.on(event=>{
+  if(event.method==='Runtime.exceptionThrown'){
+   report.runtimeErrors??=[]
+   report.runtimeErrors.push(String(event.params.exceptionDetails.exception?.description??event.params.exceptionDetails.text).replaceAll(config.sentinel,'[redacted]'))
+  }
   if(event.method==='Network.webSocketFrameSent'||event.method==='Network.webSocketFrameReceived'){
    const frame=event.params.response,text=frame.opcode===2?Buffer.from(frame.payloadData,'base64').toString('utf8'):frame.payloadData
    wire(text,event.method==='Network.webSocketFrameSent')
