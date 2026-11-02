@@ -93,7 +93,7 @@ npm首次发布由维护者通过`npm login --registry=https://registry.npmjs.or
 
 npm分发回访仍使用上述现有入口：分发检查传`--remote-only --npm`，从`--artifact`内读取精确包名和版本，在原生插件页安装、启用、停用、重新启用及卸载；[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)传`--npm --artifact <冻结tgz>`核对registry依赖记录、同包manifest/文件、模式隔离与完整媒体资源。按需沿`--hfs`核对真实Houdini加载。验证使用自有profile，不修改用户现有安装；同包只换分发渠道时不重复整套HOM回归。
 
-中国大陆镜像采用[npmmirror的只读同步服务](https://npmmirror.com/)。npm正式版本可下载后，通过[本包同步页](https://npmmirror.com/sync/dsh-houdini)发起同步，核对任务结果、镜像的精确版本与dist-tag，再下载镜像tgz与同一冻结包比较摘要。镜像任务提交或网页旧缓存不代表版本已可安装；以目标registry实际查询及下载为准。同步延迟时仍提供npm官方源和GitHub直链，用户的安装源选择保持原生管理，不修改全局registry或另发一份包。
+中国大陆镜像采用[npmmirror的只读同步服务](https://npmmirror.com/)。npm正式版本可下载后，通过[本包同步页](https://npmmirror.com/sync/dsh-houdini)发起同步，核对任务结果、镜像的精确版本与dist-tag，再下载镜像tgz与同一冻结包比较摘要。镜像任务提交或网页旧缓存不代表版本已可安装；以目标registry实际查询及下载为准。原生分发检查可加`--registry https://registry.npmmirror.com/`，仅在自有profile配置该源、清空回退，并核对实际消费者读到的配置，避免自动选源掩盖未同步问题。同步延迟时仍提供npm官方源和GitHub直链，不修改用户全局registry或另发一份包。
 
 [Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。浏览器连接和原故障的现场复现分别判断；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
 

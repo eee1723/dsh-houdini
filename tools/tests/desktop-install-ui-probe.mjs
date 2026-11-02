@@ -128,6 +128,13 @@ try{
  await cdp.call('Runtime.enable');await cdp.call('Page.enable');await cdp.call('Network.enable',{maxPostDataSize:1_000_000})
  const initial=await until(NATIVE_SELECTION,'Native initial selected blank',45000)
  report.nativeElectronWindowTested=true
+ if(config.expectedRegistry){
+  const registries=await rpc('pluginManager/registries',{})
+  assert.equal(new URL(registries.registry).href,new URL(config.expectedRegistry).href)
+  assert.equal(new URL(registries.resolved).href,new URL(config.expectedRegistry).href)
+  assert.deepEqual(registries.fallbackRegistries,[],'A selected-registry check must not pass through another source')
+  report.registry=registries
+ }
  assert(!(await bundle()),'Fixture must begin without the product installed')
  const before=await rpc('agentPresets/list');assert(before.presets.some(row=>row.id==='standard'&&row.isDefault));assert(!before.presets.some(row=>row.id==='houdini'))
  report.initialNativeProfileWithoutPlugin=true

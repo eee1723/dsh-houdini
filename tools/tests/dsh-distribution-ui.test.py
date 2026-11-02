@@ -37,11 +37,16 @@ parser.add_argument('--remote-only',action='store_true',help='Directly validate 
 parser.add_argument('--local-only',action='store_true',help='Verify the actual local Native UI/Agent/credential path after a UI-only change')
 parser.add_argument('--remote-url',help='Install this actual HTTPS tarball URL through the native remote UI stage')
 parser.add_argument('--npm',action='store_true',help='Install the frozen artifact name@version through the native package-name UI')
+parser.add_argument('--registry',help='Use only this registry in the owned profile (requires --npm)')
 parser.add_argument('--timeout',type=int,default=240)
 args=parser.parse_args()
 assert not (args.remote_only and args.local_only)
 if args.npm and (not args.remote_only or args.remote_url):
     parser.error('--npm requires --remote-only and cannot use --remote-url')
+if args.registry:
+    registry_source=urllib.parse.urlsplit(args.registry)
+    if not args.npm or registry_source.scheme!='https' or not registry_source.hostname:
+        parser.error('--registry requires --npm and a complete HTTPS registry URL')
 if args.remote_url:
     remote_source=urllib.parse.urlsplit(args.remote_url)
     if remote_source.scheme!='https' or not remote_source.hostname:
@@ -205,6 +210,9 @@ def init_empty_profile():
         '- id: llm-pi-ai\n  config:\n    providers:\n      owned-distribution-chat:\n'
         '        api: openai-completions\n        baseURL: '+json.dumps(base+'/v1/')+'\n'
         '        apiKeyEnv: DSH_DIST_UI_CHAT_KEY\n        models:\n          - id: scripted-chat\n            input: [text]\n')
+    if args.registry:
+        patch+='- id: plugin-manager\n  config:\n    registry: '+json.dumps(args.registry)+'\n    fallbackRegistries: []\n'
+        (profile/'.npmrc').write_text('registry='+args.registry+'\n',encoding='utf-8')
     (profile/'cordis.patch.yml').write_text(patch,encoding='utf-8')
 
 
@@ -250,7 +258,7 @@ immutable={str(file):digest(file) for file in [electron,desktop/'resources/app.a
 report={'fixture':str(fixture),'artifactSha256':digest(copied),'nativeElectronWindowTested':False,'nativeProfile':'desktop',
     'installedByNativeUi':False,'cliPluginInstallUsed':False,'chatModel':'owned scripted loopback provider',
     'remoteDistribution':'published npm package installed by native UI' if args.npm else 'explicit HTTPS tarball installed by native UI' if args.remote_url else 'owned HTTP tarball mechanism only; no npm/GitHub publication claim',
-    'remoteInstallSpec':remote_spec,'immutable':immutable}
+    'remoteInstallSpec':remote_spec,'requestedRegistry':args.registry,'immutable':immutable}
 print('Owned Native distribution UI evidence:',fixture,flush=True)
 try:
     baseline=protocol_hash();report['protocolSha256Before']=baseline
@@ -270,7 +278,7 @@ try:
             cwd=fixture,env=env,stdout=output,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0))
         birth=_process_started(process.pid);assert birth;owned.append((process.pid,birth))
         endpoint=endpoints();capture_children()
-        settings={'artifact':str(copied),'remoteInstallSpec':remote_spec,'npmSpec':npm_spec,'expectedVersion':package['version'],
+        settings={'artifact':str(copied),'remoteInstallSpec':remote_spec,'npmSpec':npm_spec,'expectedVersion':package['version'],'expectedRegistry':args.registry,
             'asrEndpoint':asr_endpoint,'sentinel':sentinel,
             'remoteOnly':mode=='remote','expectedPid':process.pid,'timeoutMs':args.timeout*1000,'output':str(stage/'ui-result.json'),**endpoint}
         config=stage/'probe-input.json';config.write_text(json.dumps(settings),encoding='utf-8')
