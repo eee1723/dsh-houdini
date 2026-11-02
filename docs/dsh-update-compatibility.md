@@ -65,7 +65,7 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ## 正式发行单元与发布门
 
-标准发布物是符合 npm 包格式的 `.tgz` 插件包及其 Houdini helper/领域资源，使用[发布构建器](../tools/build-release.py)；包格式不表示已发布到 npm。媒体功能保留插件私有 FFmpeg/ffprobe、依赖、许可与完整源码资源，按[安装](setup.md#教程视频与转录设置)定位；不捆绑另一套 DSH 会话或运行时。构建失败不得以缺资源的包宣称离线能力齐全。
+标准发布物是符合 npm 包格式的 `.tgz` 插件包及其 Houdini helper/领域资源，使用[发布构建器](../tools/build-release.py)；包格式不表示已发布到 npm。媒体功能保留插件私有FFmpeg/ffprobe、运行依赖、全部许可及媒体库对应源码；LLVM完整项目采用固定来源引用，范围见[开发规范](development.md#受影响能力的验证)。用户运行所需文件均随包提供，按[安装](setup.md#教程视频与转录设置)定位；不捆绑另一套 DSH 会话或运行时。构建失败不得以缺资源的包宣称离线能力齐全。
 
 正式交付须核对 Desktop 安装/启停、其他模式保持、两条完整用户入口、H21/H22 helper 身份与重开。main push、tag、Draft 或源码 build 不代表已安装和正式发布；尚欠项见[交接](handoff.md)。
 

@@ -152,6 +152,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [client/node-delivery.js](../client/node-delivery.js) | 原生/嵌套回执的节点卡片投影，使用DSH公开Conversation与回复尾部插槽；文件交付继续由DSH负责 |
 | [gen-node-delivery-client.mjs](../tools/gen-node-delivery-client.mjs) | 只生成同源live-job解码与节点交付客户端，不再生成独立Trace或提示词镜像 |
 | [gen-verb-contract.mjs](../tools/gen-verb-contract.mjs) | 从tool-design生成Host动词名称、摘要、hash与执行版本，构建及docs:check共同校验 |
+| [build-release.py](../tools/build-release.py)、[build-video-runtime.py](../tools/build-video-runtime.py) | 标准插件与私有媒体发行装配；[runtime.json](../deployment/runtime.json)分别维护固定构建输入和源码分发范围，构建记录与实际交付清单保留各自事实 |
 
 默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
 automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。

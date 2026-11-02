@@ -92,7 +92,7 @@ Desktop无法连接时，可在此窗口选择「连接诊断…」，生成并�
 
 FFmpeg/ffprobe随完整插件包交付，普通用户不用安装到PATH。普通Python自动来自已选安装的静态信息或发现的Houdini安装；只解析教程不必先连接场景。缺少图片能力时由Agent引导使用DSH原生模型选择，不能把转录文本冒充完整画面分析。若用户需要部署本地推理模型，应在明确硬件和资源下载后使用独立环境，不把CUDA/推理依赖安装进Houdini Python，也不默启宿主的可选听写bundle。
 
-正式插件媒体资源位于 runtime/video，包含 FFmpeg/ffprobe、所需依赖、许可与完整对应源码。构建使用现有受控媒体构建/暂存入口，不从用户系统 PATH 猜测另一套默认工具。源码开发可以显式指定经过验证的 FFmpeg/ffprobe；缺失资源时返回实际依赖原因，不宣称离线功能已就绪。方法与验证见[开发规范](development.md)及[媒体契约](../skills/houdini-video-tutorial/references/video-processing.md)。
+正式插件媒体资源位于 runtime/video，包含FFmpeg/ffprobe、所需运行库、许可及媒体库对应源码；各版随包SOURCE-NOTICE说明附带归档和精确来源引用。构建使用现有受控媒体构建/暂存入口，不从用户系统 PATH 猜测另一套默认工具。源码开发可以显式指定经过验证的 FFmpeg/ffprobe；缺失资源时返回实际依赖原因，不宣称离线功能已就绪。方法与验证见[开发规范](development.md)及[媒体契约](../skills/houdini-video-tutorial/references/video-processing.md)。
 
 ## ChatGPT / Codex 订阅（可选）
 

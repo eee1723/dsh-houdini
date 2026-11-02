@@ -406,6 +406,18 @@ with log.open('wb') as output:
         for relative,expected_hash in provenance['files'].items():
             member=(media/relative).resolve(strict=True)
             assert member.is_relative_to(media.resolve()) and digest(member)==expected_hash,'Installed media inventory mismatch: '+relative
+        references=set(provenance.get('distribution',{}).get('sourceReferences',[]))
+        spec=metadata['ffmpeg']
+        assert references.issubset(spec['librarySources']),'Only declared library source archives may be referenced'
+        for name,source in {'ffmpeg':spec['source'],**spec['librarySources']}.items():
+            archive=media/'sources'/source['file']
+            if name in references:
+                assert not archive.exists(),'Referenced source must not be presented as bundled'
+                assert source['url'].startswith('https://') and len(source['sha256'])==64
+            else:
+                assert digest(archive)==source['sha256'],'Installed corresponding source mismatch: '+name
+            for license_file in source['licenseFiles']:
+                assert (media/'licenses'/name/license_file).is_file(),'Installed original license missing: '+name
         probes={}
         for name in ['ffmpeg','ffprobe']:
             result=subprocess.run([str(media/'ffmpeg/bin'/(name+'.exe')),'-version'],cwd=media/'ffmpeg/bin',env=env,
@@ -420,7 +432,7 @@ with log.open('wb') as output:
             installedArtifactFilesSha256=expected_files,dependencySpec=profile_manifest['dependencies']['dsh-houdini'],
             modeIds=[row['id'] for row in presets],rootClientCount=1,prepareBridgeOtherModeRefused=True,
             mediaRoot=str(media),mediaVersion=metadata['ffmpeg']['version'],mediaProbes=probes,
-            mediaInventoryFiles=len(provenance['files']),
+            mediaInventoryFiles=len(provenance['files']),mediaSourceReferences=sorted(references),
             runtimeRelease=facts['graph'].get('release') if isinstance(facts['graph'],dict) else None)
     finally:
         runtime.stop_owned(process);process.wait(timeout=15)

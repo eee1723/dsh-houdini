@@ -25,11 +25,11 @@ def run(args, *, cwd=ROOT, env=None, capture=False):
     return result.stdout.strip() if capture else None
 
 
-def stage_video_runtime(destination, scratch, config, *, cache=None, prepared=None):
+def stage_video_runtime(destination, scratch, config, *, cache=None, prepared=None, distribution=False):
     """Clean-tag assembly builds locked sources; local reuse verifies the same full provision."""
     spec = config["videoRuntime"]["ffmpeg"]
     destination, scratch = Path(destination), Path(scratch)
-    video_builder.prepare(destination, scratch, config["videoRuntime"], cache=cache, prepared=prepared)
+    facts = video_builder.prepare(destination, scratch, config["videoRuntime"], cache=cache, prepared=prepared)
     for name in ("ffmpeg.exe", "ffprobe.exe"):
         executable = destination / "ffmpeg/bin" / name
         if not executable.is_file():
@@ -40,10 +40,63 @@ def stage_video_runtime(destination, scratch, config, *, cache=None, prepared=No
     configuration = run([destination / "ffmpeg/bin/ffmpeg.exe", "-hide_banner", "-buildconf"], capture=True)
     if "--enable-gpl" in configuration or "--enable-nonfree" in configuration:
         raise ValueError("Tutorial media runtime must use the locked LGPL build")
+    if distribution:
+        distribute_media_sources(destination, config, facts)
     return {"name": "FFmpeg / ffprobe", "version": spec["version"], "license": spec["license"],
             "path": destination.as_posix(), "source": spec["source"]["url"],
             "libraries": [{"name": name, "version": item["version"], "license": item["license"],
                            "source": item["url"]} for name, item in spec["librarySources"].items()]}
+
+
+def distribute_media_sources(directory, config, build_facts):
+    """Derive the shipped inventory from a verified full build; binaries stay exact.
+
+    The complete LLVM source archive is optional under its permissive license.
+    This is release assembly only: build caches retain every locked input and
+    their original provenance. FFmpeg source is always bundled.
+    """
+    directory = Path(directory)
+    spec = config["videoRuntime"]["ffmpeg"]
+    references = sorted(set(config.get("mediaDistribution", {}).get("sourceReferences", [])))
+    if not references:
+        return
+    sources = {name: spec["librarySources"][name] for name in references}
+    provenance_path = directory / "build-provenance.json"
+    distribution = {"sourceReferences": references,
+                    "sourceBuildProvenanceSha256": video_builder.digest(provenance_path),
+                    "recipeSha256": video_builder.digest(__file__)}
+    files = dict(build_facts["files"])
+    for source in sources.values():
+        relative = "sources/" + source["file"]
+        (directory / relative).unlink()
+        del files[relative]
+    bundled = ["ffmpeg", *(name for name in spec["librarySources"] if name not in references)]
+    notice = [
+        "This package includes private FFmpeg/ffprobe and their runtime DLLs.",
+        "FFmpeg is licensed under LGPL-2.1-or-later; all original license files and toolchain notices are in licenses/.",
+        "Exact source archives bundled in sources/: " + ", ".join(bundled) + ".",
+        "FreeType attribution: Portions of this software are copyright (c) The FreeType Project",
+        "(www.freetype.org). All rights reserved.",
+        "The following permissively licensed source archives are referenced, not bundled:",
+    ]
+    for name, source in sources.items():
+        notice.extend([name + " " + source["version"] + " (" + source["license"] + ")",
+                       "  " + source["url"], "  SHA256: " + source["sha256"]])
+    notice.extend([
+        "runtime.json records all exact build inputs, including referenced sources.",
+        "build-provenance.json retains actual build commands, compiler, DLL imports and patches;",
+        "its files map describes this shipped tree and distribution records the source build provenance digest.",
+        "Only source archive delivery changed; executables, DLLs, licenses and build recipes are unchanged.",
+        "To rebuild on Windows: python sources/build-video-runtime.py --config runtime.json --output <new-dir> --cache sources.",
+        "The build host needs Python 3.11+ and Git for Windows; missing locked inputs are downloaded and verified.",
+        "Users running the plugin need no build tools or source downloads.",
+        "Libraries are separate DLLs and may be replaced with ABI-compatible modified builds.",
+        "Houdini Python and Windows system DLLs are provided by the user's licensed installations.",
+    ])
+    notice_path = directory / "SOURCE-NOTICE.txt"
+    notice_path.write_text("\n".join(notice) + "\n", encoding="utf-8")
+    files["SOURCE-NOTICE.txt"] = video_builder.digest(notice_path)
+    video_builder.write_json(provenance_path, {**build_facts, "distribution": distribution, "files": files})
 
 
 def temporary_staging(prefix):
@@ -107,9 +160,9 @@ def package_staged(args, npm, output, inventory, work):
     package["cpu"] = ["x64"]
     (plugin / "package.json").write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     config = json.loads((ROOT / "deployment/runtime.json").read_text(encoding="utf-8"))
-    print("Preparing source-complete tutorial media resources", flush=True)
+    print("Preparing verified tutorial media distribution", flush=True)
     media = stage_video_runtime(plugin / "runtime/video", work / "media", config,
-                                cache=args.media_cache, prepared=args.media_runtime)
+                                cache=args.media_cache, prepared=args.media_runtime, distribution=True)
     packed = json.loads(run([npm, "pack", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache", "--pack-destination", output], cwd=plugin, capture=True))[0]
     packed_files = {row["path"] for row in packed["files"]}
     if not {"runtime/video/ffmpeg/bin/ffmpeg.exe", "runtime/video/ffmpeg/bin/ffprobe.exe"}.issubset(packed_files):

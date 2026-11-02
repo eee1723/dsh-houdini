@@ -205,6 +205,11 @@
       ]
     }
   },
+  "mediaDistribution": {
+    "sourceReferences": [
+      "llvm"
+    ]
+  },
   "houdini": [
     "21.0",
     "22.0"

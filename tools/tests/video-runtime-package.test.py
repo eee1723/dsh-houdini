@@ -2,6 +2,7 @@
 from __future__ import annotations
 import importlib.util
 import io
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -36,12 +37,19 @@ with tempfile.TemporaryDirectory(prefix="dsh-private-media-package-") as tempora
         archive.writestr("source/example.c", "complete corresponding fixture source")
     with zipfile.ZipFile(recipe, "w") as archive:
         archive.writestr("recipe/build.sh", "pinned toolchain recipe")
+    llvm = cache / "llvm-source.zip"
+    with zipfile.ZipFile(llvm, "w") as archive:
+        archive.writestr("llvm/LICENSE.TXT", "Apache-2.0 WITH LLVM-exception fixture")
+        archive.writestr("llvm/compiler-rt/example.c", "full build input retained in the cache")
     source_spec = {"url": "https://github.com/test/source.zip", "sha256": media.digest(source),
         "root": "source", "file": source.name, "licenseFiles": ["COPYING.LGPLv2.1"]}
     recipe_spec = {"url": "https://github.com/test/recipe.zip", "sha256": media.digest(recipe),
         "root": "recipe", "file": recipe.name}
+    llvm_spec = {"url": "https://github.com/test/llvm.zip", "sha256": media.digest(llvm),
+        "root": "llvm", "file": llvm.name, "licenseFiles": ["LICENSE.TXT"],
+        "version": "fixture-version", "license": "Apache-2.0 WITH LLVM-exception"}
     runtime = {"python": "current-houdini-3.11+", "ffmpeg": {"version": "fixture-version",
-        "license": "LGPL-2.1-or-later", "source": source_spec, "librarySources": {}, "recipeSource": recipe_spec}}
+        "license": "LGPL-2.1-or-later", "source": source_spec, "librarySources": {"llvm": llvm_spec}, "recipeSource": recipe_spec}}
     with patch.object(media.urllib.request, "build_opener", side_effect=AssertionError("no network")):
         assert media.input_archive(source_spec, cache) == source
         rejects(lambda: media.input_archive({**source_spec, "sha256": "0" * 64}, cache), "checksum")
@@ -83,8 +91,13 @@ with tempfile.TemporaryDirectory(prefix="dsh-private-media-package-") as tempora
         (prepared / "ffmpeg/bin" / name).write_bytes(b"fixture, never executed")
     shutil.copyfile(source, prepared / "sources" / source.name)
     shutil.copyfile(recipe, prepared / "sources" / recipe.name)
+    shutil.copyfile(llvm, prepared / "sources" / llvm.name)
     shutil.copyfile(ROOT / "tools/build-video-runtime.py", prepared / "sources/build-video-runtime.py")
     (prepared / "licenses/ffmpeg/COPYING.LGPLv2.1").write_bytes(b"LGPL fixture")
+    (prepared / "licenses/llvm").mkdir()
+    (prepared / "licenses/llvm/LICENSE.TXT").write_bytes(b"Apache-2.0 WITH LLVM-exception fixture")
+    (prepared / "licenses/llvm/TOOLCHAIN-LICENSE.TXT").write_bytes(b"full upstream toolchain notices")
+    (prepared / "SOURCE-NOTICE.txt").write_text("all exact sources are present in this build", encoding="utf-8")
     media.write_json(prepared / "runtime.json", runtime)
     def record():
         files = {file.relative_to(prepared).as_posix(): media.digest(file) for file in prepared.rglob("*")
@@ -102,6 +115,33 @@ with tempfile.TemporaryDirectory(prefix="dsh-private-media-package-") as tempora
     assert commands[1][0] == destination / "ffmpeg/bin/ffprobe.exe"
     assert (destination / "ffmpeg/bin/avcodec-62.dll").is_file()
     assert (destination / "sources" / source.name).read_bytes() == source.read_bytes()
+    assert (destination / "sources" / llvm.name).read_bytes() == llvm.read_bytes()
+
+    # Release assembly changes only optional source delivery and its own facts.
+    # Full prepared inputs, LGPL sources, binary bytes and notices stay intact.
+    original = json.loads((prepared / "build-provenance.json").read_text())
+    original_digest = media.digest(prepared / "build-provenance.json")
+    distributed = root / "distributed"
+    config = {"videoRuntime": runtime, "mediaDistribution": {"sourceReferences": ["llvm"]}}
+    with patch.object(builder, "run", fake_run), patch.object(media.urllib.request, "build_opener", side_effect=AssertionError("no network")):
+        builder.stage_video_runtime(distributed, root / "distribution-scratch", config, prepared=prepared, distribution=True)
+    delivered = json.loads((distributed / "build-provenance.json").read_text())
+    assert delivered["distribution"]["sourceReferences"] == ["llvm"]
+    assert delivered["distribution"]["sourceBuildProvenanceSha256"] == original_digest
+    assert delivered["runtime"] == original["runtime"]
+    assert not (distributed / "sources" / llvm.name).exists()
+    assert (prepared / "sources" / llvm.name).is_file()
+    assert media.digest(prepared / "build-provenance.json") == original_digest
+    assert delivered["files"] == {file.relative_to(distributed).as_posix(): media.digest(file)
+        for file in distributed.rglob("*") if file.is_file() and file.name != "build-provenance.json"}
+    for relative, expected in original["files"].items():
+        if relative not in {"sources/" + llvm.name, "SOURCE-NOTICE.txt"}:
+            assert delivered["files"][relative] == expected, relative
+    notice = (distributed / "SOURCE-NOTICE.txt").read_text(encoding="utf-8")
+    assert llvm_spec["url"] in notice and llvm_spec["sha256"] in notice
+    assert "referenced, not bundled" in notice and "FreeType attribution" in notice
+    # A release cannot be mistaken for a full build cache for another assembly.
+    rejects(lambda: media.validate_prepared(distributed, runtime), llvm.name)
     (prepared / "ffmpeg/bin/ffmpeg.exe").write_bytes(b"changed executable")
     rejects(lambda: media.validate_prepared(prepared, runtime), "inventory")
     record()
@@ -109,4 +149,4 @@ with tempfile.TemporaryDirectory(prefix="dsh-private-media-package-") as tempora
     record()
     rejects(lambda: media.validate_prepared(prepared, runtime), "license")
 
-print("pinned source-complete private tutorial runtime staging tests passed")
+print("pinned full media builds and exact runtime/source distribution tests passed")
