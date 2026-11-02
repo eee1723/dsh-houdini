@@ -10,6 +10,8 @@ dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前 **0.1.6** 发�
 dsh-houdini@0.1.6
 ```
 
+如果提示“未找到相关插件”，先检查对话框右侧的“安装源”。新发布版本可能尚未同步到“中国大陆镜像源”，可切换为npm官方源后重新查询；自定义官方源地址为`https://registry.npmjs.org/`。也可使用下方GitHub完整包地址，它不依赖镜像中的包版本记录。镜像查询失败不代表官方源没有发布该版本。
+
 仅填写`dsh-houdini`会安装npm当前latest版本。需要使用GitHub来源时，也可在同一输入框粘贴完整地址：
 
 ```text

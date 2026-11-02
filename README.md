@@ -48,6 +48,8 @@ dsh-houdini@0.1.6
 
 [npm 包](https://www.npmjs.com/package/dsh-houdini)与[GitHub 正式包及校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.6)提供同一完整安装包，无须解压或运行脚本。仅填写 `dsh-houdini` 可安装 npm 的当前 latest 版本；指定本次安装版本使用上面的写法。包名分发不等于宿主自动更新，已有用户按[更新说明](docs/setup.md#connection--support连接与维护)操作；0.1.1～0.1.3 完成首次更新后才能使用新增的更新提醒。
 
+若显示“未找到相关插件”，可按[安装说明](docs/setup.md#普通安装)切换到npm官方源，或使用GitHub完整包地址；新版本可能尚未同步到所选镜像。
+
 新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
 
 安装、组件更新、旧入口迁移及卸载详见[安装与使用指南](docs/setup.md)。
