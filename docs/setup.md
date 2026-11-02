@@ -1,19 +1,25 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前 **0.1.5** 发行包面向 **Windows x64**，支持 **DSH 0.2.1-rc.3 / 0.2.1-rc.5**，首选 rc.5。精确范围与验证边界由[兼容清单](../dsh-runtime-compatibility.json)维护。Houdini 侧支持 21.0 和 22.0，实测构建为 21.0.440 和 22.0.368。产品使用同一份 DSH 原生会话，不另启动 Qt 聊天窗口或私有 DSH Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件。当前 **0.1.6** 发行包面向 **Windows x64**，支持 **DSH 0.2.1-rc.3 / 0.2.1-rc.5**，首选 rc.5。精确范围与验证边界由[兼容清单](../dsh-runtime-compatibility.json)维护。Houdini 侧支持 21.0 和 22.0，实测构建为 21.0.440 和 22.0.368。产品使用同一份 DSH 原生会话，不另启动 Qt 聊天窗口或私有 DSH Host。
 
 ## 普通安装
 
-标准发行单元是包含 Houdini 和媒体资源的 `.tgz`，通过 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases) 分发。在 Desktop 原生「插件 → 添加插件」中粘贴下方完整地址，即可直接安装指定版本；无需先下载或解压：
+标准发行单元是包含Houdini和媒体资源的完整插件包，[npm](https://www.npmjs.com/package/dsh-houdini)与[GitHub Release](https://github.com/eee1723/dsh-houdini/releases)分发同一个`.tgz`。在Desktop原生「插件 → 添加插件」中填写下方包名和版本即可安装，普通用户无需npm账号或另装Node：
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.5/dsh-houdini-0.1.5.tgz
+dsh-houdini@0.1.6
 ```
 
-当前使用 GitHub 正式包直链，未发布 npm 包名。不要只填 `dsh-houdini` 或仓库首页地址；历史独立工作台包和 GitHub 自动生成的 Source code ZIP 也不适用于这条标准插件安装路径。发布页同时提供 SHA256 校验文件；源码 push、tag 或 Draft 本身不等于包已公开可用。
+仅填写`dsh-houdini`会安装npm当前latest版本。需要使用GitHub来源时，也可在同一输入框粘贴完整地址：
+
+```text
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.6/dsh-houdini-0.1.6.tgz
+```
+
+GitHub发布页同时提供SHA256校验文件。仓库首页、历史独立工作台包和GitHub自动生成的Source code ZIP不适用于这条标准插件安装路径；源码push、tag或Draft本身不等于包已公开可用。
 
 1. 安装受支持的官方 DSH Desktop，并确认其 DSH 宿主版本符合上方精确兼容范围。
-2. 打开 Desktop 原生「插件 → 添加插件」，在「包名或地址」粘贴上方完整地址并点击「安装」。也可以先从发布页下载完整 `.tgz`，在同一处填入其本地绝对路径。直接安装压缩包，无须解压后寻找 `Install.cmd`，也无须另装 Node。
+2. 打开Desktop原生「插件 → 添加插件」，在「包名或地址」填写上述包名或完整地址并点击「安装」。也可下载完整`.tgz`并填入其本地绝对路径，无须解压后寻找`Install.cmd`。
 3. 安装完成后启用插件。当前宿主的新装插件默认停用，可在安装结果中选择「立即启用」，或在插件列表启用 `dsh-houdini`；安装成功本身不表示 Houdini 模式已经加载。
 4. 在 DSH 原生模型设置中完成供应商或账户配置，为当前对话选择可用主模型。插件复用这些设置。
 5. 新建或选择 Houdini 模式的对话，在工程菜单选择 Houdini 安装，新建场景或打开已有 HIP；已经加载兼容组件的工程也可直接选择绑定。
@@ -74,7 +80,7 @@ Houdini 组件提示按当前窗口实际加载与安装情况显示：「请先
 
 Desktop 的应用和账户更新由官方管理；Node 侧插件沿官方插件管理更新。当前验证的 Desktop 0.2.1-rc.3 插件页对第三方插件要求先卸载再安装新版；npm 包名与 GitHub Release 安装链接都遵守这个界面合同，发布到 npm 本身不会增加一键更新。更新插件不需要执行下述「移除本机组件」。
 
-也可先正常退出 Desktop，再用它自带的官方 CLI 直接安装新版，无须先卸载：`<Desktop安装目录>/resources/runtime/cli/bin/dsh.cmd plugin --profile desktop add <完整tgz路径或已发布安装地址>`。此路径通过原生插件管理器替换依赖，继续使用原 profile；不自行编辑配置或依赖目录。已在独立 Desktop profile 中核对 0.1.1 → 0.1.2 的覆盖安装和既有对话文件、配置保留，用户默认资料与其他版本仍按实际环境确认。完成后重新打开 Desktop；已加载旧组件的 Houdini 仍须保存并重开。npm 发布后同一官方入口可使用已发布的包名和精确版本，不能把包名分发等同于运行中的热更新。
+也可先正常退出Desktop，再用它自带的官方CLI直接安装新版，无须先卸载：`<Desktop安装目录>/resources/runtime/cli/bin/dsh.cmd plugin --profile desktop add dsh-houdini@0.1.6`。原来通过GitHub地址安装的用户可通过这一命令迁移为npm包名来源；同一入口仍接受完整tgz路径和正式地址。它经原生管理器替换依赖并继续使用原profile，不自行编辑配置或依赖目录。已在独立Desktop profile核对0.1.1 → 0.1.2的覆盖安装及既有对话/配置保持；其他用户组合仍按实际环境确认。完成后重新打开Desktop；Houdini按实际组件提示保存并重开。包名分发不等于运行中的热更新。
 
 Houdini 中手动选择 **DSH-Houdini → Connection & Support...** 才会打开「连接与维护」窗口，正常启动和打开工作区不弹出它。窗口默认提供打开 Desktop 工作区、重新连接和连接诊断；「更多维护选项」中才显示切换已安装组件版本、移除本机组件与当前加载位置。重复打开会复用同一窗口，不阻塞 Houdini 编辑。版本信息与维护只作用于本端 Bridge/helper，不下载 Desktop 插件更新。已加载版本以当次 Bridge 执行合同为准，不能只查看磁盘文件或包版本。
 
