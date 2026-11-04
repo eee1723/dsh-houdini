@@ -1,6 +1,6 @@
 ---
 name: houdini-sop-workflow
-description: 设计、构建、修改和交付可编辑的Houdini SOP程序化网络。用于建模、散布、曲线成形、属性、VEX和SOP动画。纯场景查询直接用工具；HDA工具、rig、COP和Solaris使用对应领域技能。
+description: 设计、构建、修改和交付可编辑的Houdini SOP网络。用于建模、散布、曲线、属性、VEX和SOP动画，也用于以生成或外部资产替换已有组件、保持布局与功能关系。纯场景查询直接用工具；HDA工具、rig、COP和Solaris使用对应领域技能。
 ---
 
 # Houdini SOP Workflow
@@ -30,6 +30,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP程序化�
 | 复杂任务如何拆分、逐个观察并集成 | 按名加载[任务拆分skill](../houdini-task-decomposition/SKILL.md) |
 | 前帧反馈、模拟耦合、缓存与重新计算 | [模拟工作流](../houdini-simulation-workflow/SKILL.md)，维护时间/状态及实际消费者；不把普通SOP方法代替求解方法 |
 | 完整重复组件、内部细化与布局的边界 | [完整源组件与布局](references/modeling-methods.md#完整源组件与布局) |
+| 用生成／外部资产替换已有组件，保持尺度、状态与布局 | 按名加载[资产接入skill](../houdini-asset-integration/SKILL.md)；本skill继续负责所需SOP构造 |
 | 路径、截面、重复源如何组合 | [建模方法](references/modeling-methods.md#1-从表示和构造选方法) |
 | 曲线不平滑、穿插、贴附偏离或扫掠扭转；需要可手调路径与净空反馈 | [可编辑路径与曲线](references/curves-and-routing.md)，分别选择造型、走向、采样和截面朝向；`sop_recipe('curve_path')`给原生可编辑路径，`geo_curve_clearance`仅查实际折线半径包络 |
 | 重复细节数量增长、VEX代码生成和下游编译失败 | [重复规律与代码生成](references/modeling-methods.md#重复规律与代码生成) |

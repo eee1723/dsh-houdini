@@ -12,6 +12,9 @@ import subprocess
 import sys
 import tempfile
 
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(encoding='utf-8', errors='backslashreplace')
+
 ROOT = Path(__file__).resolve().parents[1]
 _video_spec = importlib.util.spec_from_file_location("dsh_video_builder", ROOT / "tools/build-video-runtime.py")
 video_builder = importlib.util.module_from_spec(_video_spec)

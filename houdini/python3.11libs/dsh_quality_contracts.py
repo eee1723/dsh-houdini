@@ -8,6 +8,7 @@ continuous collision solver. Unsupported representations stay unverified.
 from __future__ import annotations
 
 import dsh_errors
+from dsh_errors import UnsupportedEvidence
 import dsh_node_access
 import dsh_node_operations
 import dsh_ownership
@@ -42,12 +43,6 @@ def interface_limits():
             'bore_clearance': {'max_target_primitives': _BORE_MAX_PRIMS,
                                'envelope_sides': _BORE_SIDES,
                                'cost': 'target primitive count * envelope_sides'}}
-
-
-class UnsupportedEvidence(ValueError):
-    def __init__(self, message, *, diagnostic=None):
-        super().__init__(message)
-        self.diagnostic = diagnostic or {}
 
 
 def validate_domain(domain):
@@ -954,13 +949,14 @@ def geo_check_interfaces(output, interfaces, max_pairs=50000):
     validate_interfaces(interfaces)
     if type(max_pairs) is not int or not 1 <= max_pairs <= _MAX_INTERFACE_PAIRS:
         raise ValueError(f'max_pairs must be in 1..{_MAX_INTERFACE_PAIRS}')
-    node, g, selection = observation.geometry(output,observation.interface_groups(interfaces))
+    node = dsh_node_access._resolve(output)
     from dsh_geometry_evidence import expanded_view
     try:
+        node, g, selection = observation.geometry(output,observation.interface_groups(interfaces))
         observed,representation=expanded_view(g,allow_native_unknown=True)
-    except ValueError as error:
+    except UnsupportedEvidence as error:
         return {'ok':False,'status':'unverified','output':node.path(),'reason':str(error),
-                'results':[],'semantic_status':'unverified',
+                'results':[],'semantic_status':'unverified','measurement_failure':error.diagnostic,
                 'contract_sha256':hashlib.sha256(json.dumps(interfaces,sort_keys=True).encode()).hexdigest()}
     result = _check_interfaces(observed, interfaces, max_pairs, node)
     result['representation']=representation
@@ -1385,16 +1381,19 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'reason':'baseline cook failed before any control write',
                 'cook_errors':baseline_cook['errors'],'semantic_status':'unverified'}
     groups=observation.control_groups(tests,interfaces,baseline_interfaces,topology)
-    node, baseline, selection=observation.geometry(output,groups)
+    node=dsh_node_access._resolve(output)
+    selection=None
     full_snapshot=None
     from dsh_geometry_evidence import expanded_view
     try:
+        node, baseline, selection=observation.geometry(output,groups)
         measured_baseline,representation=expanded_view(baseline)
-    except ValueError as error:
+    except UnsupportedEvidence as error:
         return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
                 'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],
                 'reason':str(error),'parameter_writes':0,'semantic_status':'unverified',
-                'geometry_scope':selection,'scope':'unsupported or over-budget evidence representation; zero parameter writes'}
+                'geometry_scope':selection,'measurement_failure':error.diagnostic,
+                'scope':'unsupported or over-budget evidence representation; zero parameter writes'}
     baseline_hash=_data_signature(baseline)
     baseline_contracts=(interfaces or [])+(baseline_interfaces or [])
     baseline_relations=_check_interfaces(measured_baseline,baseline_contracts,50000,node) if baseline_contracts else None
@@ -1431,7 +1430,13 @@ def _test_controls(controller, output, tests, interfaces=None, allow_foreign=Non
                 'parameter_writes':0, 'measurement_failure':error.diagnostic,
                 'reason':str(error),'semantic_status':'unverified','scope':'unsupported metric; zero parameter writes'}
     if selection['kind']=='selected_final_primitives':
-        full_snapshot=observation.snapshot(node.geometry(),Path(snapshot_directory)/'baseline.bgeo')
+        try:
+            full_snapshot=observation.snapshot(node.geometry(),Path(snapshot_directory)/'baseline.bgeo')
+        except UnsupportedEvidence as error:
+            return {'ok':False,'status':'unverified','controller':ctrl.path(),'output':node.path(),
+                    'frame':original_frame,'checked_at':time.time(),'restored':True,'results':[],**baseline_checks,
+                    'parameter_writes':0,'measurement_failure':error.diagnostic,'reason':str(error),
+                    'semantic_status':'unverified','scope':'restoration snapshot unavailable; zero parameter writes'}
     baseline_captures=capture_views(node,views,view_bounds=view_bounds,frame=original_frame) if views else []
     capture_locks={c['view']:c['framing'] for c in baseline_captures
                    if c.get('ok') is True and not c.get('stale') and c.get('framing',{}).get('bounds')

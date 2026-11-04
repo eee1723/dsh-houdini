@@ -4,6 +4,7 @@ from collections import defaultdict
 import hou
 from pathlib import Path
 import dsh_node_access
+from dsh_errors import UnsupportedEvidence
 from dsh_cook_control import require_evaluation
 
 
@@ -593,20 +594,21 @@ def geometry(output, primitive_groups=None):
     total=counts(source)
     scope={'kind':'whole_output','output':node.path(),'source':total}
     if bounded(total):return node,source.freeze(read_only=True),scope
+    limits={'max_points':MAX_POINTS,'max_primitives':MAX_PRIMS,'max_memory_bytes':MAX_BYTES}
     if not primitive_groups:
-        raise ValueError('geometry evidence budget exceeded; declare primitive groups for every measurement/relation or use a smaller explicit deliverable module')
+        raise UnsupportedEvidence('geometry evidence budget exceeded; declare primitive groups for every measurement/relation or use a smaller explicit deliverable module', diagnostic={**scope,'limits':limits})
     groups=sorted(set(primitive_groups));selected={}
     for name in groups:
         group=source.findPrimGroup(name)
         if group is None:raise ValueError('missing final-output primitive group: '+name)
         for prim in group.prims():
             selected[prim.number()]=prim
-            if len(selected)>MAX_PRIMS:raise ValueError('selected final-output primitive groups exceed geometry evidence budget')
+            if len(selected)>MAX_PRIMS:raise UnsupportedEvidence('selected final-output primitive groups exceed geometry evidence budget', diagnostic={**scope,'groups':groups,'limits':limits,'selected_primitives_at_stop':len(selected)})
     if not selected:raise ValueError('selected final-output primitive groups are empty')
     view=hou.Geometry()
     view.merge(source,prims=hou.Selection(tuple(selected[k] for k in sorted(selected))))
     measured=counts(view)
-    if not bounded(measured):raise ValueError('selected final-output geometry exceeds evidence point/memory budget')
+    if not bounded(measured):raise UnsupportedEvidence('selected final-output geometry exceeds evidence point/memory budget',diagnostic={**scope,'groups':groups,'selected':measured,'limits':limits})
     return node,view.freeze(read_only=True),{'kind':'selected_final_primitives','output':node.path(),
         'groups':groups,'source':total,'selected':measured,
         'scope':'Exact declared primitive groups copied from the final output, with attributes/topology; omitted geometry and unspecified relationships are unverified.'}
@@ -638,9 +640,9 @@ def control_groups(tests, interfaces, baseline_interfaces, topology):
 
 def snapshot(g, path):
     """Stream full native bgeo for restoration; never hash just the selected view."""
-    if counts(g)['memory_bytes']>MAX_SNAPSHOT_BYTES:raise ValueError('full output restoration snapshot exceeds 2 GiB')
+    if counts(g)['memory_bytes']>MAX_SNAPSHOT_BYTES:raise UnsupportedEvidence('full output restoration snapshot exceeds 2 GiB',diagnostic={'max_snapshot_bytes':MAX_SNAPSHOT_BYTES,'source':counts(g)})
     path=Path(path);g.saveToFile(str(path))
-    if path.stat().st_size>MAX_SNAPSHOT_BYTES:raise ValueError('full output restoration file exceeds 2 GiB')
+    if path.stat().st_size>MAX_SNAPSHOT_BYTES:raise UnsupportedEvidence('full output restoration file exceeds 2 GiB',diagnostic={'max_snapshot_bytes':MAX_SNAPSHOT_BYTES,'file_bytes':path.stat().st_size})
     from dsh_bgeo_fingerprint import fingerprint
     return {**fingerprint(path),'bytes':path.stat().st_size,
             'scope':'Entire final output native bgeo stream, including unselected geometry. Writer metadata/token identity normalized; unsupported representation changes are not accepted as restored. External side effects excluded.'}

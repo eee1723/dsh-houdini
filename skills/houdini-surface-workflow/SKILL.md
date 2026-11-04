@@ -50,6 +50,7 @@ description: 为模型与部件设计可编辑的表面外观，分析参考图�
 | 将已有成果作为新场景的风格或细节标准 | [跨场景的风格与质量基准](references/appearance-and-sources.md#跨场景的风格与质量基准) |
 | 生成可用于材质的图片、平铺检查及COP加工 | [生成贴图与混合使用](references/generated-textures.md) |
 | SOP中的材质/图片/COP消费、UV与采样排错 | [SOP应用与UV](references/sop-preview-and-uv.md) |
+| 外部模型／GLB材质缺失、变暗，功能状态或贴图变体接入 | [外部资产材质接入](references/sop-preview-and-uv.md#外部资产材质接入) |
 | 制作图案、关联多通道、可编辑程序材质 | houdini-cop-workflow → [图案设计方法](../houdini-cop-workflow/references/pattern-design.md) |
 | 正式USD／Karma材质与渲染 | houdini-solaris-karma-workflow |
 

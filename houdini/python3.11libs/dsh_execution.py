@@ -201,6 +201,7 @@ _VERB_DEFINITIONS = {
     'cook_node': VerbDefinition(dsh_hou_helpers.cook_node, 'exec', 'none'),
     'set_update_mode': VerbDefinition(dsh_hou_helpers.set_update_mode, 'exec', 'global'),
     'sop_set_output': VerbDefinition(dsh_hou_helpers.sop_set_output, 'exec', 'node'),
+    'set_display_node': VerbDefinition(dsh_hou_helpers.set_display_node, 'exec', 'node'),
     'sop_output_node': VerbDefinition(dsh_hou_helpers.sop_output_node, 'query_or_exec', 'none'),
     'set_object_visible': VerbDefinition(dsh_hou_helpers.set_object_visible, 'exec', 'node'),
     'visible_objects': VerbDefinition(dsh_hou_helpers.visible_objects, 'query_or_exec', 'none'),

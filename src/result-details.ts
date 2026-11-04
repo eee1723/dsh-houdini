@@ -91,15 +91,9 @@ export async function retainResult<T extends ExecResult>(value: T, workspace: st
   }
 }
 
-export async function readResultDetail(workspace: string | null, ref: string, pointer = '', offset = 0, limit = 6000, retainedPath?:string): Promise<ExecResult> {
+async function resultDocument(workspace:string|null,ref:string,retainedPath?:string):Promise<unknown> {
   if (!workspace&&!retainedPath) throw new Error('result details require a current session workspace or a recorded artifact')
   if (!/^[0-9a-f]{64}$/.test(ref)) throw new Error('result_ref must be a SHA-256 returned by this tool')
-  if (typeof pointer !== 'string' || pointer.length > 2048 || (pointer !== '' && !pointer.startsWith('/'))) {
-    throw new Error('pointer must be an empty string or JSON Pointer beginning with /')
-  }
-  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16000) {
-    throw new Error('offset must be a nonnegative integer; limit must be 1..16000 characters')
-  }
   if(retainedPath&&(!path.isAbsolute(retainedPath)||(path.basename(retainedPath)!==`${ref}.json`
     &&path.basename(retainedPath)!=='builder.json'&&!/^check-[a-z0-9_-]{1,48}\.json$/.test(path.basename(retainedPath)))))
     throw Error('recorded result path does not match its reference or declared isolated archive')
@@ -108,19 +102,63 @@ export async function readResultDetail(workspace: string | null, ref: string, po
   if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error('invalid result artifact')
   const bytes = await fs.readFile(filename)
   if (hash(bytes) !== ref) throw new Error('result artifact hash mismatch; content is not trusted')
-  let selected: unknown = JSON.parse(bytes.toString('utf8'))
-  if (pointer) for (const encoded of pointer.slice(1).split('/')) {
+  return JSON.parse(bytes.toString('utf8'))
+}
+
+function pointerKeys(pointer:string):string[] {
+  if (typeof pointer !== 'string' || pointer.length > 2048 || (pointer !== '' && !pointer.startsWith('/'))) {
+    throw new Error('pointer must be an empty string or JSON Pointer beginning with /')
+  }
+  return pointer===''?[]:pointer.slice(1).split('/').map(encoded=>{
     if (/~(?:[^01]|$)/.test(encoded)) throw new Error('invalid JSON Pointer escape')
-    const key = encoded.replace(/~1/g, '/').replace(/~0/g, '~')
+    return encoded.replace(/~1/g, '/').replace(/~0/g, '~')
+  })
+}
+
+function pointerValue(document:unknown,keys:string[]):unknown {
+  let selected=document
+  for (const key of keys) {
     if (selected === null || typeof selected !== 'object' || !Object.hasOwn(selected, key)
         || (Array.isArray(selected) && !/^(0|[1-9]\d*)$/.test(key))) throw new Error('JSON Pointer field not found')
     selected = (selected as Record<string, unknown>)[key]
   }
+  return selected
+}
+
+const provenance='Historical returned envelope, hash checked; not a live scene observation or edit permission.'
+
+/** One document/hash verification, multiple exact values. No partial JSON or
+ * interpretation of arbitrary authored result fields as execution verdicts. */
+export async function readResultSelection(workspace:string|null,ref:string,select:string[],limit=6000,retainedPath?:string):Promise<ExecResult> {
+  if(!Array.isArray(select)||select.length<1||select.length>16||new Set(select).size!==select.length)
+    throw Error('select must contain 1..16 unique JSON Pointers')
+  if(!Number.isSafeInteger(limit)||limit<1||limit>16000)throw Error('limit must be 1..16000 characters')
+  const keys=select.map(pointerKeys),document=await resultDocument(workspace,ref,retainedPath)
+  let remaining=limit
+  const items=select.map((pointer,index)=>{
+    let value:unknown
+    try {value=pointerValue(document,keys[index])}
+    catch {return {pointer,status:'missing',error:'JSON Pointer field not found'}}
+    const chars=JSON.stringify(value).length
+    if(chars>remaining)return {pointer,status:'requires_pagination',total_chars:chars,read:{pointer,offset:0,limit}}
+    remaining-=chars
+    return {pointer,status:'available',value}
+  })
+  return {ok:true,stdout:'',stderr:'',result:{result_ref:ref,format:'json_selection',items,
+    selected_value_chars:limit-remaining,provenance} as any}
+}
+
+export async function readResultDetail(workspace: string | null, ref: string, pointer = '', offset = 0, limit = 6000, retainedPath?:string): Promise<ExecResult> {
+  const keys=pointerKeys(pointer)
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 16000) {
+    throw new Error('offset must be a nonnegative integer; limit must be 1..16000 characters')
+  }
+  const selected=pointerValue(await resultDocument(workspace,ref,retainedPath),keys)
   const text = JSON.stringify(selected, null, 2)
   if (offset > text.length) throw new Error('offset exceeds selected JSON text length')
   const end = Math.min(offset + limit, text.length)
   return { ok: true, stdout: '', stderr: '', result: { result_ref: ref, pointer, offset,
     total_chars: text.length, next_offset: end < text.length ? end : null,
     format: 'json_text_page', text: text.slice(offset, end),
-    provenance: 'Historical returned envelope, hash checked; not a live scene observation or edit permission.' } }
+    provenance } }
 }

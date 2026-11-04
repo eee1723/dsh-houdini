@@ -55,6 +55,20 @@ try:
         owner_session="tab-create-failure-test", owner_call="call-relative")
     assert relative['ok'] and relative['result']['ok'], relative
     assert parent.node('out').input(0)==parent.node('source')
+    # Both creation entrances share declared multiparm initialization; field
+    # order is not an implicit prerequisite and later failures remove new nodes.
+    values={'pt0':[0,0,0],'pt1':[1,0,0],'prim0':'0 1','points':2,'prims':1}
+    multi=dsh_bridge.run_code(
+        f"a=tab_create({parent.path()!r},'add',name='multi_direct',parms={values!r})\n"
+        f"b=build_module({parent.path()!r},[{{'name':'multi_module','type':'add','parms':{values!r}}}],output='multi_module')\n"
+        "__result__={'direct':[len(a.geometry().points()),len(a.geometry().prims())]}",
+        owner_session='tab-create-failure-test',owner_call='multiparm-shared')
+    assert multi['ok'] and multi['result']['direct']==[2,1],multi
+    assert len(parent.node('multi_module').geometry().points())==2
+    broken=dsh_bridge.run_code(
+        f"tab_create({parent.path()!r},'add',name='multi_failed',parms={{'points':2,'pt0':[0,0]}})",
+        owner_session='tab-create-failure-test',owner_call='multiparm-failure')
+    assert not broken['ok'] and parent.node('multi_failed') is None,broken
     not_network = dsh_bridge.run_code(
         f"tab_create({parent.node('out').path()!r}, 'box', name='invalid_child')",
         owner_session="tab-create-failure-test", owner_call="call-leaf-parent")

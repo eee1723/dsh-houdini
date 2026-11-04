@@ -83,6 +83,8 @@ worker没有用户视窗；`render_view`与viewport截图要求GUI，不能用�
 
 ## 结果范围与接入
 
+先读本次运行状态、builder的选定结果、失败检查与恢复范围；多个小字段可用houdini_resource的select一次取得，只有大的字段才按pointer分页。报告读取不重新计算，不要为查接口、裁图或整理已有文本反复启动整份工程；无HOM依赖的处理优先使用宿主现有执行工具。原生参数发现按当前问题过滤，避免先导出全部节点参数再逐字段取回。外部命令被宿主拒绝时保留实际限制，由授权范围内的原生路径处理，不用Houdini绕过文件政策。
+
 报告本次输入版本、运行环境、实际输出路径、执行与检查结果，以及仍未观察的部分。结果属于这次builder/HIP副本和依赖；输入变化后，旧结果不能证明新状态。文件、像素或附件送达不证明语义正确；没有实际看图时明确视觉未验证。
 
 `inputs`和snapshot hash记录开始执行时逐文件复制并校验的版本，不是原子化的整工程快照；未归档或绝对引用依赖不在该保证内。`inputs_unchanged`单独观察运行后的原来源：true表示各声明来源两次观测均可读且同hash，不证明期间从未改变；false表示至少一项确认改变；null表示没有已确认改变但有来源不可读、未完整staging或未能观察。逐文件的`input_observations`保留source_path、before/after hash及changed/unchanged/unavailable与原错误；未完成复制的项没有已核对before hash，不可读不冒充已改变。

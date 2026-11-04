@@ -385,11 +385,35 @@
         "Reverse changes vertex order on selected faces. Repair only the affected primitive group when the problem is local, then recheck topology orientation and any existing N attribute."
       ]
     },
+    "gltf": {
+      "id": "gltf2-import-materials-v1",
+      "node_types": ["gltf::2.0"],
+      "tested_versions": ["22.0.368"],
+      "critical_parameters": ["gltffile", "loadby", "importnodegeometryas", "enablematerialimport", "importmaterialas", "materialnode"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/sop/gltf.html",
+      "notes": [
+        "This card applies to Houdini 22 gltf::2.0, not the older gltf node. Discover exact runtime parameters and menu tokens before configuring imports.",
+        "On H22.0.368 material import produces shop_materialpath plus the primitive attribute material_override (singular); inspect actual attribute names instead of copying the documentation's plural spelling. Material Node requires a supported material node, not merely the /mat network. A materialnode of '.' selects the viewport shader.",
+        "Binary images embedded in a GLB are not directly imported as textures by this node. Preserve/extract required images as project dependencies and bind their material indices, UVs and factors explicitly; successful geometry cooking does not prove texture import.",
+        "Flattened geometry bakes glTF node transforms into points; packed geometry retains transforms on primitives. Choose the representation for the downstream consumer and inspect final placement/materials rather than judging by point count."
+      ]
+    },
+    "principledshader": {
+      "id": "principled-texture-factors-v1",
+      "node_types": ["principledshader::2.0"],
+      "tested_versions": ["22.0.368"],
+      "source": "https://www.sidefx.com/docs/houdini/nodes/vop/principledshader.html",
+      "notes": [
+        "Texture values multiply their corresponding parameter values. Preserve an imported material's base-color factor; a leftover gray basecolor darkens the texture even when its filename and UVs are correct.",
+        "Cd and packed color tinting are additional consumers. Check them separately from texture color space, material_overrides and lighting; use emission only for intended emitting regions, not to compensate for an incorrect base-color multiplier."
+      ]
+    },
     "copytopoints": {
       "id": "copy-local-frame-v1",
       "source": "https://www.sidefx.com/docs/houdini/copy/instanceattrs.html",
       "notes": [
         "Input 0 is the source unit, input 1 the destination points. Establish the unit local axes and destination P/orient/scale before copying.",
+        "Pack and Instance shares source geometry instead of duplicating every polygon for every point. Inspect the actual pack setting when replacing a source with dense geometry; choose it only when downstream edits, attributes and material consumers support packed primitives.",
         "Arbitrary destination attributes follow the node's target-attribute transfer rules. Inspect those settings and the actual output attribute class before reading or promoting an attribute; its presence on the destination input does not prove it exists on copied geometry.",
         "Inspect attribute class and instance identity at the final output; do not assume a template name automatically identifies final primitives. Packed transform changes cannot be certified by P-only comparison."
       ]

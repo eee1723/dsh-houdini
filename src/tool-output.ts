@@ -57,6 +57,7 @@ export function execPresentationMeta(value: ExecResult): PresentationMeta {
 
 export function jobHandleMeta(value: JobHandle): PresentationMeta {
   return {
+    ...(value.job_id ? { job_id: value.job_id } : {}),
     ...(value.jobId ? { jobId: value.jobId } : {}),
     canonical: value as unknown as JsonValue,
   }
@@ -96,6 +97,7 @@ export function genericResult(title: string, result: ToolResult): GenericResultV
 export function jobResultTitle(action: string, result: ToolResult): string {
   if (result.isError) return `${action} · 失败`
   const meta = object(result.meta)
+  if (typeof meta?.job_id === 'string') return `${action} · ${meta.job_id}`
   if (typeof meta?.jobId === 'string' && meta.status === 'done')
     return resultTitle(`长任务 ${meta.jobId}`, result)
   const states: Record<string, string> = { queued: '排队中', running: '执行中', failed: '失败', cancelled: '已取消' }
@@ -186,6 +188,7 @@ function retainedProjection(stored: boolean, verbs: JsonValue[] = []) {
 
 function renderFields(value: ExecResult): string[] {
   const parts: string[] = []
+  if (value.job_id) parts.push(nativeJobActions(value.job_id))
   const retained = object(value.details)?.stored === true
   // Without an archive, only complete help values already shown in this reply
   // are shared. All other results keep their full inline fallback.
@@ -393,8 +396,15 @@ export function renderJobObservation(value: ExecResult, maxBytes: number): strin
 }
 
 export function renderJobHandle(value: JobHandle) {
-  const summary = `DSH job ${value.job_id}. Use job_output/job_kill; completion is reported in this conversation. `
+  const requestRef=object(value.requestReceipt)?.request_ref
+  const summary = (value.job_id ? nativeJobActions(value.job_id)+'\n' : '')
     +(value.jobId?'Houdini admission confirmed; this is not execution completion.':`Houdini admission is unconfirmed; do not resubmit. ${value.error||''}`)
-  return [{ type: 'text' as const, text: summary + (value.requestReceipt
-    ? `\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}` : '') }]
+  return [{ type: 'text' as const, text: summary
+    +(typeof requestRef==='string'?`\nRecover the original execution with houdini_request(${JSON.stringify({request_ref:requestRef})}).`:'')
+    +(value.requestReceipt?`\nThe receipt's jobId is a Bridge identifier, not a DSH job_id.\n\nrequest-receipt:\n${JSON.stringify(value.requestReceipt)}`:'') }]
+}
+
+function nativeJobActions(jobId: string): string {
+  const args=JSON.stringify({job_id:jobId})
+  return `DSH job_id: ${JSON.stringify(jobId)}. Wait/read with job_output(${args}); request cancellation with job_kill(${args}). Cancellation does not prove Houdini has stopped.`
 }

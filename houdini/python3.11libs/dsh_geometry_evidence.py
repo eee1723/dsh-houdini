@@ -1,5 +1,6 @@
 """Bounded in-memory evidence views; never edits nodes or loads packed files."""
 import hou
+from dsh_errors import UnsupportedEvidence
 
 MAX_PRIMS=100000
 MAX_POINTS=250000
@@ -11,7 +12,7 @@ MAX_DEPTH=8
 def check_budget(g):
     if (g.intrinsicValue('primitivecount')>MAX_PRIMS or g.intrinsicValue('pointcount')>MAX_POINTS
             or g.intrinsicValue('vertexcount')>MAX_VERTICES or g.intrinsicValue('memoryusage')>MAX_BYTES):
-        raise ValueError('geometry evidence budget exceeded; choose an explicit smaller final-output part')
+        raise UnsupportedEvidence('geometry evidence budget exceeded; choose an explicit smaller final-output part',diagnostic={'max_primitives':MAX_PRIMS,'max_points':MAX_POINTS,'max_vertices':MAX_VERTICES,'max_bytes':MAX_BYTES})
 
 
 def expanded_view(g, *, allow_native_unknown=False):
@@ -22,7 +23,7 @@ def expanded_view(g, *, allow_native_unknown=False):
     """
     totals={'primitives':0,'points':0,'vertices':0,'bytes':0,'packed_instances':0}
     def visit(geo,depth):
-        if depth>MAX_DEPTH:raise ValueError('packed evidence nesting exceeds 8 levels')
+        if depth>MAX_DEPTH:raise UnsupportedEvidence('packed evidence nesting exceeds 8 levels')
         check_budget(geo)
         totals['points']+=len(geo.points())
         totals['bytes']+=int(geo.intrinsicValue('memoryusage'))
@@ -30,14 +31,14 @@ def expanded_view(g, *, allow_native_unknown=False):
             name=prim.type().name()
             if name=='PackedGeometry':
                 totals['packed_instances']+=1
-                if totals['packed_instances']>4096:raise ValueError('packed evidence exceeds 4096 instances')
+                if totals['packed_instances']>4096:raise UnsupportedEvidence('packed evidence exceeds 4096 instances')
                 visit(prim.getEmbeddedGeometry(),depth+1)
             elif name in ('Polygon','Mesh','Sphere','Tube') or (allow_native_unknown and not name.startswith('Packed') and 'Alembic' not in name and name!='Agent'):
                 totals['primitives']+=1;totals['vertices']+=prim.numVertices()
-            else:raise ValueError('unsupported evidence representation: '+name)
+            else:raise UnsupportedEvidence('unsupported evidence representation: '+name)
             if (totals['primitives']>MAX_PRIMS or totals['points']>MAX_POINTS
                     or totals['vertices']>MAX_VERTICES or totals['bytes']>MAX_BYTES):
-                raise ValueError('expanded packed evidence budget exceeded before unpack')
+                raise UnsupportedEvidence('expanded packed evidence budget exceeded before unpack',diagnostic={'expanded_at_stop':dict(totals)})
     visit(g,0)
     if not totals['packed_instances']:return g,{'representation':'native','expanded':False,**totals}
     current=hou.Geometry(g)
@@ -48,7 +49,7 @@ def expanded_view(g, *, allow_native_unknown=False):
         if not any(p.type().name()=='PackedGeometry' for p in current.prims()):break
         result=hou.Geometry();verb.execute(result,[current]);check_budget(result);current=result
     if any(p.type().name()=='PackedGeometry' for p in current.prims()):
-        raise ValueError('packed expansion incomplete')
+        raise UnsupportedEvidence('packed expansion incomplete')
     return current.freeze(read_only=True),{'representation':'embedded_packed','expanded':True,**totals,
         'scope':'transformed in-memory evidence copy; original packed geometry, transforms and embedded payload are separately fingerprinted; no disk loads'}
 

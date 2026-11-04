@@ -46,8 +46,14 @@ crossing=[{'id':'smaller-output','values':{'width':2.,'resolution':8},'expectati
 crossed=run(f'__result__=test_controls({p!r},{output!r},{crossing!r})')['result']
 assert crossed['ok'] and crossed['restored'] and crossed['results'][0]['geometry_changed'] is None,'different collection scopes cannot compare fingerprints'
 unscoped=[{'id':'wider','values':{'width':2.},'expectations':[{'metric':'bounds_size','axis':0,'delta':[.999,1.001]}]}]
-assert 'budget' in run(f'test_controls({p!r},{output!r},{unscoped!r})',False)['error']
+unavailable=run(f'set_parm({p!r},"offset",100.5)\n__result__=test_controls({p!r},{output!r},{unscoped!r})')
+assert unavailable['result']['status']=='unverified' and unavailable['result']['parameter_writes']==0,unavailable
+assert 'budget' in unavailable['result']['reason'] and unavailable['result']['measurement_failure']['limits'],unavailable
+assert hou.node(p).evalParm('offset')==100.5,'an unsupported observation must not roll back an earlier valid edit in the batch'
+run(f'set_parm({p!r},"offset",100.0)')
 assert hou.node(p).evalParm('width')==1.
+missing_group=[{'id':'invalid-input','values':{'width':2.},'expectations':[{'metric':'bounds_size','axis':0,'group':'does_not_exist','delta':[.999,1.001]}]}]
+assert 'missing final-output primitive group' in run(f'test_controls({p!r},{output!r},{missing_group!r})',False)['error']
 restore=parameters._restore_parameters
 def drift_outside_selection(states):
     errors=restore(states)

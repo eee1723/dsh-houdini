@@ -11,6 +11,22 @@ import dsh_ownership
 import dsh_parameter_values
 
 
+def _apply_created_parameters(node, values):
+    """Initialize a new node using the same declared multiparm shape as discovery.
+
+    Counts instantiate dependent fields, in template parent-before-child order.
+    The caller owns removal of the entire new node/module if a later value fails.
+    Existing-node set_parms keeps its stricter pre-existing-field transaction.
+    """
+    parameters = dsh_node_types._node_parameter_cards(node.type(), values)
+    counts = [p['name'] for p in parameters if p.get('multiparm_count') and p['name'] in values]
+    for name in counts:
+        dsh_parameter_values.set_parm(node, name, values[name])
+    remaining = {name: value for name, value in values.items() if name not in counts}
+    if remaining:
+        dsh_parameter_values.set_parms(node, remaining)
+
+
 _TAB_TOOL_ALLOWLIST = {
     "lop_karma_setup",
     "vop_karmamtlxsubnet",
@@ -529,7 +545,7 @@ def tab_create(
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
     - ``inputs``：可选，创建后按序连到 input 0..n（节点、绝对路径或parent相对路径；None保留空槽；
       连接失败会抛错，不会静默跳过）。
-    - ``parms``：可选非空严格参数批次，创建/接线后通过set_parms应用；
+    - ``parms``：可选非空严格参数批次，创建/接线后先按声明实例化multiparm数量，再应用其字段；
       任一字段失败会连同新节点一起清理。复杂模块仍优先build_module。
       Sweep 2.0声明第二输入时在接线后校正surfaceshape=input；build_module显式parms随后可覆盖。
       新建Karma Render Settings默认关闭景深、按HIPNAME分组输出；显式parms可覆盖。
@@ -574,7 +590,7 @@ def tab_create(
         _initialize_created_inputs(node, input_nodes)
         _initialize_created_render_settings(node)
         if parms is not None:
-            dsh_parameter_values.set_parms(node, parms)
+            _apply_created_parameters(node, parms)
         dsh_node_layout._place_created_node(node)
     except BaseException as error:
         # Headless has no undo stack. Never leave a half-created semantic node

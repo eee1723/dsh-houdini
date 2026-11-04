@@ -1,6 +1,6 @@
 {
   "name": "dsh-houdini",
-  "version": "0.1.6",
+  "version": "0.1.7-rc.1",
   "private": true,
   "description": "DeepSeek Harness plugin that lets the agent control SideFX Houdini",
   "homepage": "https://github.com/eee1723/dsh-houdini#readme",

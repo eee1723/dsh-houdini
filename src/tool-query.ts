@@ -1,20 +1,22 @@
 /** Host resource reads and recovery use distinct contracts, never live code. */
 import type {ExecResult} from './bridge.js'
-import {readResultDetail,recordedResultPath} from './result-details.js'
+import {readResultDetail,readResultSelection,recordedResultPath} from './result-details.js'
 import {readTaskSource} from './task-sources.js'
 import {HoudiniToolRuntime,workspaceOf} from './tool-runtime.js'
 import {recordedLoadWarningPath} from './executor-identity-projection.js'
 import {requestStatusGuidance} from './execution-history.js'
 import type {LiveJobs} from './live-jobs.js'
 
-export function readResource(args:{kind:'source'|'result';ref:string;pointer?:string;offset?:number;limit?:number},exec:any):Promise<ExecResult>|ExecResult {
+export function readResource(args:{kind:'source'|'result';ref:string;pointer?:string;select?:string[];offset?:number;limit?:number},exec:any):Promise<ExecResult>|ExecResult {
   if(args.kind==='result') {
+    if(args.select!==undefined&&(args.pointer!==undefined||args.offset!==undefined))throw Error('select cannot be combined with pointer or offset; page an oversized selection separately')
     const events=exec?.agent?.session?.snapshotEvents?.()??[]
     const retained=recordedResultPath(events,args.ref)??recordedLoadWarningPath(events,args.ref)
-    return readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit,retained)
+    return args.select!==undefined?readResultSelection(workspaceOf(exec),args.ref,args.select,args.limit,retained)
+      :readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit,retained)
   }
   if(args.kind!=='source') throw Error('kind must be source or result')
-  if(args.pointer!==undefined) throw Error('pointer is only used for result resources')
+  if(args.pointer!==undefined||args.select!==undefined) throw Error('pointer/select are only used for result resources')
   const session=exec?.agent?.session
   if(!session?.snapshotEvents) throw Error('Task sources require a current agent session')
   return readTaskSource(session.snapshotEvents(),args.ref,args.offset,args.limit)

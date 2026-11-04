@@ -160,8 +160,18 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     assert projected['ok'] is False and projected['error']==original_error
     assert projected['details']['stored'] and projected['details']['bytes']>5_700_000
     assert len(runner._encoded(projected))<runner.DETAIL_THRESHOLD
+    many_fields={**envelope,'outcome':{'batch':'completed','operations':{'total':2,'failed':1}},
+                 'execution':{'runtime_id':'r'*32,'verbose':['x'*300 for _ in range(100)]},
+                 'transaction':{'status':'rolled_back','nodes':['node'*100 for _ in range(100)]},
+                 'result':{'selected':'important result','payload':['z'*500 for _ in range(100)]},
+                 'stdout':'authored note\n'+('log '*20000)}
+    many_projected=runner.execution_projection(details_root,'many-fields',many_fields)
+    assert len(runner._encoded(many_projected))<=runner.DETAIL_THRESHOLD,'one budget must cover the entire execution, not each field separately'
+    assert many_projected['outcome']==many_fields['outcome']
+    assert many_projected['execution']['runtime_id']=='r'*32
+    assert runner.read_execution(details_root,many_projected)==many_fields
     assert runner.read_execution(details_root,projected)==envelope
-    assert len(list((details_root/'executions').iterdir()))==1
+    assert len(list((details_root/'executions').iterdir()))==2,'each distinct execution is archived once'
     assert projected['evidence']==envelope['evidence']
     original_bytes=Path(projected['details']['path']).read_bytes()
     # Attempting to reuse the same archive id reports archival failure only.

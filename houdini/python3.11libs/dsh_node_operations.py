@@ -343,6 +343,34 @@ def _cook_node(node, force=False, timeout_ms=30000, *, preflight=True):
     }
 
 
+def _display_flag(node, enabled):
+    """One flag operation; publication and object visibility are separate roles."""
+    setter = getattr(node, 'setDisplayFlag', None)
+    reader = getattr(node, 'isDisplayFlagSet', None)
+    if not callable(setter) or not callable(reader):
+        raise ValueError(f'{node.path()} ({node.type().category().name()}) has no native display flag')
+    previous = bool(reader())
+    setter(enabled)
+    return {'context': node.type().category().name(), 'node': node.path(),
+            'previous_display': previous, 'display': bool(reader())}
+
+
+def set_display_node(node, allow_foreign: str | None = None) -> dict:
+    """选择网络的活动显示节点（SOP、LOP、COP、CHOP等支持原生显示输出的上下文）。
+
+    网络活动输出是选择关系，不提供可能被原生自动回退的关闭操作。OBJ可见性是独立布尔状态。
+    不设置render flag、不发布Subnet端口、不移动视口或改变选择。
+    SOP交付的display/render/公共端口组合仍用sop_set_output；OBJ有效可见性用set_object_visible。
+    """
+    n = dsh_node_access._resolve(node)
+    dsh_ownership.require_owned(n, 'set_display_node', allow_foreign)
+    if n.type().category() == hou.objNodeTypeCategory():
+        raise ValueError('OBJ visibility uses set_object_visible; set_display_node selects one network output')
+    previous=n.parent().displayNode()
+    result=_display_flag(n, True)
+    return {**result,'previous_display_node':previous.path() if previous else None}
+
+
 def sop_set_output(node, render: bool = True,
                    allow_foreign: str | None = None, *, output_index: int | None = None) -> dict:
     """把 SOP display（默认连同 render）旗标移到指定输出节点。
@@ -369,7 +397,7 @@ def sop_set_output(node, render: bool = True,
     if output_index is not None:
         published = publish_output(n, output_index, allow_foreign)
         n = dsh_node_access._resolve(published['node'])
-    n.setDisplayFlag(True)
+    _display_flag(n, True)
     if render:
         n.setRenderFlag(True)
     return {'context': 'sop', 'node': n.path(), 'display': True, 'render': render,
@@ -425,7 +453,7 @@ def set_object_visible(node, visible: bool = True,
             f"set_object_visible 只接受 OBJ，收到 {n.path()} "
             f"({n.type().category().name()})；SOP 输出请用 sop_set_output"
         )
-    n.setDisplayFlag(bool(visible))
+    _display_flag(n, bool(visible))
     effective = None
     try:
         effective = bool(n.isObjectDisplayed())

@@ -43,6 +43,8 @@ Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该
 
 ## 职责分层
 
+外部生成服务继续使用其公开CLI/API和提供方skill；[资产接入skill](../skills/houdini-asset-integration/SKILL.md)维护Houdini消费者与工程修改方法。[prepare-glb.mjs](../skills/houdini-asset-integration/scripts/prepare-glb.mjs)仅离线外置自包含GLB的原始资源，保留BIN、变换与材质声明，由原生导入器解释几何；不复制厂商账户、生成队列或资产账本。此CLI沿已有终端/文件政策，缺少权限不借HOM绕过。验证见[资产准备回归](../tools/tests/asset-preparation.test.mjs)及节点知识的实际GLB消费检查。
+
 ### 多Houdini执行端与任务恢复
 
 默认入口使用官方DSH Desktop：一个原生Host、多个自行登记的Houdini Bridge。对话通过DSH原生选择事件保存当前目标；用户可以更换已执行对话的现场，旧请求与历史回执保留自己的运行身份。
@@ -57,7 +59,7 @@ Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该
 
 现场长任务只通过`houdini_job_submit`启动，先取得DSH原生jobs准入，再向Bridge提交。DSH负责job_id、归属、界面、通知与job_output/job_kill；Bridge的jobId、request_ref和runtime保留真实执行身份。Host只观察原任务，不另建调度器。运行中的HOM不能强停，取消排队任务与请求取消已运行任务分别表达；Host/作者卸载只释放本机观察，不等待或终止用户Houdini。重开后houdini_request按原回执重新观察，不重发代码。队列异步不保证原生长计算期间Houdini界面可交互；适合独立副本的计算可用houdini_isolated。
 
-当前目标、待处理执行及恢复摘要由同一个DSH session projection增量维护；在线路由、上下文和恢复直接读取该投影，不在每个工具入口重扫日志。完整结果留原生日志与详情，按需历史读取和离线Trace复用同一事实转换。job/settled只表示DSH观察生命周期，不能替代HOM终态；明确的live job_output原始回执由同一个adapter解码，普通DSH作业不会改变Houdini身份。
+当前目标、待处理执行及恢复摘要由同一个DSH session projection增量维护；在线路由、上下文和恢复直接读取该投影，不在每个工具入口重扫日志。提交／恢复结果提供可直接调用的DSH job_id，界面沿用同一标识；模型上下文把内部任务显式标为bridge_job_id，不能传给原生作业工具。完整结果留原生日志与详情，按需历史读取和离线Trace复用同一事实转换。job/settled只表示DSH观察生命周期，不能替代HOM终态；明确的live job_output原始回执由同一个adapter解码，普通DSH作业不会改变Houdini身份。
 
 ### 一次性独立执行
 
@@ -119,9 +121,9 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |
-| [src/isolated-execution.ts](../src/isolated-execution.ts) | houdini_isolated的一次性builder/HIP副本及受管准备操作；安装来自明确选定的执行端登记或显式HFS，登记断连不要求live健康；消费DSH输入政策、共享默认运行目录、原报告事实和详情引用，复用隔离检查器/DSH作业/附件，不建立常驻子执行端或自动合并 |
+| [src/isolated-execution.ts](../src/isolated-execution.ts) | 一次性builder/HIP副本；安装来自登记或显式HFS，不要求live健康。报告元数据与执行正文分开，正文复用通用结果呈现；完整进程输出/报告留原生canonical，成功报告不再作为stdout重复展示。消费DSH输入政策、作业和附件，不建立常驻子执行端 |
 | [src/execution-source.ts](../src/execution-source.ts) | exec/job共用的内联或文件源码读取；经DSH文件服务固定UTF-8字节和摘要、核对可选版本后提交，不选择现场、不执行HOM、不自动重放 |
-| [src/tool-query.ts](../src/tool-query.ts) | 场景读取与Host来源/历史结果/能力/回执查询分支；本地读取不解析执行端 |
+| [src/tool-query.ts](../src/tool-query.ts) | Host来源/历史结果/能力/回执读取；result可一次select多个精确JSON字段，单字段分页保留。两者共用同一原文、hash和指针解析，缺失/过大明确返回，不重复执行HOM |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；同源执行事实保留canonical，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
 | [src/component-compatibility.ts](../src/component-compatibility.ts)、[src/component-installation.ts](../src/component-installation.ts) | 执行/界面共用兼容判断；异步消费安装器预览与实际加载身份，区分待安装和待重开，不以组件构建差异阻断兼容执行 |

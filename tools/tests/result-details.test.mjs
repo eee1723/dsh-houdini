@@ -58,6 +58,15 @@ try {
   const meta=exec.output.presentationMeta({},value);
   assert.deepEqual(meta.canonical.verbs,raw.verbs,'durable audit retains full args/results outside model text');
   assert.equal(JSON.stringify(raw),before,'projection and retention do not mutate the original envelope');
+  const selected=await query.execute({kind:'result',ref:value.details.sha256,
+    select:['/ok','/result/payload','/not-present','/stdout'],limit:500},context);
+  assert.equal(selected.result.format,'json_selection');
+  assert.deepEqual(selected.result.items[0],{pointer:'/ok',status:'available',value:true});
+  assert.equal(selected.result.items[1].status,'requires_pagination');
+  assert.equal(selected.result.items[2].status,'missing');
+  assert.equal(selected.result.items[3].value,raw.stdout);
+  assert.equal(executions,1,'multi-field detail reads never execute Houdini again');
+  await assert.rejects(async()=>query.execute({kind:'result',ref:value.details.sha256,select:['/ok'],pointer:'/result'},context),/cannot be combined/);
   let collected='',offset=0;
   do {
     const page=await query.execute({kind:"result",ref:value.details.sha256,pointer:'/result/payload',offset,limit:16000},context);

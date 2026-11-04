@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {createHash} from 'node:crypto'
-import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary} from '../../lib/isolated-execution.js'
+import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary,renderIsolatedResult} from '../../lib/isolated-execution.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
 
 // DSH resolves local paths to their real spelling, including Windows TEMP aliases.
@@ -92,6 +92,13 @@ try {
   assert.equal(result.report.result.builder.stderr,'Authored diagnostic')
   assert.equal(result.report.worker.output,'verbose process log','native canonical preserves the original report')
   assert.equal(isolatedPresentation(result).report.worker.output,undefined,'model display alone omits verbose process output')
+  const echoed={...result,process:{...result.process,stdout:JSON.stringify(result.report)}};
+  const modelText=renderIsolatedResult(echoed).filter(item=>item.type==='text').map(item=>item.text).join('\n');
+  assert.equal((modelText.match(/Measured width: 5 m/g)??[]).length,1,'authored execution output is displayed once, not echoed inside process stdout');
+  assert(modelText.includes('Authored diagnostic'));
+  assert(modelText.includes('__result__'));
+  assert(!modelText.includes('[verb] set_parms echo'));
+  assert.equal(echoed.process.stdout,JSON.stringify(result.report),'canonical process evidence is unchanged');
   assert.equal(result.execution,undefined,'independent execution never projects a live observation')
   assert.equal(result.process.exit_code,0);assert.equal(savedImages,1)
   assert(!HOUDINI_SCENE_TOOLS.has('houdini_isolated'))
@@ -103,6 +110,8 @@ try {
     'native canonical reads preserve every report field; presentation cannot erase execution evidence')
   assert.equal(runtimeReads,1,'reading a completed run never resolves the current Houdini')
   assert.equal(tool.output.render({},read).filter(item=>item.type==='image').length,1)
+  assert.equal(tool.presentResult({}, {meta:{canonical:read},content:[]}).title,'独立 Houdini · 已完成');
+  assert.equal(tool.presentResult({}, {meta:{canonical:{report:{finished:true,ok:false}}},content:[]}).title,'独立 Houdini · 失败');
   assert.deepEqual(JSON.parse(JSON.stringify(read)),read,'public canonical values are lossless JSON')
   await fs.writeFile(path.join(output,'artifacts/image/test.png'),'changed after check')
   const changed=await executeIsolated(ctx,exec,{operation:'read',output_dir:output},runtimeResolver,runner)

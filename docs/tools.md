@@ -9,7 +9,7 @@
 | `houdini_inspect` · 观察工程 | 读取真实Houdini场景、节点、参数和能力资料。 | 只读Python代码；hou与动词已导入。 | 读取结果、诊断及本次观察的场景身份。 | Houdini主线程，只读 |
 | `houdini_exec` · 执行操作 | 批量创建、修改、检查、保存或出图。 | Python代码或绝对UTF-8 .py脚本；script可带expected_sha256及code调用尾段，不使用exec(open(...))加载；__result__返回结构数据。 | 结果、真实错误、操作记录、事务状态、脚本版本、图像和文件。 | Houdini主线程，串行 |
 | `houdini_request` · 查回执行 | 回答某个未知响应的请求是否执行、是否完成；避免重复修改。 | 原请求的request_ref；index仅列当前所选运行实例中本会话的回执。 | 原执行状态与可取得的原始结果；不会重发代码。 | Bridge请求记录，无HOM |
-| `houdini_resource` · 读取资料 | 按需读取原始用户资料、完整历史工具结果及已归档加载警告。 | kind=source/result、ref及可选分页；result可选JSON Pointer。 | 原文或JSON分页及继续读取位置。 | DSH Host，无HOM |
+| `houdini_resource` · 读取资料 | 按需读取原始用户资料、完整历史工具结果及已归档加载警告。 | kind=source/result、ref及可选分页；result用select批读多个JSON Pointer，或pointer/offset分页单字段。 | 原文、完整JSON选值或JSON文本分页；缺失和超预算字段显式返回后续读取入口。 | DSH Host，无HOM |
 | `houdini_capabilities` · 观察通道 | 确认当前模型能否接收图片，以及附件通道是否可用。 | 无需参数。 | 当前模型与附件能力事实；不会渲染或判断画面。 | DSH Host，无HOM |
 | `houdini_isolated` · 独立Houdini执行 | 按需在新hython中执行构建脚本、已保存工程副本及加载后的准备操作，取得真实检查、错误和图片，供当前作者或团队成员自验证。 | operation=run/read、manifest；run可选全新output_dir，默认在当前DSH工作区execution_run角色内分配唯一目录；read传原run路径。使用已选工程登记的安装信息，离线仍可运行；可选houdini_installation显式指定HFS。manifest支持hip+script与input_root；可选background、timeout_seconds、memory_mb。 | 独立运行报告、输入版本、构建结果、检查和原生图片；大型原始回执单份保留并返回details；后台使用DSH job_output/job_kill。 | Host监管的一次性独立hython，不修改当前工程、不自动合并 |
 | `houdini_ui_list` · 发现界面 | 列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。 | 无需参数；不打开或切换界面。 | 当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。 | Bridge主线程队列，只读发现 |

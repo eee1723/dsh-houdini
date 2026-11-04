@@ -16,7 +16,7 @@ import {resolveVideoRuntime} from './video-runtime.js'
 import {localVideoEnvironment} from './video-process.js'
 import {visualCapability} from './image-output.js'
 import {HOUDINI_TOOLS} from './tool-catalog.js'
-import {executionStdout} from './tool-output.js'
+import {executionStdout,renderExec} from './tool-output.js'
 import {projectDirectoryPath} from './project-paths.js'
 
 const CHECKER=fileURLToPath(new URL('../tools/isolated-houdini-check.py',import.meta.url))
@@ -155,8 +155,7 @@ function reportView(report:any) {
   const result=report.result
   const execution=(value:any,pointer:string)=>{
     if(!value)return undefined
-    const {verbs:_,...visible}=value
-    return {...visible,stdout:executionStdout(value),...(!value.details?{details_pointer:pointer}:{})}
+    return {...value,stdout:executionStdout(value),...(!value.details?{details_pointer:pointer}:{})}
   }
   return {...report,worker:report.worker?{...report.worker,output:undefined}:undefined,
     result:result?{...result,builder:execution(result.builder,'/result/builder'),
@@ -183,7 +182,39 @@ export function isolatedPresentation(value:any) {
       details:{path:value.report_path,pointer:'/'+field},
       scope:'Presentation inventory summary only; complete original rows remain in the native result and report file.'}
   }
-  return {...value,report,...(value.progress?{progress:reportView({result:value.progress}).result}:{})}
+  const process=value.process&&value.process.exit_code===0&&!value.process.error
+    ?{...value.process,stdout:undefined,...(value.process.stdout?{stdout_location:'Native canonical /process/stdout; the recorded report is displayed once.'}:{})}
+    :value.process
+  return {...value,report,...(process?{process}:{}),...(value.progress?{progress:reportView({result:value.progress}).result}:{})}
+}
+
+/** Header, then execution envelopes through the live result renderer. Do not
+ * re-serialize a complete execution/report inside a JSON-escaped text field.
+ * Original objects remain in the one native canonical value and run files. */
+export function renderIsolatedResult(value:any):ContentBlock[] {
+  const presented=isolatedPresentation(value)
+  const blocks:ContentBlock[]=[],executions:{label:string;value:any}[]=[]
+  const resultHeader=(result:any,prefix:string)=>{
+    if(!result)return result
+    const {builder,checks,...metadata}=result
+    if(builder)executions.push({label:prefix+' builder',value:builder})
+    return {...metadata,...(checks?{checks:checks.map((check:any)=>{
+      const {execution,...facts}=check
+      if(execution)executions.push({label:prefix+' check '+check.id,value:execution})
+      return facts
+    })}:{})}
+  }
+  const header={...presented,
+    ...(presented.report?{report:{...presented.report,result:resultHeader(presented.report.result,'recorded')}}:{}),
+    ...(presented.progress?{progress:resultHeader(presented.progress,'progress')}:{})}
+  blocks.push({type:'text',text:JSON.stringify(header)})
+  for(const row of executions){
+    const rendered=renderExec({stdout:'',stderr:'',...row.value}).filter(item=>item.type==='text')
+    blocks.push({type:'text',text:row.label+':\n'+rendered.map(item=>item.text).join('\n\n')})
+  }
+  blocks.push(...(value.imageAttachments??[]).filter((row:any)=>row.attachment)
+    .map((row:any)=>({type:'image',attachment:row.attachment} as ContentBlock)))
+  return blocks
 }
 
 /** Native jobs carry a locator and decision facts, never an unbounded copy of
@@ -352,12 +383,13 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
       timeout_seconds:{type:'number',description:`Worker time budget in (0, ${inputPolicy.maxTimeoutSeconds}] seconds; default ${inputPolicy.defaultTimeoutSeconds}. Validated before job admission.`},
       memory_mb:{type:'number',description:`Integer process-tree memory budget ${inputPolicy.minMemoryMb}..${inputPolicy.maxMemoryMb} MiB; default ${inputPolicy.defaultMemoryMb}. Not GPU memory; validated before job admission.`}},
-    output:{schema:{type:'json'},render:(_args,value)=>{
-      const data=value as any
-      return [{type:'text',text:JSON.stringify(isolatedPresentation(data))},...(data.imageAttachments??[]).filter((row:any)=>row.attachment)
-        .map((row:any)=>({type:'image',attachment:row.attachment} as ContentBlock))]
-    },presentationMeta:(_args,value)=>({canonical:value})},
+    output:{schema:{type:'json'},render:(_args,value)=>renderIsolatedResult(value),presentationMeta:(_args,value)=>({canonical:value})},
     presentCall:args=>({card:'generic',title:args.operation==='read'?'读取独立执行结果':'独立 Houdini 执行',kind:args.operation==='read'?'read':'execute',rawInput:args}),
-    presentResult:(_args,result)=>({card:'generic',title:'独立 Houdini 结果',content:result.content}),
+    presentResult:(_args,result)=>{
+      const value=(result.meta as any)?.canonical,report=value?.report
+      const status=result.isError||value?.ok===false||report?.ok===false&&report?.finished?'失败'
+        :value?.job_id?'已提交':report?.finished?'已完成':report?'执行中':'已返回'
+      return {card:'generic',title:'独立 Houdini · '+status,content:result.content}
+    },
     execute:async(args,exec)=>JSON.parse(JSON.stringify(await executeIsolated(ctx,exec,args as IsolatedArgs,runtimeResolver,options.runner,options.planner)))}))
 }

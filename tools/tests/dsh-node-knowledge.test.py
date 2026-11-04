@@ -6,6 +6,9 @@ the separate stool-repair regression exercises the actual Sweep shelf script.
 
 from pathlib import Path
 import math
+import base64
+import json
+import struct
 import sys
 import tempfile
 
@@ -66,6 +69,8 @@ try:
                 'sweep', 'polyextrude', 'polybevel', 'sphere', 'tube', 'circle', 'box',
                 'revolve', 'normal', 'reverse', 'attribwrangle', 'object_merge', 'boolean',
                 'mirror', 'bend', 'skin', 'pathdeform')
+    if hou.applicationVersion()[0] >= 22:
+        families += ('gltf',)
     for family in families:
         info = h.node_info(root, family, parm_filter='no_such_filter', limit=1)
         assert info['parameter_count'] == 0 and not info['parameters']
@@ -122,10 +127,55 @@ try:
     assert cards.operation_card('sweep::99.0') is None
     assert cards.operation_card('revolve::99.0') is None
     assert cards.operation_card('custom::sweep::2.0') is None
+    assert cards.operation_card('gltf') is None, 'H22 import notes must not describe the legacy node'
     detached = cards.operation_card('attribwrangle')
     detached['decisions'].clear()
     assert cards.operation_card('attribwrangle')['decisions'], 'cache must not be mutable by its consumer'
     done('runtime critical templates, filtering, version boundaries and cache isolation')
+
+    if hou.applicationVersion()[0] >= 22:
+        # A real GLB with an embedded PNG: geometry can cook while its texture
+        # cannot be imported. Externalizing the same image resolves that warning.
+        with tempfile.TemporaryDirectory(prefix='dsh-gltf-material-') as asset_dir:
+            folder=Path(asset_dir)
+            png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==')
+            positions_data=struct.pack('<9f',0,0,0,1,0,0,0,1,0)
+            binary=positions_data+png
+            document={'asset':{'version':'2.0'},'scene':0,'scenes':[{'nodes':[0]}],'nodes':[{'mesh':0}],
+                'buffers':[{'byteLength':len(binary)}],
+                'bufferViews':[{'buffer':0,'byteOffset':0,'byteLength':36},
+                               {'buffer':0,'byteOffset':36,'byteLength':len(png)}],
+                'accessors':[{'bufferView':0,'componentType':5126,'count':3,'type':'VEC3','min':[0,0,0],'max':[1,1,0]}],
+                'images':[{'bufferView':1,'mimeType':'image/png'}], 'textures':[{'source':0}],
+                'materials':[{'pbrMetallicRoughness':{'baseColorTexture':{'index':0},'baseColorFactor':[1,1,1,1]}}],
+                'meshes':[{'primitives':[{'attributes':{'POSITION':0},'material':0}]}]}
+            encoded=json.dumps(document).encode();encoded+=b' '*((-len(encoded))%4)
+            binary+=b'\0'*((-len(binary))%4)
+            glb=struct.pack('<III',0x46546c67,2,12+8+len(encoded)+8+len(binary))
+            glb+=struct.pack('<II',len(encoded),0x4e4f534a)+encoded+struct.pack('<II',len(binary),0x004e4942)+binary
+            (folder/'embedded.glb').write_bytes(glb)
+            shader=hou.node('/mat').createNode('principledshader::2.0','import_factor_fixture')
+            imported=make('gltf::2.0','embedded_texture',{'gltffile':str(folder/'embedded.glb'),
+                'importnodegeometryas':'flattenedgeometry','enablematerialimport':1,
+                'importmaterialas':'principledshader::2.0','materialnode':shader.path()})
+            try:
+                assert imported.geometry().intrinsicValue('primitivecount') == 1
+                assert not imported.errors(), imported.errors()
+                assert any('embedded' in warning.lower() for warning in imported.warnings()), imported.warnings()
+                (folder/'image.png').write_bytes(png)
+                document['images']=[{'uri':'image.png'}]
+                document['buffers'][0]['uri']='data:application/octet-stream;base64,'+base64.b64encode(binary).decode()
+                (folder/'external.gltf').write_text(json.dumps(document),encoding='utf-8')
+                h.set_parm(imported,'gltffile',str(folder/'external.gltf'))
+                imported.cook(force=True)
+                assert not imported.errors() and not imported.warnings(), (imported.errors(), imported.warnings())
+                info=h.node_info('/mat','principledshader::2.0')
+                assert info['operation_card']['id']=='principled-texture-factors-v1'
+                assert imported.geometry().findPrimAttrib('material_override') is not None
+                assert imported.geometry().findPrimAttrib('shop_materialpath') is not None
+            finally:
+                imported.destroy();shader.destroy()
+        done('H22 embedded GLB texture warning and external image material import')
 
     # Cross-OBJ assembly must choose its transform space explicitly.  A path by
     # itself reads SOP-local geometry; Into This Object preserves the source OBJ

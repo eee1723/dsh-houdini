@@ -11,6 +11,13 @@ class CheckpointError(RuntimeError):
         self.evidence = evidence
 
 
+class UnsupportedEvidence(ValueError):
+    """A declared observation cannot be established; not a failed scene edit."""
+    def __init__(self, message, *, diagnostic=None):
+        super().__init__(message)
+        self.diagnostic = diagnostic or {}
+
+
 class PreflightError(ValueError):
     """Independent static errors collected before module creation starts."""
     def __init__(self, errors):

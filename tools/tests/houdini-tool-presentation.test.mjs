@@ -165,11 +165,22 @@ const submit = definitions.get('houdini_job_submit');
 assert(submit.output.schema.required.includes('job_id'));
 const submitHandle={job_id:'houdini-live-123',jobId:'job-7'};
 const submitMeta = submit.output.presentationMeta({}, submitHandle);
-assert.deepEqual(submitMeta, { jobId: 'job-7', canonical: submitHandle });
+assert.deepEqual(submitMeta, { job_id: 'houdini-live-123', jobId: 'job-7', canonical: submitHandle });
 assert.equal(
   submit.presentResult({ code: 'render_frame(rop)' }, { content: text, isError: false, meta: submitMeta }).title,
-  '提交长任务 · job-7',
+  '提交长任务 · houdini-live-123',
 );
+const originalReceipt={request_ref:'original-runtime.original-request',jobId:'job-7',status:'job_submitted'};
+const admission={...submitHandle,requestReceipt:originalReceipt};
+const admissionText=submit.output.render({},admission)[0].text;
+assert(admissionText.includes('job_output({"job_id":"houdini-live-123"})'));
+assert(admissionText.includes('houdini_request({"request_ref":"original-runtime.original-request"})'));
+assert(admissionText.includes('jobId is a Bridge identifier'));
+assert(admissionText.includes('request-receipt:\n'+JSON.stringify(originalReceipt)),'legacy text readers retain the canonical receipt marker');
+assert(!submit.output.render({}, {job_id:'observer-only',requestReceipt:{status:'unknown_transport'}})[0].text.includes('houdini_request({})'));
+assert.equal(submit.output.presentationMeta({},admission).canonical.requestReceipt,originalReceipt);
+const resumedText=exec.output.render({}, {ok:true,stdout:'',stderr:'',...admission})[0].text;
+assert(resumedText.includes('job_output({"job_id":"houdini-live-123"})'),'recovered observation exposes its actual new native job id');
 
 // Historical Bridge snapshots keep their presenter, while DSH owns current controls.
 const status = {output:{render:(_args,value)=>renderJobStatus(value),presentationMeta:(_args,value)=>({...execPresentationMeta(value),jobId:value.jobId,status:value.status})},

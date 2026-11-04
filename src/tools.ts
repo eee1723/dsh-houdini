@@ -75,6 +75,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     name:'houdini_resource',description:HOUDINI_TOOLS.houdini_resource.purpose+' Host-only pagination; does not execute Houdini. Source originals and past results are historical material.',
     parameters:{kind:{type:'string',enum:['source','result'],required:true},ref:{type:'string',required:true,description:'source: index or listed hash; result: SHA-256 from details or recorded load_warning_details.'},
       pointer:{type:'string',description:'Result JSON Pointer, default root. Not used for sources.'},
+      select:{type:'array',items:{type:'string'},description:'Read 1..16 named result fields together as exact JSON values, e.g. ["/result/summary","/error"]. Missing/oversized fields are explicit; page oversized fields with pointer. Exclusive with pointer/offset; result only.'},
       offset:{type:'number',description:'Character offset, default 0.'},limit:{type:'number',description:'Page characters 1..16000, default 6000.'}},output:readOutput,
     presentCall:args=>({card:'generic',title:args.kind==='source'?'读取任务资料':'读取完整操作结果',kind:'read',rawInput:args}),
     presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_resource.label,result),result),

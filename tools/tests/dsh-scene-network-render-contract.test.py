@@ -41,6 +41,22 @@ try:
     source_path = created["result"]["source"]
     target_path = created["result"]["target"]
 
+    display=dsh_bridge.run_code(
+        f"s=tab_create('/stage','null',name='display_{suffix}')\n"
+        "other=tab_create('/stage','null',name='other_display')\n__result__=set_display_node(s)",owner_session=session,owner_call='lop-display')
+    assert display['ok'] and display['result']['context']=='Lop' and display['result']['display'],display
+    lop_path=display['result']['node']
+    foreign=dsh_bridge.run_code("set_display_node('/stage/other_display')",owner_session='foreign',owner_call='foreign-display')
+    assert not foreign['ok'] and hou.node(lop_path).isDisplayFlagSet(),foreign
+    readonly=dsh_bridge.run_code("set_display_node('/stage/other_display')",read_only=True,owner_session=session)
+    assert not readonly['ok'] and hou.node(lop_path).isDisplayFlagSet(),readonly
+    restored=dsh_bridge.run_code("__result__=set_display_node('/stage/other_display')",owner_session=session)
+    assert restored['ok'] and restored['result']['previous_display_node']==lop_path and restored['result']['display'],restored
+    assert not hou.node(lop_path).isDisplayFlagSet()
+    wrong_publication=dsh_bridge.run_code(f"sop_set_output({lop_path!r})",owner_session=session)
+    assert not wrong_publication['ok'],'generic display support must not broaden SOP publication'
+    dsh_bridge.run_code(f"delete_node({lop_path!r})\ndelete_node('/stage/other_display')",owner_session=session)
+
     # Invalid literal managed filenames fail before allocation/cook/render.
     # Fake only GUI availability: the actual path validator and Bridge run.
     with patch.object(hou, 'isUIAvailable', return_value=True), \

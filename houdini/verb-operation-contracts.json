@@ -1744,6 +1744,13 @@
         "layout is exclusive with spec/defaults/update_defaults; dry_run is available in layout mode. update_defaults changes existing spare defaults and preserves current values/keys."
       ]
     },
+    "set_display_node": {
+      "summary": "Select an explicit native network display output, including LOPs; no render flag or public-output publication. Object visibility is a separate operation.",
+      "input_schema": {"type":"object","properties":{"node":{"type":"string"},"allow_foreign":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["node"],"additionalProperties":true},
+      "output_schema": {"type":"object","properties":{"node":{"type":"string"},"context":{"type":"string"},"previous_display_node":{"anyOf":[{"type":"string"},{"type":"null"}]},"previous_display":{"type":"boolean"},"display":{"type":"boolean"}},"required":["node","context","previous_display_node","previous_display","display"],"additionalProperties":true},
+      "examples":[{"title":"Select a Solaris display output","code":"__result__ = set_display_node('/stage/render_settings')","tool":"houdini_exec","read_result":"Read context, previous_display_node and display. This selects an existing display target; it does not render, move a viewport, or publish a subnet output."}],
+      "notes":["SOP display/render/public-output composition remains sop_set_output; OBJ effective visibility remains set_object_visible. A network output is a selection, not a boolean that can always be cleared; select another node to change it."]
+    },
     "sop_set_output": {
       "summary": "Set the explicit SOP display/render output for the user and optionally publish a native subnet Output port.",
       "input_schema": {

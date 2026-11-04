@@ -34,7 +34,7 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 7. 整物构图先用 `camera_fit(正式OBJ相机,显式SOP)`，经Scene Import导入；不复用preview服务相机。对setup的USD Render ROP用 `render_frame(...,framing={'target':实际USD资产路径})` 在渲染前检查最终产品；长渲染走job。有意裁切/特殊lens另声明范围，不偷偷改用户相机，普通LOP不是ROP。
 8. 动画交付至少渲染两个间隔帧，固定同一 USD camera；SOP time dependency 或单个 USD
    time sample 不能单独证明最终序列。静帧无法判断审美力度时交给用户播放判断。
-9. layout、保留 Render Settings 为 stage 交付输出、清理 probe、保存 HIP，并说明 engine、
+9. layout、用`set_display_node`选择stage显示输出（不使用SOP发布动词）、清理 probe、保存 HIP，并说明 engine、
    material context、ROP、输出路径、warning 和尚未验证的事项。
 
 ## 材质选择

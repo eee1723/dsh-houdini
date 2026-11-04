@@ -34,10 +34,10 @@ export function executionNoticeFromFacts(history:ExecutionSummary):Record<string
   if (!activeJobs.length && !pendingCalls.length && !activeRequests.length
       && !unresolvedCalls.length && !unavailableResults.length) return null
   return {
-    active_jobs:activeJobs,pending_calls:pendingCalls.length,
+    active_jobs:activeJobs.map(([bridge_job_id,status])=>({bridge_job_id,status})),pending_calls:pendingCalls.length,
     unresolved_requests:activeRequests,unresolved_calls:unresolvedCalls.map(row=>row.callId),
-    unavailable_results:unavailableResults,
-    boundary:'Recorded outstanding work, not current scene state. Recover uncertain operations with houdini_request using the original request_ref (or its index when the reference is missing) before repeating them. DSH job_output waits for tracked jobs; houdini_request collects the original Bridge result and resumes observation of active work after tracking was interrupted. A finished_result_unavailable receipt confirms completion but not the outcome; inspect the scene rather than polling the expired result or repeating the operation.',
+    unavailable_results:unavailableResults.map(({job_id,...entry})=>({...entry,...(job_id?{bridge_job_id:job_id}:{})})),
+    boundary:'Recorded outstanding work, not current scene state. bridge_job_id is internal to Houdini; never pass it to DSH job_output/job_kill. Use the exact DSH job_id from submission or resumed observation. If missing, use houdini_request with the original request_ref (or index when the reference is missing) to recover the original result or resume observation; never resubmit scene code. A finished_result_unavailable receipt confirms completion but not the outcome; inspect the scene instead of polling an expired result.',
   }
 }
 

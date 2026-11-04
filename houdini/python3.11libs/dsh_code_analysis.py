@@ -27,7 +27,7 @@ _RAW_HOU_VERB_MAP = {
     "setName": "rename_node",
     "destroy": "delete_node",
     "cook": "cook_node",
-    "setDisplayFlag": "sop_set_output or set_object_visible",
+    "setDisplayFlag": "set_display_node (network display selection), sop_set_output (SOP publication), or set_object_visible (OBJ visibility)",
     "setRenderFlag": "sop_set_output",
     "layoutChildren": "layout_nodes",
     "moveToGoodPosition": "layout_nodes",

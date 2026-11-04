@@ -369,10 +369,7 @@ def _prepare_module(parent, nodes, output, dry_run, interfaces, required_outputs
                 continue  # explicit empty input; e.g. Wrangle lookup on input 1
             if not isinstance(source, str) or source not in known:
                 problem(name, 'inputs', f'input {source!r} must name a declared spec or existing direct child')
-        count_names = [c['name'] for c in parameters if c.get('multiparm_count') and c['name'] in values]
-        ordered_values = {k:values[k] for k in count_names}
-        ordered_values.update(values)
-        specs.append({**spec, 'type': latest, 'parms': ordered_values, 'inputs': inputs, '_counts':count_names})
+        specs.append({**spec, 'type': latest, 'parms': values, 'inputs': inputs})
     if output not in {s['name'] for s in specs}:
         raise ValueError('output must name one of the newly created nodes')
     if required_outputs is not None:
@@ -430,12 +427,7 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
         for spec in specs:
             n = created[spec['name']]
             if spec['parms']:
-                # Counts instantiate parameters. This remains inside the new-
-                # module transaction; any later failure removes the whole batch.
-                for count in spec['_counts']:
-                    dsh_parameter_values.set_parm(n,count,spec['parms'][count])
-                remaining={k:v for k,v in spec['parms'].items() if k not in spec['_counts']}
-                if remaining:dsh_parameter_values.set_parms(n, remaining)
+                dsh_node_creation._apply_created_parameters(n, spec['parms'])
         validation = verify_network(p, output=created[output], nodes=list(created.values()),
                                     limit=max(512, len(created)))
         required_checks = []

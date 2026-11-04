@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 29 · Source SHA-256: `5061d477142761411934633b77705727f4ec2849e0048889430132085d15d78e`
+Schema: 2 · Cards: 31 · Source SHA-256: `fdca1f76722dc71054fb7dc1295bd2b131e561d595db95610bdea84ca13d054f`
 
 ## 数据与设计契约
 
@@ -42,6 +42,8 @@ Schema: 2 · Cards: 29 · Source SHA-256: `5061d477142761411934633b77705727f4ec2
 - [revolve](#revolve)
 - [normal](#normal)
 - [reverse](#reverse)
+- [gltf](#gltf)
+- [principledshader](#principledshader)
 - [copytopoints](#copytopoints)
 - [object_merge](#object_merge)
 - [blast](#blast)
@@ -442,6 +444,34 @@ Schema: 2 · Cards: 29 · Source SHA-256: `5061d477142761411934633b77705727f4ec2
 
 - Reverse changes vertex order on selected faces. Repair only the affected primitive group when the problem is local, then recheck topology orientation and any existing N attribute.
 
+## gltf
+
+标识：`gltf2-import-materials-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/sop/gltf.html)。
+
+精确类型：`gltf::2.0`。
+已测版本：`22.0.368`。
+
+关键运行时参数：`gltffile`、`loadby`、`importnodegeometryas`、`enablematerialimport`、`importmaterialas`、`materialnode`。
+
+### 操作与边界
+
+- This card applies to Houdini 22 gltf::2.0, not the older gltf node. Discover exact runtime parameters and menu tokens before configuring imports.
+- On H22.0.368 material import produces shop_materialpath plus the primitive attribute material_override (singular); inspect actual attribute names instead of copying the documentation's plural spelling. Material Node requires a supported material node, not merely the /mat network. A materialnode of '.' selects the viewport shader.
+- Binary images embedded in a GLB are not directly imported as textures by this node. Preserve/extract required images as project dependencies and bind their material indices, UVs and factors explicitly; successful geometry cooking does not prove texture import.
+- Flattened geometry bakes glTF node transforms into points; packed geometry retains transforms on primitives. Choose the representation for the downstream consumer and inspect final placement/materials rather than judging by point count.
+
+## principledshader
+
+标识：`principled-texture-factors-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/nodes/vop/principledshader.html)。
+
+精确类型：`principledshader::2.0`。
+已测版本：`22.0.368`。
+
+### 操作与边界
+
+- Texture values multiply their corresponding parameter values. Preserve an imported material's base-color factor; a leftover gray basecolor darkens the texture even when its filename and UVs are correct.
+- Cd and packed color tinting are additional consumers. Check them separately from texture color space, material_overrides and lighting; use emission only for intended emitting regions, not to compensate for an incorrect base-color multiplier.
+
 ## copytopoints
 
 标识：`copy-local-frame-v1`。来源：[SideFX 官方说明](https://www.sidefx.com/docs/houdini/copy/instanceattrs.html)。
@@ -452,6 +482,7 @@ Schema: 2 · Cards: 29 · Source SHA-256: `5061d477142761411934633b77705727f4ec2
 ### 操作与边界
 
 - Input 0 is the source unit, input 1 the destination points. Establish the unit local axes and destination P/orient/scale before copying.
+- Pack and Instance shares source geometry instead of duplicating every polygon for every point. Inspect the actual pack setting when replacing a source with dense geometry; choose it only when downstream edits, attributes and material consumers support packed primitives.
 - Arbitrary destination attributes follow the node's target-attribute transfer rules. Inspect those settings and the actual output attribute class before reading or promoting an attribute; its presence on the destination input does not prove it exists on copied geometry.
 - Inspect attribute class and instance identity at the final output; do not assume a template name automatically identifies final primitives. Packed transform changes cannot be certified by P-only comparison.
 

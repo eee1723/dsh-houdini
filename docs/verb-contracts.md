@@ -38,6 +38,7 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 - [geo_curve_clearance](#geo_curve_clearance)
 - [geo_piece_stats](#geo_piece_stats)
 - [create_spare_parms](#create_spare_parms)
+- [set_display_node](#set_display_node)
 - [sop_set_output](#sop_set_output)
 - [render_view](#render_view)
 - [scene_save](#scene_save)
@@ -2230,6 +2231,91 @@ CTRL must exist. Explicit spec returns node/mode/created/leaf_values; it does no
 
 - Simplified spec supports recursive folders and toggle/int/float/string scalars. Use verb_help('hda_set_interface', detail='full') for the complete layout vocabulary; do not mix layout fields into simplified spec.
 - layout is exclusive with spec/defaults/update_defaults; dry_run is available in layout mode. update_defaults changes existing spare defaults and preserves current values/keys.
+
+## set_display_node
+
+Select an explicit native network display output, including LOPs; no render flag or public-output publication. Object visibility is a separate operation.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string"
+    },
+    "allow_foreign": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "node"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string"
+    },
+    "context": {
+      "type": "string"
+    },
+    "previous_display_node": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "previous_display": {
+      "type": "boolean"
+    },
+    "display": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "node",
+    "context",
+    "previous_display_node",
+    "previous_display",
+    "display"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Select a Solaris display output
+
+调用工具：`houdini_exec`。
+
+```python
+__result__ = set_display_node('/stage/render_settings')
+```
+
+Read context, previous_display_node and display. This selects an existing display target; it does not render, move a viewport, or publish a subnet output.
+
+### 接口边界
+
+- SOP display/render/public-output composition remains sop_set_output; OBJ effective visibility remains set_object_visible. A network output is a selection, not a boolean that can always be cleared; select another node to change it.
 
 ## sop_set_output
 

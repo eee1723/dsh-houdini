@@ -328,6 +328,7 @@ from dsh_node_operations import (
     delete_node,
     set_update_mode,
     cook_node,
+    set_display_node,
     sop_set_output,
     sop_output_node,
     set_object_visible,

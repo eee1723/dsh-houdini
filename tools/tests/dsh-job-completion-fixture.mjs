@@ -16,6 +16,7 @@ const [{Context},{default:SystemPrompt},{default:ToolRuntime},{default:AgentRegi
   load('cordis'),load('dsh-system-prompt'),load('dsh-tools'),load('dsh-agent'),load('dsh-jobs-local'),load('dsh-tool-jobs'),
   load('dsh-session'),load('dsh-llm'),load('dsh-spill-policy'),load('dsh-scope')]);
 const {LiveJobs}=await import(pathToFileURL(path.join(root,'lib/live-jobs.js')).href);
+const {renderJobHandle,renderExec,jobHandleMeta}=await import(pathToFileURL(path.join(root,'lib/tool-output.js')).href);
 const {installHoudiniExecutionLog,LIVE_JOB_KIND,LIVE_JOB_RESULT,executionResult}=await import(pathToFileURL(path.join(root,'lib/dsh-adapter.js')).href);
 const ctx=new Context();
 await ctx.plugin(SystemPrompt);await ctx.plugin(ToolRuntime,{mode:'native'});await ctx.plugin(AgentRegistry);
@@ -51,13 +52,28 @@ const live=new LiveJobs(preset.ctx,{retain:async value=>value});
 const execution=()=>({agent:selected.owner,callId:'live-'+(++callId),signal:new AbortController().signal});
 async function start(options){const controlled=bridgeFor(options),exec=execution();
   const admitted=await live.submit({code:'owned_fixture()'},exec,controlled.bridge,{sessionId:selected.owner.id,callId:exec.callId});
-  return {...controlled,id:admitted.job_id}}
+  return {...controlled,id:admitted.job_id,admitted}}
 try {
   assert.notEqual(ctx.tools.get('job_output',selected.owner),native,'Houdini receives a scoped thin output definition');
   assert.equal(ctx.tools.get('job_output',other.owner),native,'other modes retain the original definition object');
   const adapted=ctx.tools.get('job_output',selected.owner);
   for(const key of ['execute','projectContent','finalizeContent','presentCall','presentResult'])assert.equal(adapted[key],native[key]);
   assert.equal(adapted.output.schema,native.output.schema);assert.equal(adapted.output.render,native.output.render);
+  const readable=await start();
+  const exposed=renderJobHandle(readable.admitted)[0].text;
+  const waitArguments=JSON.parse(exposed.match(/job_output\((\{[^\n]*?\})\)/)[1]);
+  assert.equal(waitArguments.job_id,readable.id,'model-visible wait action uses the actual native job');
+  assert.notEqual(waitArguments.job_id,readable.jobId,'Bridge id is a separate namespace');
+  assert.equal(jobHandleMeta(readable.admitted).job_id,readable.id,'UI and model share the same native identifier');
+  readable.finish();await settled(readable.id,selected.owner.id);
+  assert.equal((await call(selected.owner,'job_output',waitArguments)).isError,false,'the exact presented action is accepted by the real DSH tool');
+  const resumable=bridgeFor(),resumed=await live.observe({jobId:resumable.jobId,requestReceipt:resumable.receipt},execution(),resumable.bridge,{sessionId:selected.owner.id,callId:'recover'});
+  const resumedText=renderExec({ok:true,stdout:'',stderr:'',...resumed})[0].text;
+  const resumedArguments=JSON.parse(resumedText.match(/job_output\((\{[^\n]*?\})\)/)[1]);
+  assert.equal(resumedArguments.job_id,resumed.job_id,'recovery reports the new local observer id');
+  resumable.finish();await settled(resumed.job_id,selected.owner.id);
+  assert.equal((await call(selected.owner,'job_output',resumedArguments)).isError,false);
+  assert.equal(resumable.submissions(),0,'resuming observation never submits scene code');
   for(const status of ['done','failed','cancelled']) {
     const running=await start(),before=selected.notices.length;
     const killed=await call(selected.owner,'job_kill',{job_id:running.id});assert.equal(killed.value.outcome,'cancellation-requested');

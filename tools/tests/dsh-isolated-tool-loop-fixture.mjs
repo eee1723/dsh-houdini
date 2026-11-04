@@ -50,6 +50,7 @@ export function apply(ctx){
   const {workspace,output,hfs,hython,python}=config
   const checks=[],requests=[],sessions=new Set(),sessionRefs=new Map(),runtimeReads=[],images=[],runs={}
   let failure,childId,childStage=0,preflightStage=0,polls=0,childDone=false,leadId,jobId,nativeImage,ptcImage
+  let nativeSelection=false,ptcSelection=false
   let snapshotSha,setupValue,setupRun,readsBeforeSetupRead,peerResult,sourceJob,sourceRun,sourceBefore
   let liveOffline=false
   const record={schema:1,executor_id:'b'.repeat(32),registration_id:'c'.repeat(32),runtime_id:'a'.repeat(32),
@@ -202,6 +203,17 @@ export function apply(ctx){
         }
         if(childStage===2){
           const value=native(childId,'child-native'),raw=readFull(value,'native');assert.equal(raw.ok,true)
+          if(!nativeSelection){
+            nativeSelection=true
+            assert(value.report.result.builder.details?.stored,'fixture has an immutable execution archive')
+            yield*emit('child-select-native','houdini_resource',{kind:'result',ref:value.report.result.builder.details.sha256,select:['/result/marker','/result/points','/error']});return
+          }
+          const selection=native(childId,'child-select-native').result
+          assert.equal(selection.format,'json_selection')
+          assert.equal(selection.items[0].value,'ISOLATED_TEAM_BUILT')
+          assert.equal(selection.items[1].value,8)
+          assert.equal(selection.items[2].status,'missing')
+          checks.push('native batched resource selection returns exact archived fields without another Houdini execution')
           assert.equal(raw.inputs.length,481,'real worker consumes the script plus every declared sequence frame')
           assert.equal(value.report.inputs.length,481,'native canonical retains complete input provenance')
           const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-native')
@@ -223,6 +235,15 @@ export function apply(ctx){
           assert(resultText(dispatch).includes('isolated-houdini'),'nested durable receipt preserves tool identity')
           const actual=dispatch.data.meta?.canonical
           assert(actual,'nested production presentation must retain its canonical receipt')
+          if(!ptcSelection){
+            ptcSelection=true
+            const selectionArgs={kind:'result',ref:actual.report.result.builder.details.sha256,select:['/result/marker','/result/primitives']}
+            yield*emit('child-select-ptc','run_code',{code:'return await tools.houdini_resource('+JSON.stringify(selectionArgs)+');',description:'Read two original execution fields together'});return
+          }
+          const selected=nested(childId,'houdini_resource')?.data.meta?.canonical?.result
+          assert.equal(selected?.items[0].value,'ISOLATED_TEAM_BUILT')
+          assert.equal(selected?.items[1].value,6)
+          checks.push('PTC batched resource selection reads the same canonical source')
           readFull(actual,'ptc');ptcImage=returnedImage(actual,'ptc')
           assert.notEqual(raw.result.runtime.runtime_id,runs.native.runtime.runtime_id,'each run must use another Houdini runtime')
           runs.ptc={runtime:raw.result.runtime,worker:raw.worker};await observeImages(options,'ptc-return')

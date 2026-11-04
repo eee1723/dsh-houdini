@@ -183,41 +183,55 @@ def execution_projection(directory, identifier, envelope, *, inline_budget=None)
             return fallback
         details['fallback'] = 'Complete execution data could not be retained; unavailable fields are explicit'
         details['full_retained'] = False
-    retained = details['stored'] is True
-    out = {'ok': envelope.get('ok'), 'details': details}
-    for key in ('error', 'stderr', 'advisory'):
-        if key in envelope:
-            out[key] = _brief_text(envelope[key], retained=retained)
-    if 'stdout' in envelope:
-        out['stdout'] = _brief_text('\n'.join(line for line in envelope['stdout'].splitlines()
-                                             if not line.startswith('[verb] ')), retained=retained)
-    for key in ('outcome', 'transaction', 'execution', 'script', 'rollback', 'rawUsage', 'checks', 'result',
-                'artifactCandidates', 'scope', 'semantic_status', 'restored'):
-        if key in envelope:
-            out[key] = _bounded(envelope[key], '/' + key, retained=retained)
-    if 'evidence' in envelope:
-        evidence = envelope['evidence']
-        if len(_encoded(evidence)) > DETAIL_THRESHOLD:
+    return execution_view(envelope, details)
+
+
+def execution_view(envelope, details):
+    """One display budget for the entire envelope, not one budget per field.
+
+    Exact execution facts get priority; selected payloads stay opaque values.
+    Every omission points into the original immutable execution (or explicitly
+    says unavailable). This never changes the execution outcome or archive.
+    """
+    retained = details.get('stored') is True
+    out = {'ok': envelope.get('ok'), 'details': {**details,
+           'fields': ['/' + key for key in envelope if key != 'verbs']}}
+    fields = [('error', 1600), ('outcome', 800), ('rollback', 800), ('scope', 450),
+              ('semantic_status', 160), ('restored', 160), ('execution', 1000),
+              ('script', 500), ('evidence', 2300), ('checks', 800), ('result', 4000),
+              ('stderr', 700), ('advisory', 450), ('stdout', 1000),
+              ('transaction', 700), ('rawUsage', 500), ('artifactCandidates', 400)]
+    for key, allowance in fields:
+        if key not in envelope:
+            continue
+        remaining = DETAIL_THRESHOLD - len(_encoded(out)) - len(key) - 64
+        if remaining < 180:
+            break
+        budget = min(allowance, remaining)
+        value = envelope[key]
+        if key in ('stdout', 'stderr', 'error', 'advisory') and isinstance(value, str):
+            if key == 'stdout':
+                value = '\n'.join(line for line in value.splitlines() if not line.startswith('[verb] '))
+            # Character count here includes JSON escaping, not only raw text.
+            abbreviated = _brief_text(value, max(64, budget // 2), retained=retained)
+            out[key] = _bounded(abbreviated, '/' + key, budget, retained=retained)
+        elif key == 'evidence' and isinstance(value, list) and len(_encoded(value)) > budget:
             ledger = envelope.get('verbs', [])
-            failed = {index + 1 for index, row in enumerate(ledger) if row.get('ok') is False}
-            checked = {index + 1 for index, row in enumerate(ledger) if row.get('check_status')}
+            failed = {i + 1 for i, row in enumerate(ledger) if row.get('ok') is False}
+            checked = {i + 1 for i, row in enumerate(ledger) if row.get('check_status')}
             def priority(item):
-                row = item[1]
-                if (row.get('ledgerIndex') in failed or row.get('ok') is False
-                        or 'restored' in row and row['restored'] is not True or row.get('restore_errors')):
+                row=item[1]
+                if row.get('ledgerIndex') in failed or row.get('ok') is False or ('restored' in row and row['restored'] is not True) or row.get('restore_errors'):
                     return 0
                 return 1 if row.get('ledgerIndex') in checked else 2
-            rows = sorted(enumerate(evidence), key=priority)
-            out['evidence'] = []
-            for index, row in rows:
-                remaining = DETAIL_THRESHOLD - len(_encoded(out['evidence'])) - 160
-                if remaining < 256:
-                    break
-                out['evidence'].append(_bounded(row, '/evidence/' + str(index), min(remaining, 2048), retained=retained))
-            out['evidence'].append({('detail_pointer' if retained else 'unavailable_field'): '/evidence',
-                                    'entries': len(evidence)})
+            projected=[]
+            for index,row in sorted(enumerate(value),key=priority):
+                room=budget-len(_encoded(projected))-160
+                if room < 256:break
+                projected.append(_bounded(row,'/evidence/'+str(index),min(room,1200),retained=retained))
+            out[key]=projected+[ {('detail_pointer' if retained else 'unavailable_field'):'/evidence','entries':len(value)} ]
         else:
-            out['evidence'] = evidence
+            out[key] = _bounded(value, '/' + key, budget, retained=retained)
     return out
 
 

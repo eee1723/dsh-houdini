@@ -74,6 +74,10 @@
 
 依据：SideFX [Copy to Points](https://www.sidefx.com/docs/houdini/nodes/sop/copytopoints-.html)的源/模板与Pack and Instance分工，以及[实例属性](https://www.sidefx.com/docs/houdini/copy/instanceattrs.html)的变换规则。具体节点版本与参数通过`node_info`确认；方法适用不等于任意组件已验证。
 
+### 外部资产接入与换源
+
+生成／导入资产的取得、适配、功能变体、材质与SOP/USD消费者统一由[资产接入skill](../../houdini-asset-integration/SKILL.md)维护。这里的源构造和布局方法继续适用于接入后的网络；不在多个领域重复维护另一套生成流程。
+
 ### 重复规律与代码生成
 
 数量增长应增加模板数据或运行迭代，而非成比例增加编译指令。Python负责节点、参数和接线；重复几何的公式留在VEX循环中，共用数量、间距、采样、种子等控制。形体由可替换的源与Copy/Sweep处理，复杂度来自实际输出和算法，而不是把每个点的常数坐标写成独立语句。已测得更合适的原生节点、专用算法或外部数据方式仍按编辑目标选择。
