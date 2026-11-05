@@ -26,14 +26,24 @@ if(!args.length){
   const outputRoot=values['output-root']?path.resolve(values['output-root']):os.tmpdir()
   fs.mkdirSync(outputRoot,{recursive:true})
   const run=fs.mkdtempSync(path.join(outputRoot,'dsh-isolated-tool-loop-'))
+  console.log('Isolated Team integration evidence: '+run)
   const workspace=path.join(run,'workspace'),home=path.join(run,'home'),temp=path.join(run,'temp'),output=path.join(run,'report.json')
   for(const folder of [workspace,temp])fs.mkdirSync(folder)
   const sandboxMode=values['sandbox-mode']??'workspace-write'
   assert(['workspace-write','danger-full-access'].includes(sandboxMode),'Unsupported fixture sandbox mode')
-  const pythonVersion=spawnSync(python,['--version'],{encoding:'utf8',windowsHide:true}).stdout.trim().replace(/^Python /,'')
-  const houProbe=spawnSync(hython,['-c','import hou; print(hou.applicationVersionString())'],{encoding:'utf8',windowsHide:true,timeout:30000})
-  assert.equal(houProbe.status,0,houProbe.stderr||'Cannot identify the explicit Houdini installation')
-  const houdiniVersion=houProbe.stdout.trim().split(/\r?\n/).find(line=>/^\d+\.\d+\.\d+$/.test(line))
+  const probe=`import json, pathlib, subprocess, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1])/'tools'))
+from houdini_test_environment import isolated_environment, reexec_unpacked_test_cli
+reexec_unpacked_test_cli()
+binary=pathlib.Path(sys.argv[3])
+env=isolated_environment(pathlib.Path(sys.argv[2]), executable=binary)
+result=subprocess.run([str(binary),'-c','import hou; print(hou.applicationVersionString())'],cwd=binary.parent,env=env,capture_output=True,text=True,timeout=30)
+if result.returncode: raise RuntimeError(result.stderr or result.stdout or ('Houdini probe exited '+str(result.returncode)))
+print(json.dumps({'environment':env,'pythonVersion':sys.version.split()[0],'stdout':result.stdout}))`
+  const probed=spawnSync(python,['-I','-c',probe,root,run,hython],{cwd:path.dirname(hython),encoding:'utf8',windowsHide:true,timeout:45000})
+  assert.equal(probed.status,0,probed.stderr||'Cannot identify the explicit isolated Houdini installation')
+  const {environment:env,pythonVersion,stdout}=JSON.parse(probed.stdout.trim())
+  const houdiniVersion=stdout.trim().split(/\r?\n/).find(line=>/^\d+\.\d+\.\d+$/.test(line))
   assert(houdiniVersion,'Actual Houdini version was not returned')
   assert(/^3\.(11|13)\./.test(pythonVersion),'Use the selected supported Houdini Python runtime')
   const reserved=net.createServer();await new Promise((resolve,reject)=>{reserved.once('error',reject);reserved.listen(0,'127.0.0.1',resolve)})
@@ -41,23 +51,22 @@ if(!args.length){
   const executorRegistry=path.join(run,'executor-registry')
   const config={root,runtime,workspace,output,hfs,hython,python,pythonVersion,houdiniVersion,sandboxMode,bridgePort,executorRegistry}
   const configFile=path.join(run,'fixture.json');fs.writeFileSync(configFile,JSON.stringify(config,null,2))
-  const env=Object.fromEntries(['PATH','Path','SystemRoot','WINDIR','USERPROFILE','APPDATA','LOCALAPPDATA','COMSPEC','PATHEXT'].filter(name=>process.env[name]!==undefined).map(name=>[name,process.env[name]]))
   Object.assign(env,{TEMP:temp,TMP:temp,DSH_HOME:home,DSH_ISOLATED_TOOL_FIXTURE:configFile,
     DSH_HOUDINI_BRIDGE_URL:'http://127.0.0.1:'+bridgePort,DSH_HOUDINI_EXECUTOR_REGISTRY:executorRegistry})
   const prepare=`import fs from 'node:fs';import path from 'node:path';import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';
 const [bin,plugin]=process.argv.slice(1);const require=createRequire(bin);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));
-const profile=boot.resolveProfileDir('web');boot.initProfile(profile,[...boot.PROFILE_TEMPLATES.web.bundles,'dsh-houdini','@deepseek-ai/dsh-experimental-agent-team-profile'],boot.PROFILE_TEMPLATES.web.patchReload);
+const {PROFILE_TEMPLATES}=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-official-bundles')));
+const profile=boot.resolveProfileDir('web');boot.initProfile(profile,[...PROFILE_TEMPLATES.web.bundles,'dsh-houdini','@deepseek-ai/dsh-experimental-agent-team-profile'],PROFILE_TEMPLATES.web.patchReload);
 const link=path.join(profile,'node_modules/dsh-houdini');fs.mkdirSync(path.dirname(link),{recursive:true});fs.symlinkSync(plugin,link,'junction');
 boot.loadProfile('dsh','web',path.join(path.dirname(path.dirname(bin)),'package.json'));`
   const prepared=spawnSync(process.execPath,['--input-type=module','-e',prepare,cli,root],{cwd:run,env,encoding:'utf8',windowsHide:true,timeout:60000})
   assert.equal(prepared.status,0,prepared.stderr||prepared.stdout)
   const fixture=fileURLToPath(new URL('./dsh-isolated-tool-loop-fixture.mjs',import.meta.url))
   const patch=path.join(run,'fixture.patch.yml')
-  fs.writeFileSync(patch,'- id: session-title-llm\n  disabled: true\n- id: spill-local\n  config:\n    root: '+JSON.stringify(path.join(run,'spill').replaceAll('\\','/'))+'\n    cleanupPeriodDays: 0\n- insert:\n    - id: isolated-executor-host\n      name: dsh-houdini/executor-host\n      config:\n        executorRegistry: '+JSON.stringify(executorRegistry.replaceAll('\\','/'))+'\n    - id: isolated-tool-loop-fixture\n      name: '+JSON.stringify(fixture.replaceAll('\\','/'))+'\n')
+  fs.writeFileSync(patch,'- id: session-title-llm\n  disabled: true\n- id: spill-local\n  config:\n    root: '+JSON.stringify(path.join(run,'spill').replaceAll('\\','/'))+'\n    cleanupPeriodDays: 0\n- insert:\n    - id: isolated-tool-loop-fixture\n      name: '+JSON.stringify(fixture.replaceAll('\\','/'))+'\n')
   const logPath=path.join(run,'host.log'),log=fs.openSync(logPath,'w')
   const host=spawn(process.execPath,[cli,'web','--patch',patch,'--host','127.0.0.1','--port','0','--no-open'],{cwd:workspace,env,stdio:['ignore',log,log],windowsHide:true})
   let exited;host.on('exit',code=>{exited=code})
-  console.log('Isolated Team integration evidence: '+run)
   try{
     const deadline=Date.now()+240000
     while(!fs.existsSync(output)&&exited===undefined&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,150))

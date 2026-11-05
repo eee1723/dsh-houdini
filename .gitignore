@@ -27,3 +27,6 @@ evaluation/product-modeling-dev-v1/runs/
 .dsh-vision-router/
 .dsh-vision-toolkit/
 session/
+
+# User-owned temporary Desktop profiles; never commit accounts or chat history.
+.local-tests/

@@ -16,7 +16,9 @@ import {resolveVideoRuntime} from './video-runtime.js'
 import {localVideoEnvironment} from './video-process.js'
 import {visualCapability} from './image-output.js'
 import {HOUDINI_TOOLS} from './tool-catalog.js'
-import {executionLogValue,executionStdout,renderExec} from './tool-output.js'
+import {executionLogValue,executionStdout,renderExec,boundedFact} from './tool-output.js'
+import {MAX_PRESENTATION_BYTES} from './result-policy.js'
+import {TextRetainer} from '@deepseek-ai/dsh-output-retention'
 import {projectDirectoryPath} from './project-paths.js'
 
 const CHECKER=fileURLToPath(new URL('../tools/isolated-houdini-check.py',import.meta.url))
@@ -192,12 +194,10 @@ export function isolatedPresentation(value:any) {
   return {...value,report,...(process?{process}:{}),...(value.progress?{progress:reportView({result:value.progress}).result}:{})}
 }
 
-/** The live tool and isolated reports share one durable execution projection.
- * Rendering still receives the full report; native and PTC callers keep their
- * complete structured return value. Only the persisted browser/history copy is
- * reduced, and only when the original execution has an immutable archive. */
+/** Keep one report's aggregate projection bounded as well as its individual
+ * executions. The original run and immediate native/PTC return stay complete. */
 export function isolatedLogValue(value:any) {
-  if(!value.report)return value
+  if(!value.report)return boundedIsolatedFacts(value,value)
   const presented=isolatedPresentation(value)
   const resultFacts=(result:any)=>{
     if(!result)return result
@@ -208,8 +208,25 @@ export function isolatedLogValue(value:any) {
   }
   const process=value.process?Object.fromEntries(Object.entries(value.process).filter(([key])=>key!=='stdout').concat(
     value.process.stdout?[['stdout_location','Process stdout is not duplicated in session facts; use the run report and execution archives.']]:[])):undefined
-  return {...presented,report:{...presented.report,...(presented.report.result?{result:resultFacts(presented.report.result)}:{})},
-    ...(presented.progress?{progress:resultFacts(presented.progress)}:{}),...(process?{process}:{})}
+  return boundedIsolatedFacts(value,{...presented,report:{...presented.report,...(presented.report.result?{result:resultFacts(presented.report.result)}:{})},
+    ...(presented.progress?{progress:resultFacts(presented.progress)}:{}),...(process?{process}:{})})
+}
+
+function boundedIsolatedFacts(original:any,presented:any) {
+  if(Buffer.byteLength(JSON.stringify(presented))<=MAX_PRESENTATION_BYTES)return presented
+  return isolatedSummary(original)
+}
+
+function isolatedSummary(original:any) {
+  const report=original.report,result=report?.result??original.progress
+  return boundedFact(JSON.parse(JSON.stringify({kind:'isolated-houdini',run_directory:original.run_directory,
+    report_path:original.report_path,read:typeof original.run_directory==='string'&&!original.preflight?{operation:'read',output_dir:original.run_directory}:undefined,
+    ...(original.job_id?{job_id:original.job_id}:{}),...isolatedJobSummary(original),
+    report_summary:report?{ok:report.ok,finished:report.finished,phase:report.phase,
+      worker:report.worker?{status:report.worker.status,returncode:report.worker.returncode}:undefined}:undefined,
+    builder_ok:result?.builder?.ok,
+    checks:{count:result?.checks?.length??0,status_counts:inputStatusCounts(result?.checks)},
+    presentation:{status:'summary',reason:'The aggregate report exceeded the presentation budget. Read the complete original run and select the needed fields; absence from this summary is not evidence of absence.'}})))
 }
 
 /** Header, then execution envelopes through the live result renderer. Do not
@@ -236,6 +253,8 @@ export function renderIsolatedResult(value:any):ContentBlock[] {
     const rendered=renderExec({stdout:'',stderr:'',...row.value}).filter(item=>item.type==='text')
     blocks.push({type:'text',text:row.label+':\n'+rendered.map(item=>item.text).join('\n\n')})
   }
+  const textBytes=blocks.reduce((total,block)=>total+(block.type==='text'?Buffer.byteLength(block.text):0),0)
+  if(textBytes>MAX_PRESENTATION_BYTES)blocks.splice(0,blocks.length,{type:'text',text:JSON.stringify(isolatedSummary(value))})
   blocks.push(...(value.imageAttachments??[]).filter((row:any)=>row.attachment)
     .map((row:any)=>({type:'image',attachment:row.attachment} as ContentBlock)))
   return blocks
@@ -244,18 +263,25 @@ export function renderIsolatedResult(value:any):ContentBlock[] {
 /** Native jobs carry a locator and decision facts, never an unbounded copy of
  * the report. The same read operation supplies full canonical data and images. */
 export function isolatedJobSummary(value:any) {
-  const original=value.process?.error??value.report?.error??value.error??
-    (value.process?.exit_code!==0?'Checker exit code: '+value.process?.exit_code:null)
-  const error=typeof original==='string'&&original.length>2000?original.slice(0,2000)+
-    (value.report?'\n[Full error in the run report]':'\n[Process error excerpt; no readable run report]'):original
-  return {run_directory:value.run_directory,report_path:value.report_path,ok:value.ok??false,error,
+  const result=value.report?.result??value.progress
+  const checkError=result?.checks?.find((check:any)=>check.error!=null||check.execution?.error!=null)
+  const original=value.process?.error??value.report?.error??value.error??result?.builder?.error??
+    checkError?.error??checkError?.execution?.error??
+    (typeof value.process?.exit_code==='number'&&value.process.exit_code!==0?'Checker exit code: '+value.process.exit_code:null)
+  let error=original
+  if(typeof original==='string') {
+    const retainer=new TextRetainer({kind:'headTail',headBytes:4096,tailBytes:2048});retainer.push(original)
+    const retained=retainer.finish()
+    if(retained.truncated)error=retained.text+(value.report?'\n[Error excerpt; full original in the run report]':'\n[Process error excerpt; no readable run report]')
+  }
+  return boundedFact(JSON.parse(JSON.stringify({run_directory:value.run_directory,report_path:value.report_path,ok:value.ok??(value.report?.finished===true?value.report.ok:undefined),error,
     inputs_unchanged:value.report?.inputs_unchanged??null,
     input_observations:{count:value.report?.input_observations?.length??0,
       status_counts:inputStatusCounts(value.report?.input_observations),pointer:'/input_observations'},
     next_action:value.preflight?'Input was rejected before a run report was created. Correct the stated preflight error before a new run.':
       'Use houdini_isolated(operation="read", output_dir=...) for the original report and native images. '
       +(value.report?.inputs_unchanged===false||value.report?.inputs_unchanged===null
-        ?'Original input sources changed or could not be observed; read input_observations. Execution concerns the declared staged inputs; external effects are not restored.':'')}
+        ?'Original input sources changed or could not be observed; read input_observations. Execution concerns the declared staged inputs; external effects are not restored.':'')})))
 }
 
 export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true) {
@@ -415,7 +441,7 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
     output:{schema:{type:'json'},render:(_args,value)=>renderIsolatedResult(value),presentationMeta:(_args,value)=>({canonical:isolatedLogValue(value)})},
     presentCall:args=>({card:'generic',title:args.operation==='read'?'读取独立执行结果':'独立 Houdini 执行',kind:args.operation==='read'?'read':'execute',rawInput:args}),
     presentResult:(_args,result)=>{
-      const value=(result.meta as any)?.canonical,report=value?.report
+      const value=(result.meta as any)?.canonical,report=value?.report??value?.report_summary
       const status=result.isError||value?.ok===false||report?.ok===false&&report?.finished?'失败'
         :value?.job_id?'已提交':report?.finished?'已完成':report?'执行中':'已返回'
       return {card:'generic',title:'独立 Houdini · '+status,content:result.content}

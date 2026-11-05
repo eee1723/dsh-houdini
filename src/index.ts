@@ -18,11 +18,10 @@ import {installNodeDeliveryNavigation} from './node-delivery.js'
 import {registerImageTools} from './image-generation.js'
 import {registerVideoTools} from './video-transcription.js'
 import {registerIsolatedTool} from './isolated-execution.js'
-import {registerExecutorIdentityProjection} from './executor-identity-projection.js'
 import {desktopPaths} from './desktop-paths.js'
 
 export const name = 'dsh-houdini'
-export const inject = ['tools', 'systemPrompt', 'skills', 'sessions', 'sessionProjections']
+export const inject = ['tools', 'systemPrompt', 'skills', 'sessions', 'houdiniExecutorState']
 
 export interface Config {
   /** Base URL of the Houdini-side bridge. */
@@ -66,7 +65,6 @@ const GUIDANCE: PromptSection = {
 }
 
 export function apply(ctx: Context, config: Config) {
-  registerExecutorIdentityProjection(ctx)
   installHoudiniExecutionLog(ctx)
   const targets=ctx.get('houdiniTargets') as import('./executor-controller.js').ExecutorController|undefined
   const registry=config.executorRegistry||targets?.registry||desktopPaths().registry

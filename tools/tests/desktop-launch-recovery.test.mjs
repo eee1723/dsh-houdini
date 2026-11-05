@@ -30,8 +30,8 @@ async function fixture(name){
    return {sessionId:input.bindSessionId,executorId:input.executorId,workspaceId:'native-workspace'}
   }}
  const ctx={logger:{warn:()=>{}},sessionController:{resolveAgent:async id=>{assert.equal(id,session.id);return{agent}}},
-  sessionProjections:{stateOf:(value,key)=>key==='agentPreset'?'houdini':foldExecutorState(value.snapshotEvents())},workspaceRegistry:{archivedSessionIds:[],list:()=>[]}}
- ctx.get=name=>name==='sessionProjections'?ctx.sessionProjections:undefined
+  agentPresets:{presetForSession:()=> 'houdini'},houdiniExecutorState:{stateOf:value=>foldExecutorState(value.snapshotEvents())},workspaceRegistry:{archivedSessionIds:[],list:()=>[]}}
+ ctx.get=name=>ctx[name]
  const services=[],create=()=>{
   process.env.DSH_HOME=home
   const service=new DesktopIntegration(ctx,targets,async()=>[{hfs:home,version:'22.0.368',series:'22.0',executable:record.runtime.executable}],

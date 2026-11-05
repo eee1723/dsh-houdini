@@ -87,7 +87,9 @@ try {
     id=>!agents.find(agent=>agent.id===id)||agents.find(agent=>agent.id===id).status==='idle',async()=>durable,
     async(_task,candidates)=>{questions++;return candidates.find(record=>record.executor_id===answer)?.executor_id})
   const ctx=new Context(),projections=new SessionProjectionRegistry(ctx)
-  projections.register(agentPresetProjectionDefinition);registerExecutorIdentityProjection(ctx)
+  const presetHandle=await projections.register(agentPresetProjectionDefinition)
+  ctx.provide('agentPresets',{presetForSession:session=>presetHandle.stateOf(session)})
+  await registerExecutorIdentityProjection(ctx)
   ctx.provide('agents',{get:id=>agents.find(agent=>agent.id===id)})
   ctx.provide('sessions',{flush:async()=>durable})
   ctx.provide('sessionController',{resolveAgent:async id=>({agent:agents.find(agent=>agent.id===id)})})

@@ -28,16 +28,16 @@ class Bridge extends HoudiniBridge {
     return action==='assess'?{...common,status:this.assessmentStatus??(this.connected?'connected':'ready')}:{...common,status:'prepared',operation_id:input.operation_id}
   }
 }
-function fixture(answerer){
+async function fixture(answerer){
   let durable=true,flushes=0,service,questions=0,duringFlush
   const connection=new Bridge(),session=Session.create('recovery-task'),agent={id:session.id,session,status:'idle',inject:message=>session.append('agent/inbox/spliced',{target:'next-step',start:0,inserted:[message]})}
-  installSceneRecovery(fixtureProjectionContext({provide:(name,value)=>{assert.equal(name,'houdiniRecovery');service=value},
+  installSceneRecovery(await fixtureProjectionContext({provide:(name,value)=>{assert.equal(name,'houdiniRecovery');service=value},
     get:name=>name==='userQuestions'?{ask:async input=>{questions++;return answerer?.(input)??{answers:[]}}}:undefined,
     sessions:{flush:async()=>{flushes++;await duringFlush?.();return durable}}}),connection)
   return {connection,session,agent,get service(){return service},get questions(){return questions},get flushes(){return flushes},set durable(value){durable=value},set duringFlush(value){duringFlush=value}}
 }
 const signal=new AbortController().signal
-const f=fixture()
+const f=await fixture()
 await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(f.session,a)
 f.session.append('tool/call',{callId:'unfinished',name:'houdini_exec'})
 assert(projectExecutionNotice(f.session.snapshotEvents()).pending_calls)
@@ -64,7 +64,7 @@ f.session.append('tool/call',{callId:'new',name:'houdini_exec'})
 f.session.append('tool/result',{message:{source:{callId:'new'}},meta:{canonical:{execution:{executor_id:a}}}},{surfaceOp:'append'})
 assert.throws(()=>recordedExecutorIdentity(f.session.snapshotEvents()),/more than one executor/)
 // Browser prose cannot manufacture a recovery transition.
-const bad=fixture();await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(bad.session,a)
+const bad=await fixture();await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(bad.session,a)
 const value={schema:2,kind:'executor_recovery',previous_executor:a,executor_id:b,operation_id:d,
   checkpoint_id:c,scene_id:d,scene_epoch:e,runtime_id:e,hip_path:'C:/x.hip',restored_nodes:1}
 bad.session.append('user/message',{...recoveryMessage(value),source:{kind:'user'}},{surfaceOp:'append'})
@@ -72,7 +72,7 @@ assert.equal(recordedExecutorIdentity(bad.session.snapshotEvents()),a)
 bad.session.append('user/message',recoveryMessage({...value,previous_executor:c}),{surfaceOp:'append'})
 assert.throws(()=>foldExecutorState(bad.session.snapshotEvents()),/Invalid Houdini recovery transition/)
 // A wrong Bridge reply must not append a binding or activate anything.
-const wrong=fixture();await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(wrong.session,a)
+const wrong=await fixture();await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(wrong.session,a)
 const plan=await wrong.service.assess(wrong.agent,signal);wrong.connection.wrong=true
 await assert.rejects(wrong.service.restore(wrong.agent,plan.assessment_id,signal),/身份不匹配/)
 assert.equal(recordedExecutorIdentity(wrong.session.snapshotEvents()),a)
@@ -82,7 +82,7 @@ await assert.rejects(wrong.service.restore(wrong.agent,plan.assessment_id,signal
 // Selecting or inspecting a target never restores ownership. Only a write to
 // the exact previously saved scene can restore original nodes without reload.
 async function selectedFixture({scene=d,reload=false,dirty=false,checkpoint=c,collector}={}) {
-  const value=fixture();await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(value.session,a)
+  const value=await fixture();await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(value.session,a)
   const execution={ok:true,execution:{
     executor_id:a,runtime_id:a,sequence:1,observed_at:1,owner_session:value.agent.id,read_only:false,
     hip_path:'C:/fixture/project.hip',scene_recovery:{scene_id:d,scene_epoch:a,checkpoint_id:checkpoint}}}

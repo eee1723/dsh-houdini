@@ -45,11 +45,9 @@ function rows(entries) {
 }
 
 const standardRows = rows(standard)
-// This standard row is disabled upstream and its plugin is not required by the
-// Houdini profile. New active standard rows must be included in our preset.
-assert.equal(standardRows.get('/tool-plugin-manager')?.disabled, true,
-  'review plugin-manager policy when the standard preset changes')
-const omitted = new Set(['/persona', '/tool-plugin-manager'])
+// Host configuration owns availability, including the conditional plugin
+// manager. Houdini replaces only its persona and adds domain capabilities.
+const omitted = new Set(['/persona'])
 assert.deepEqual(fs.readdirSync(path.join(root, 'presets')), ['houdini'])
 const actual = rows(declarations[0].config.plugins)
 for (const [key, standardRow] of standardRows) {

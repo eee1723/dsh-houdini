@@ -31,7 +31,7 @@ export class ExecutorController extends TypertRemoteService {
     const resolved=await this.ctx.sessionController.resolveAgent(sessionId as any)
     if('error' in resolved||!resolved.agent)throw new Error('无法载入指定对话。')
     const agent=resolved.agent
-    if(this.ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')!=='houdini')
+    if(this.ctx.agentPresets.presetForSession(agent.session)!=='houdini')
       throw new Error('请选择 Houdini 模式的对话。')
     return agent
   }
@@ -75,13 +75,13 @@ export class ExecutorController extends TypertRemoteService {
           const agent=resolved.agent
           const target=projectedExecutorState(this.ctx,agent.session).selectedTarget
           if(agent.id===record.task_id&&agent.session.id===agent.id
-            &&this.ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')==='houdini'
+            &&this.ctx.agentPresets.presetForSession(agent.session)==='houdini'
             &&target&&targetMatchesRecord(target,record)) {
             const verified=await this.router.inspectSelectedTarget(target,signal)
             requireSameReceipt(verified)
             const current=projectedExecutorState(this.ctx,agent.session).selectedTarget
             if(this.ctx.workspaceRegistry.archivedSessionIds.includes(agent.id)
-              ||this.ctx.get('sessionProjections')?.stateOf(agent.session,'agentPreset')!=='houdini'
+              ||this.ctx.agentPresets.presetForSession(agent.session)!=='houdini'
               ||!current||!targetMatchesRecord(current,verified))
               throw new Error('原对话在接入期间已改选或归档，请从当前 Houdini 重新打开。')
             const workspace=this.ctx.workspaceRegistry.list().find(item=>item.sessionIds.includes(agent.id))

@@ -73,13 +73,14 @@ executor_id标识Houdini进程，不能与某次Bridge运行或DSH会话身份�
 HTTP断联、超时、坏JSON或错误状态码
 返回unknown_transport时，用houdini_request(request_ref=...)查回，不重发code。请求查回工具不接受code、pointer或分页；返回queued/running/done/not_executed/unknown等状态，done回读原结果。
 请求查回读取Bridge注册表，不进入HOM队列；running确认同代请求仍执行，queued确认已接收但未派发，均不提供进度百分比或预计完成时间。HTTP超时不取消原生工作。场景查询及界面发现/捕获共享主线程队列，不能作为独立存活探针；Shell未枚举到进程也不能覆盖同代Bridge回执。Host对非终态回执附加这些状态语义，原生与嵌套工具消费同一结构值。
-运行上下文与trace报告共用execution-facts的状态转换；在线消费DSH原生投影，冷历史按需折叠。后续running/queued替换旧通信未知，终态不被迟到观察重新激活。重复查回同一非终态不增加“待查回调用”或重发相同动态上下文，查询本身不成为另一项未完成执行。
+运行上下文与trace报告共用execution-facts的状态转换；根Host await私有投影handle后通过域服务公开同步读取，在线消费DSH原生投影，冷历史按需折叠。上下文按本步toolSet判断工具准入，图像能力消费本步modelSelection/agent.model，原生与PTC保持一致。后续running/queued替换旧通信未知，终态不被迟到观察重新激活。重复查回同一非终态不增加“待查回调用”或重发相同动态上下文，查询本身不成为另一项未完成执行。
 回执窗口最多4096条：正在执行/排队的请求及活动job关联不可淘汰，已终结旧记录按容量轮转，不设累计请求寿命。
 只有全部槽都仍活动时才拒绝新增登记。结果正文最多保留10分钟且总量上限64MiB，超预算先淘汰旧正文；
 过期/预算淘汰明确为result_expired，单条超预算为result_unavailable；记录淘汰后为unknown，不能推断未执行。
 jobs回执保存的是提交关联，不是完成证据；DSH job_output/job_kill负责观察控制，houdini_request读取原任务的实际状态、完整结果与图片。关联保持到job worker终态，
 不受正文到期影响；终态后进入普通淘汰队列。job实际结果服从job registry自身期限。重复回执不启动第二个worker，
 过载或worker未启动保留not_executed；队列取消仍阻止HOM运行，运行中取消不强杀。
+生产者取得Bridge终态后通过appendPluginRecord把`plugin:dsh-houdini/execution`可忽略事实写入同一Session，关联原sourceCallId/rootCallId及轻量canonical。投影、节点交付与Trace消费同一事实，不依赖job_output读取才发现完成；generic jobs的定义、通知与卸载保持原生，不复制每个Agent的job_output，也不伪造工具结果或另建执行账本。
 Host若丢弃整个工具结果，用request_ref='index'查看当前Host会话最多32条引用，优先仍活动请求/job关联，再列最近终结记录。
 按owner_call对齐原调用；索引不暴露代码或结果正文，省略数明确。超范围、未到达Bridge、换runtime或缺失均不证明未执行。
 health的activeRequests由Registry活动槽推导，涵盖未返回exec和活动job关联，不是activeExecs，也不把未用票计入执行。
@@ -97,13 +98,15 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 错误不冒充本次新增失败，标unverified并要求显式cook/输出复验。read_parms同步返回表达式语言与求值诊断。
 这些读取不额外cook或重复求值；表达式通过不证明非空几何、关系或控制效果，继续按显式输出验收。
 控制实验与domain共用显式数值通道解析，支持普通spare和HDA定义参数，也支持显式命名的数值tuple分量；不接收tuple列表值。菜单/动态菜单、回调、multiparm成员、缺失/非数值参数写前拒绝，domain失败不通过删除判据核销。
-大返回在当前workspace成功保存完整Bridge返回JSON后才精简默认文本；result-details提供SHA-256和
-可用读取入口。`houdini_resource(kind="result", ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中
-字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
-文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
-通用展示直接消费Bridge的outcome/checks/evidence/execution，不另推导控制、Polygon或接口结论。outcome区分批次是否完成、动词异常与验证结果，已捕获查询异常不改变合法fallback但必须可见。已归档结果的等价JSON子树使用引用，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。verb_help默认返回简明调用资料，完整契约按需读取。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
-Code Mode当前调用按Host协议返回完整结构值，供后续编程消费。持久canonical则只保留恢复、事务、执行身份与节点交付所需的轻量事实；大型作者结果、证据、影响清单和成功动词负载留在唯一hash归档，原生及嵌套事件共用读取规则。只读或归档失败时保留完整正文与原值，不能假装已有归档，这一模式的内存风险单独验证；取消等无execution字段的回执不补造执行事实。
-离线Trace沿`EXECUTION_FACT_PROJECTION`展开归档并保留原details地址；嵌套事件或归档确实缺少完整值时须由result_ref读取，审计明确标缺口，不从展示文字猜状态。
+大返回的完整原始JSON优先在当前workspace保存长期hash归档；文件按内容hash命名并校验，不跟随单文件symlink，目录保持在工作区内，单份预算32MiB。工作区只读、不可写或超预算时，完整原文交DSH原生spill存储，保留opaque locator和retrievalHint，不解析后端地址或承诺其永久保留。两种存储均失败时明确durable unavailable，原操作结果不因此变失败；原Bridge请求可能仍可查回，不保证无限期保留，也不重放代码。
+
+工作区归档可通过`houdini_resource(kind="result", ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。原生opaque结果返回后端实际locator/读取指导，明确没有应用JSON Pointer；原值不可用时返回明确缺口与原request_ref。
+
+通用展示直接消费Bridge的outcome/checks/evidence/execution，不另推导控制、Polygon或接口结论。outcome区分批次是否完成、动词异常与验证结果，已捕获查询异常不改变合法fallback。执行回执的持久canonical与文字正文各受64KiB预算约束，外层outcome元数据另受4KiB预算；独立run的多执行聚合也受同一总预算，超限回到既有作业摘要，保留真实状态、检查数及原run读取入口，当前结构返回不变。省略明确标注，并保留原值或恢复入口，不把省略当作没有诊断。等价JSON子树与稳定审计清单可引用原详情，verb_help默认简明、完整契约按需读取。预算与阈值由[结果政策](../houdini/result-detail-policy.json)维护，UTF-8裁剪复用DSH TextRetainer。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
+
+PTC当前调用按Host协议返回完整结构值，供程序即时消费；会话只持有恢复、事务、执行身份与节点交付所需的有界事实，原生及嵌套结果共用留存/读取规则。存储失败不回填完整正文与canonical，也不新增原值内存缓存；取消等无execution字段的回执不补造HOM执行。
+
+离线Trace沿`EXECUTION_FACT_PROJECTION`展开可验证的hash归档并保留原details地址；原生opaque结果、缺失/篡改归档或durable unavailable明确标读取缺口，不从展示文字猜状态或执行覆盖。
 
 ## 动词目录
 
@@ -125,7 +128,7 @@ Code Mode当前调用按Host协议返回完整结构值，供后续编程消费�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入和参数形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。可选非空`parms`在创建/接线后走严格set_parms，任一失败会连同 partial create 清理并报告恢复结果；拒绝 hidden/deprecated 和 Material Library 根层直建 shader，setup/builder 改用 tab_apply；parent 接受 Node/path。连完 inputs 后自动落位：有输入时以输入下游均值位置为首选；无输入时以父网络现有节点右侧新列、最顶部y为首选，空网络落原点。对完整节点/Box/Note/Dot障碍做局部有界避让；无所属Box且附近候选耗尽时跳到完整障碍包络右侧，保留首选y，不移动既有内容。已有所属Box边界仍保持；间距由节点实际网络尺寸（`Node.size()`）推导 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入及参数字典形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。可选非空`parms`在创建/接线后从真实节点逐层设置multiparm父/子数量，再严格设置实例和普通字段；输入顺序无关，不受静态节点卡展开预算限制，build_module的静态预算保持。任一参数失败会连同partial create清理并报告恢复结果；拒绝hidden/deprecated和Material Library根层直建shader，setup/builder改用tab_apply；parent接受Node/path。连完inputs后自动落位：有输入时以输入下游均值位置为首选；无输入时以父网络现有节点右侧新列、最顶部y为首选，空网络落原点。对完整节点/Box/Note/Dot障碍做局部有界避让；无所属Box且附近候选耗尽时跳到完整障碍包络右侧，保留首选y，不移动既有内容。已有所属Box边界仍保持；间距由节点实际网络尺寸（`Node.size()`）推导 | `hou.Node` |
 | `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder。SideFX recipe 自己摆节点，tab_apply 不做自动落位 | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
@@ -161,7 +164,7 @@ Code Mode当前调用按Host协议返回完整结构值，供后续编程消费�
 |---|---|---|
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助/默认值及实际menu token/index/label/set_value、menu_kind、menu_setting和参数自身conditionals（不给当前值，不推断是否生效）；动态菜单以实际节点为准。toggle_strip条目为位值，0清空、组合整数精确替换；exclusive_strip为选项索引 | list |
 | `read_parms(node, changed_only=True, *, names=None)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；names可选1..32个唯一标量或tuple字段，按请求顺序返回且不受changed_only过滤，tuple给聚合value/component_names及逐分量诊断，缺失报错。无动画string含原始UTF-8源码source_sha256，展开值不同于原文时另含raw_value；表达式附referenced_parm，被引用标referenced_by；动画附time_dependent/key_count/first_frame/last_frame/curves，不默认倾倒全部keys | list |
-| `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`：精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回patch前后hash/字符数/次数及value_omitted，不回传整份源码。最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
+| `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`精确替换，或`{expected_sha256,source:完整字面源码}`全量同步，两者互斥；精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回前后hash/字符数及value_omitted，不回传整份源码，同文同步changed=False。patch最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
 | `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`。全量预检包含锁定状态，失败恢复原值、表达式、keys和frame，并明确restored/restore_errors；提交后回读/采样并恢复用户frame。只负责channel数据，不代替路径依赖状态机或KineFX/APEX | dict |
 | `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters。`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`；spec必须用具名参数，严格上下限字段只接受min_strict/max_strict。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值；当前值另用set_parms。layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |

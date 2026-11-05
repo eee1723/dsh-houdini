@@ -5,9 +5,12 @@ import type { ExecResult, HoudiniBridge } from './bridge.js'
 
 /** Metadata-only preflight: no render, model inference, or scene mutation. */
 export async function visualCapability(exec: any, ctx: any) {
-  const routed = exec.route ?? exec.agent?.session?.requestHeader?.()?.config
-  const route = {provider:routed?.provider ?? exec.agent?.options?.provider,
-    model:routed?.model ?? exec.agent?.options?.model}
+  // A pending user selection belongs to a later step. Tool execution has no
+  // modelSelection field in DSH's public contract, so its committed request
+  // header is the current step's route; out-of-turn diagnostics use current().
+  const routed = exec.route ?? exec.modelSelection ?? exec.agent?.session?.requestHeader?.()?.config
+    ?? exec.agent?.model?.current()
+  const route = {provider:routed?.provider,model:routed?.model}
   const base = {...route, semantic_status:'unverified',
     render_backend:'not_probed', boundary:'Declared image input and native attachment channel only; GUI renderer, transport and semantic inspection require actual evidence.'}
   try {

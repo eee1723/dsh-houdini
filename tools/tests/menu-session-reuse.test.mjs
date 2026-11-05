@@ -10,7 +10,9 @@ import {foldExecutorBinding,registerExecutorIdentityProjection} from '../../lib/
 import {fixtureSession} from './fixture-session.mjs'
 
 const ctx=new Context(),projections=new SessionProjectionRegistry(ctx)
-projections.register(agentPresetProjectionDefinition);registerExecutorIdentityProjection(ctx)
+const presetHandle=await projections.register(agentPresetProjectionDefinition)
+ctx.provide('agentPresets',{presetForSession:session=>presetHandle.stateOf(session)})
+await registerExecutorIdentityProjection(ctx)
 const directory=path.join(os.tmpdir(),'menu-reuse-unit'),origin=fixtureSession('native-writer',{cwd:directory,agentPreset:'houdini'})
 const agent={id:origin.id,session:origin,status:'running'}
 const baseline={executor_id:'a'.repeat(32),registration_id:'b'.repeat(32),runtime_id:'c'.repeat(32),scene_id:'d'.repeat(32),

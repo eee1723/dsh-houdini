@@ -13,7 +13,7 @@ import {projectedExecutorState} from '../../lib/executor-identity-projection.js'
 const identity='a'.repeat(32),signal=new AbortController().signal
 const session=Session.create('durability-boundary')
 await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,identity)
-const projectionCtx=fixtureProjectionContext()
+const projectionCtx=await fixtureProjectionContext()
 let contacted=0
 const router=new ExecutorRouter({find:async()=>{contacted++;throw Error('must not read endpoint')}},100,
   new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),value=>projectedExecutorState(projectionCtx,value),()=>true,async()=>false)
@@ -33,7 +33,7 @@ async function chooseFixture(choice) {
   const bridge=new HoudiniBridge('http://127.0.0.1:1',100,identity)
   bridge.inspectExecutor=async()=>{traffic.push('health');return {executorId:identity}}
   bridge.recover=async()=>{throw Error('ordinary read or a fresh selected scene must not restore historical ownership')}
-  installSceneRecovery(fixtureProjectionContext({provide:(_name,value)=>service=value,on:(event,callback)=>{assert.equal(event,'agent/pre-step');hook=callback},
+  installSceneRecovery(await fixtureProjectionContext({provide:(_name,value)=>service=value,on:(event,callback)=>{assert.equal(event,'agent/pre-step');hook=callback},
     sessions:{flush:async()=>true},get:name=>name==='userQuestions'?{ask:async()=>{questions++;return {answers:[]}}}:undefined}),
     {registry:'fixture',resolve:async(exec,options)=>{assert.equal(exec.agent,agent);resolutions.push(options);return bridge}})
   await hook({agent,signal},async()=>({kind:'continue'}))

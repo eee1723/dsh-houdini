@@ -12,16 +12,16 @@ const data=section=>JSON.parse(section.text.slice(section.text.indexOf('\n')+1))
 let calls=0,frame=1
 const bridge={async sceneContext(){calls++;return {ok:true,result:{frame,hip_path:'{{scene}}.hip',selection:[{path:'/obj/selected'}]}}}}
 const hooks={},registered=[]
-const projectionCtx=fixtureProjectionContext({tools:{get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>registered.push(c)},on:(n,f)=>hooks[n]=f})
+const projectionCtx=await fixtureProjectionContext({tools:{get:(_name,_scope,toolSet)=>toolSet?.enabled===false?undefined:({name:'houdini_inspect'})},systemPrompt:{context:c=>registered.push(c)},on:(n,f)=>hooks[n]=f})
 installSceneContext(projectionCtx,bridge)
-const session=Session.create('scene-native-context'),agent={session}
+const session=Session.create('scene-native-context'),agent={session,model:{current:()=>undefined}}
 const promptContext=new Context()
 new SystemPrompt(promptContext,{})
 for(const section of registered)promptContext.systemPrompt.context(section)
-async function assemble(message,contexts=registered.map(c=>({name:c.name,text:c.text({agent})})),tools=[{name:'houdini_inspect'}]) {
+async function assemble(message,contexts=registered.map(c=>({name:c.name,text:c.text({agent})})),tools=[{name:'houdini_inspect'}],toolSet) {
   if (message) {hooks['agent/inbox/inserted']({agent,message});hooks['agent/inbox/claimed']({agent,message})}
   const assembly={contexts,tools,variables:{}}
-  await hooks['system-prompt/assemble'](assembly,{scope:{},agent},async()=>assembly)
+  await hooks['system-prompt/assemble'](assembly,{scope:agent,agent,toolSet},async()=>assembly)
   return promptContext.systemPrompt.refreshContext(assembly,{scope:{},agent}).contexts.filter(c=>c.text)
 }
 assert.equal((await assemble(user('greeting','你好'))).filter(section=>section.name===SCENE).length,1)
@@ -33,6 +33,9 @@ assert.equal((await assemble())[0].text,first[0].text)
 assert.equal(calls,2,'one observation is tied to one received user message')
 assert.equal((await assemble(undefined,undefined,[{name:'run_code'}]))[0].text,first[0].text,
   'PTC presentation retains the same registered Houdini context at request admission')
+assert.deepEqual(await assemble(undefined,undefined,[],{enabled:false}),[],
+  'a step without admitted Houdini tools cannot retain the previous scene context')
+assert.equal((await assemble())[0].text,first[0].text,'an admitted later step can recover its same observation')
 assert.equal(hooks['agent/pre-step'],undefined,'DSH owns context acceptance, compression and persistence')
 session.append('user/message',user('selected','检查选中节点'),{surfaceOp:'append'})
 session.append('user/message',{role:'user',content:[{type:'text',text:first[0].text}],

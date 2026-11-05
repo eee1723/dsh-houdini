@@ -6,7 +6,7 @@ import {Session} from '@deepseek-ai/dsh-session'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {fixtureProjectionContext} from './fixture-session.mjs'
 import {projectedExecutionFacts} from '../../lib/executor-identity-projection.js'
-const liveCtx=fixtureProjectionContext()
+const liveCtx=await fixtureProjectionContext()
 function assertLiveEquivalent(session) {
   assert.deepEqual(executionNoticeFromFacts(projectedExecutionFacts(liveCtx,session)),projectExecutionNotice(session.snapshotEvents()),
     'DSH live outstanding state matches cold native/nested history facts')

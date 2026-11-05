@@ -6,8 +6,10 @@ source defaults to loopback or uses --remote-url HTTPS / --npm name@version.
 No real credential, Houdini, package publication or paid ASR is involved.
 """
 import argparse
+import base64
 import hashlib
 import http.server
+import io
 import json
 import os
 from pathlib import Path
@@ -20,6 +22,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 import winreg
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -32,6 +35,10 @@ from dsh_deployment import _process_started
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--artifact',required=True,type=Path)
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
+parser.add_argument('--unpacked-app',type=Path,help='Unmodified official app extracted for development-carrier UI checks; excludes packaged protocol/update qualification')
+parser.add_argument('--electron-carrier',type=Path,help='Official Electron copy with default_app.asar and no app.asar; requires --unpacked-app')
+parser.add_argument('--update-from',type=Path,help='Actual public 0.1.6 tgz seeded disabled by the previous official CLI, then updated through the native registry API')
+parser.add_argument('--previous-desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--expected-sha256')
 parser.add_argument('--remote-only',action='store_true',help='Directly validate the owned HTTP/UI lifecycle after a fixture-only change')
 parser.add_argument('--local-only',action='store_true',help='Verify the actual local Native UI/Agent/credential path after a UI-only change')
@@ -41,6 +48,8 @@ parser.add_argument('--registry',help='Use only this registry in the owned profi
 parser.add_argument('--timeout',type=int,default=240)
 args=parser.parse_args()
 assert not (args.remote_only and args.local_only)
+if args.update_from and (not args.unpacked_app or args.remote_only or args.local_only or args.npm or args.remote_url or args.registry):
+    parser.error('--update-from requires the unpacked carrier and its owned registry stage only')
 if args.npm and (not args.remote_only or args.remote_url):
     parser.error('--npm requires --remote-only and cannot use --remote-url')
 if args.registry:
@@ -56,8 +65,29 @@ artifact=args.artifact.resolve(strict=True)
 with tarfile.open(artifact,'r:gz') as archive:
     package=json.load(archive.extractfile('package/package.json'))
 npm_spec=package['name']+'@'+package['version'] if args.npm else None
+previous_artifact=args.update_from.resolve(strict=True) if args.update_from else None
+if previous_artifact:
+    with tarfile.open(previous_artifact,'r:gz') as archive:previous_package=json.load(archive.extractfile('package/package.json'))
+    assert previous_package['name']==package['name']=='dsh-houdini' and previous_package['version']=='0.1.6'
+    with previous_artifact.open('rb') as stream:
+        previous_integrity='sha512-'+base64.b64encode(hashlib.file_digest(stream,'sha512').digest()).decode()
+    assert previous_integrity=='sha512-d2BJMGCZEM6k+c8d4xJVdLeCNXj2zRNJ4+b+LjQF3CLnl90mtQkuCJAI8/Yy13fw8SDLH9SqNRegsIVmxVgLsQ==', (
+        'Use the actual public npm 0.1.6 bytes, not a same-version local build')
 desktop=args.desktop_root.resolve(strict=True)
 electron=desktop/'DeepSeek Harness.exe'
+unpacked=args.unpacked_app.resolve(strict=True) if args.unpacked_app else None
+if bool(unpacked)!=bool(args.electron_carrier):parser.error('--unpacked-app and --electron-carrier must be supplied together')
+carrier=args.electron_carrier.resolve(strict=True) if unpacked else electron
+if unpacked:
+    assert carrier.is_file() and (unpacked/'lib/main.js').is_file()
+    # Electron's native Windows isPackaged getter is based on this basename,
+    # not on whether app.asar exists. A renamed official application registers
+    # dsh:// before a post-launch inspector could reject the wrong mode.
+    assert carrier.name.lower()=='electron.exe','Unpacked tests require an Electron-named development carrier'
+    assert not (carrier.parent/'resources/app.asar').exists(),'Development carrier must not boot a packaged app'
+    assert (carrier.parent/'resources/default_app.asar').is_file()
+app_package=unpacked/'package.json' if unpacked else desktop/'resources/app.asar/package.json'
+dsh_package=unpacked/'dsh/node_modules/@deepseek-ai/dsh/package.json' if unpacked else desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json'
 fixture=Path(tempfile.mkdtemp(prefix='dsh-distribution-ui-'))
 env={name.upper():value for name,value in isolated_environment(fixture,gui=True).items()}
 for name,relative in {'APPDATA':'appdata','LOCALAPPDATA':'localappdata','TEMP':'temp','TMP':'temp',
@@ -69,9 +99,15 @@ env.update(DSH_HOME=str(fixture/'harness'),DSH_DESKTOP_OPEN_DEVTOOLS='0',
     DSH_DESKTOP_DIAGNOSTIC_FILE=str(fixture/'desktop-startup-error.txt'),
     DSH_DESKTOP_UPDATE_JOURNAL_DIR=str(fixture/'update-journal'),DSH_DIST_UI_CHAT_KEY='owned-loopback-chat-only')
 home=Path(env['DSH_HOME']);profile=home/'profiles/desktop';user_data=fixture/'appdata/dsh-desktop'
+if unpacked:
+    env.pop('ELECTRON_FORCE_IS_PACKAGED',None);env.pop('DSH_DESKTOP_DEV_APP',None)
+    env.update(DSH_DESKTOP_DSH_DIR=str(unpacked/'dsh'),
+        DSH_DESKTOP_PNPM_ENTRY=str(desktop/'resources/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.mjs'),
+        DSH_DESKTOP_PRIMARY_RUNTIME_DIR=str(desktop/'resources/runtime/primary-runtime'))
 sentinel='owned-native-asr-sentinel-not-a-real-key'
 owned=[];process=None;output=None
 server_facts={'chatRequests':0,'toolCalls':[],'tarballGets':0,'tarballTransfers':[],'asrRequests':0,'sentinelAbsentFromModel':True,'errors':[]}
+server_facts['registryRequests']=[]
 
 
 def digest(file):
@@ -94,18 +130,22 @@ def registry_tree(key):
 
 
 def protocol_hash():
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\dsh\UserChoice'):
-            raise AssertionError('Refusing launch with a user-chosen dsh protocol handler')
-    except FileNotFoundError:pass
-    expected='"'+str(electron)+'" "%1"'
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh\shell\open\command') as key:
-        assert winreg.QueryValueEx(key,'')[0]==expected,'Refusing launch without the same existing physical HKCU dsh registration'
-    with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,r'dsh\shell\open\command') as key:
-        assert winreg.QueryValueEx(key,'')[0]==expected,'Refusing launch with a different effective dsh handler'
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh') as key:user=registry_tree(key)
-    with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,'dsh') as key:effective=registry_tree(key)
-    return hashlib.sha256(json.dumps({'user':user,'effective':effective},sort_keys=True).encode()).hexdigest()
+    def tree(root,path):
+        try:
+            with winreg.OpenKey(root,path) as key:return registry_tree(key)
+        except FileNotFoundError:return None
+    choice=tree(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\dsh\UserChoice')
+    user=tree(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh')
+    effective=tree(winreg.HKEY_CLASSES_ROOT,'dsh')
+    if not unpacked:
+        assert choice is None,'Refusing packaged launch with a user-chosen dsh protocol handler'
+        expected='"'+str(electron)+'" "%1"'
+        for root,path in [(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh\shell\open\command'),(winreg.HKEY_CLASSES_ROOT,r'dsh\shell\open\command')]:
+            with winreg.OpenKey(root,path) as key:
+                assert winreg.QueryValueEx(key,'')[0]==expected,'Refusing packaged launch with a different dsh handler'
+    snapshot={'user':user,'effective':effective,'choice':choice}
+    (fixture/'protocol-current.json').write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding='utf-8')
+    return hashlib.sha256(json.dumps(snapshot,sort_keys=True).encode()).hexdigest()
 
 
 def text_of(value):
@@ -116,6 +156,7 @@ def text_of(value):
 
 
 class FixtureServer(http.server.BaseHTTPRequestHandler):
+    protocol_version='HTTP/1.1'
     def log_message(self,*_):pass
     def do_HEAD(self):
         if self.path=='/dsh-houdini.tgz':
@@ -123,8 +164,36 @@ class FixtureServer(http.server.BaseHTTPRequestHandler):
                 'contentType':'application/octet-stream','connectionHeader':None,'closeConnection':self.close_connection,'writtenBytes':0,'completed':True})
             self.send_response(200);self.send_header('Content-Type','application/octet-stream')
             self.send_header('Content-Length',str(copied.stat().st_size));self.end_headers();return
-        self.send_response(404);self.end_headers()
+        self.send_response(404);self.send_header('Content-Length','0');self.end_headers()
     def do_GET(self):
+        if previous_artifact:
+            route=urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+            server_facts['registryRequests'].append(route)
+            if route in registry_files:
+                file=registry_files[route]
+                self.send_response(200);self.send_header('Content-Type','application/octet-stream')
+                self.send_header('Content-Length',str(file.stat().st_size));self.end_headers()
+                try:
+                    with file.open('rb') as stream:shutil.copyfileobj(stream,self.wfile,128*1024)
+                except (BrokenPipeError,ConnectionResetError):pass
+                return
+            if route=='/dsh-houdini' or route.startswith('/dsh-houdini/'):
+                document=registry_document
+                if route!='/dsh-houdini':document=registry_document['versions'].get(route.split('/')[-1])
+                if document is None:self.send_response(404);self.send_header('Content-Length','0');self.end_headers();return
+                data=json.dumps(document).encode();self.send_response(200);self.send_header('Content-Type','application/json')
+                self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            # Public dependency metadata only; never forward local credentials,
+            # arbitrary origins, or file paths from a request.
+            try:
+                target='https://registry.npmjs.org'+self.path
+                with urllib.request.urlopen(target,timeout=60) as upstream:data=upstream.read()
+                self.send_response(200);self.send_header('Content-Type','application/json')
+                self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+            except (BrokenPipeError,ConnectionResetError):pass
+            except Exception as error:
+                self.send_response(502);self.send_header('Content-Length','0');self.end_headers();server_facts['errors'].append('owned registry dependency: '+str(error))
+            return
         if self.path=='/dsh-houdini.tgz':
             server_facts['tarballGets']+=1
             transfer={'method':'GET','protocol':self.protocol_version,'expectedBytes':copied.stat().st_size,'contentLength':copied.stat().st_size,
@@ -141,7 +210,7 @@ class FixtureServer(http.server.BaseHTTPRequestHandler):
             except Exception as error:
                 transfer['error']=repr(error);server_facts['errors'].append('tarball stream: '+repr(error))
             return
-        self.send_response(404);self.end_headers()
+        self.send_response(404);self.send_header('Content-Length','0');self.end_headers()
     def do_POST(self):
         raw=self.rfile.read(int(self.headers.get('Content-Length','0')))
         try:
@@ -196,27 +265,60 @@ def wait_until(read,seconds,label):
 
 
 def init_empty_profile():
+    seed_desktop=args.previous_desktop_root.resolve(strict=True) if previous_artifact else desktop
+    seed_electron=seed_desktop/'DeepSeek Harness.exe'
+    seed_package=seed_desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json' if previous_artifact else dsh_package
     script=fixture/'init-profile.mjs'
+    templates="boot.PROFILE_TEMPLATES" if previous_artifact else "(await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-official-bundles')))).PROFILE_TEMPLATES"
     script.write_text("import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';"
         "const require=createRequire(process.argv[2]);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));"
-        "boot.initProfile(process.argv[3],boot.PROFILE_TEMPLATES.web.bundles);",encoding='utf-8')
+        +("if(boot.getDshRuntimeVersion()!=='0.2.1-rc.5')throw Error('Seed only the verified previous official rc.5');" if previous_artifact else "")+
+        "boot.initProfile(process.argv[3],"+templates+".web.bundles);",encoding='utf-8')
     env['ELECTRON_RUN_AS_NODE']='1'
-    run([electron,script,desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json',profile])
+    run([seed_electron,script,seed_package,profile])
+    if previous_artifact:
+        entry=seed_desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
+        seeded=run([seed_electron,'--expose-internals',entry,'plugin','--profile','desktop','add',
+            'dsh-houdini@'+previous_package['version'],'--registry',base,'--store-dir',Path(env['PNPM_HOME'])/'store'])
+        (fixture/'previous-official-cli.log').write_bytes(seeded.stdout+seeded.stderr)
+        disable=fixture/'disable-previous-official.mjs'
+        disable.write_text("import fs from 'node:fs';import{createRequire}from'node:module';import{pathToFileURL}from'node:url';"
+            "const r=createRequire(process.argv[2]);const boot=await import(pathToFileURL(r.resolve('@deepseek-ai/dsh-app-boot')));"
+            "const dir=process.argv[3],manifest=JSON.parse(fs.readFileSync(dir+'/package.json','utf8'));"
+            "const selected=manifest.dsh.profile.bundles;boot.writeProfileBundles(dir,manifest,selected.filter(name=>name!=='dsh-houdini'));",encoding='utf-8')
+        run([seed_electron,disable,seed_package,profile])
     env.pop('ELECTRON_RUN_AS_NODE',None)
     manifest=json.loads((profile/'package.json').read_text(encoding='utf-8'))
-    assert 'dsh-houdini' not in manifest.get('dependencies',{})
+    assert ('dsh-houdini' in manifest.get('dependencies',{}))==bool(previous_artifact)
     assert 'dsh-houdini' not in manifest.get('dsh',{}).get('profile',{}).get('bundles',[])
     patch=('- id: workspace-controller\n  config:\n    documentsDirectory: '+json.dumps(str(fixture/'documents'))+'\n'
         '- id: llm-pi-ai\n  config:\n    providers:\n      owned-distribution-chat:\n'
         '        api: openai-completions\n        baseURL: '+json.dumps(base+'/v1/')+'\n'
         '        apiKeyEnv: DSH_DIST_UI_CHAT_KEY\n        models:\n          - id: scripted-chat\n            input: [text]\n')
-    if args.registry:
-        patch+='- id: plugin-manager\n  config:\n    registry: '+json.dumps(args.registry)+'\n    fallbackRegistries: []\n'
-        (profile/'.npmrc').write_text('registry='+args.registry+'\n',encoding='utf-8')
+    registry=base if previous_artifact else args.registry
+    if registry:
+        patch+='- id: plugin-manager\n  config:\n    registry: '+json.dumps(registry)+'\n    fallbackRegistries: []\n'
+        (profile/'.npmrc').write_text('registry='+registry+'\n'+
+            ('store-dir='+str(Path(env['PNPM_HOME'])/'store')+'\n' if previous_artifact else ''),encoding='utf-8')
     (profile/'cordis.patch.yml').write_text(patch,encoding='utf-8')
 
 
 def endpoints():
+    if unpacked:
+        def inspector():
+            assert process.poll() is None,'Owned development carrier exited before admission'
+            text=log.read_text(encoding='utf-8',errors='replace')
+            match=re.search(r'Debugger listening on (ws://127\.0\.0\.1:\d+/[^\s]+)',text)
+            return match.group(1) if match else None
+        main=wait_until(inspector,args.timeout,'paused official carrier inspector')
+        configuration=log.parent/'carrier-admission-input.json'
+        admission=log.parent/'carrier-admission.json'
+        configuration.write_text(json.dumps({'main':main,'pid':process.pid,'executable':str(carrier),
+            'appPackage':str(app_package),'output':str(admission)}),encoding='utf-8')
+        checked=subprocess.run([shutil.which('node'),str(ROOT/'tools/tests/desktop-carrier-admission.mjs'),str(configuration)],
+            cwd=fixture,env=env,capture_output=True,timeout=90)
+        (log.parent/'carrier-admission.log').write_bytes(checked.stdout+checked.stderr)
+        assert checked.returncode==0,'Official carrier was not admitted; no DSH main execution authorized'
     def read():
         assert process.poll() is None,'Owned Native Desktop exited before UI readiness'
         diagnostic=fixture/'desktop-startup-error.txt'
@@ -252,18 +354,45 @@ assert digest(copied)==digest(artifact)
 if args.expected_sha256:assert digest(copied)==args.expected_sha256,'Frozen artifact SHA256 mismatch'
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),FixtureServer)
 base='http://127.0.0.1:'+str(server.server_port);asr_endpoint=base+'/asr/audio/transcriptions'
+registry_files={};registry_document={};broken_version=None
+if previous_artifact:
+    broken_version=package['version'].split('-')[0]+'-rc.999999-fixture'
+    broken=fixture/'owned-broken-update-fixture.tgz'
+    broken_manifest={'name':'dsh-houdini','version':broken_version,'private':True,'type':'module',
+        'main':'lib/broken.js','exports':{'.':'./lib/broken.js'},'engines':package['engines'],
+        'dsh':{'bundle':{'patch':['./broken.patch.yml']}}}
+    with tarfile.open(broken,'w:gz') as archive:
+        for name,text in {'package.json':json.dumps(broken_manifest),'broken.patch.yml':'- insert:\n    - id: owned-update-failure\n      name: dsh-houdini\n',
+                'lib/broken.js':'throw new Error("Owned update failure fixture; not a product release")\n'}.items():
+            data=text.encode();info=tarfile.TarInfo('package/'+name);info.size=len(data);archive.addfile(info,io.BytesIO(data))
+    registry_files={'/old.tgz':previous_artifact,'/dsh-houdini.tgz':copied,'/broken-fixture.tgz':broken}
+    versions={}
+    for metadata,route in [(previous_package,'/old.tgz'),(package,'/dsh-houdini.tgz'),(broken_manifest,'/broken-fixture.tgz')]:
+        with registry_files[route].open('rb') as stream:integrity=base64.b64encode(hashlib.file_digest(stream,'sha512').digest()).decode()
+        versions[metadata['version']]={**metadata,'dist':{'tarball':base+route,'integrity':'sha512-'+integrity}}
+    registry_document={'name':'dsh-houdini','dist-tags':{'latest':package['version']},'versions':versions}
 remote_spec=npm_spec or args.remote_url or base+'/dsh-houdini.tgz'
 threading.Thread(target=server.serve_forever,daemon=True).start()
 immutable={str(file):digest(file) for file in [electron,desktop/'resources/app.asar',desktop/'resources/runtime/versions.json']}
+if previous_artifact:
+    previous_desktop=args.previous_desktop_root.resolve(strict=True)
+    immutable.update({str(file):digest(file) for file in [previous_desktop/'DeepSeek Harness.exe',
+        previous_desktop/'resources/app.asar',previous_desktop/'resources/runtime/versions.json']})
 report={'fixture':str(fixture),'artifactSha256':digest(copied),'nativeElectronWindowTested':False,'nativeProfile':'desktop',
     'installedByNativeUi':False,'cliPluginInstallUsed':False,'chatModel':'owned scripted loopback provider',
     'remoteDistribution':'published npm package installed by native UI' if args.npm else 'explicit HTTPS tarball installed by native UI' if args.remote_url else 'owned HTTP tarball mechanism only; no npm/GitHub publication claim',
     'remoteInstallSpec':remote_spec,'requestedRegistry':args.registry,'immutable':immutable}
+report['carrierMode']='official-unpacked-development' if unpacked else 'official-packaged'
+report['packagedProtocolAndUpdaterQualified']=False
+if previous_artifact:
+    report.update(seededByPreviousOfficialCli=True,cliPluginInstallUsed=True,previousArtifactSha256=digest(previous_artifact),
+        remoteDistribution='owned loopback registry update and failure-recovery mechanism; no public publication claim')
 print('Owned Native distribution UI evidence:',fixture,flush=True)
 try:
     baseline=protocol_hash();report['protocolSha256Before']=baseline
+    shutil.copy2(fixture/'protocol-current.json',fixture/'protocol-before.json')
     report['ui']={}
-    modes=['remote'] if args.remote_only else ['local'] if args.local_only else ['local','remote']
+    modes=['update'] if previous_artifact else ['remote'] if args.remote_only else ['local'] if args.local_only else ['local','remote']
     report['testedStages']=modes
     for mode in modes:
         stage=fixture/mode;stage.mkdir()
@@ -274,20 +403,24 @@ try:
         user_data=Path(env['APPDATA'])/'dsh-desktop'
         init_empty_profile()
         log=stage/'desktop.log';output=log.open('wb')
-        process=subprocess.Popen([str(electron),'--inspect=127.0.0.1:0','--remote-debugging-port=0','--user-data-dir='+str(user_data)],
+        process=subprocess.Popen([str(carrier),*([str(unpacked)] if unpacked else []),
+            '--inspect-brk=127.0.0.1:0' if unpacked else '--inspect=127.0.0.1:0',
+            '--remote-debugging-port=0','--user-data-dir='+str(user_data)],
             cwd=fixture,env=env,stdout=output,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0))
         birth=_process_started(process.pid);assert birth;owned.append((process.pid,birth))
         endpoint=endpoints();capture_children()
         settings={'artifact':str(copied),'remoteInstallSpec':remote_spec,'npmSpec':npm_spec,'expectedVersion':package['version'],'expectedRegistry':args.registry,
+            'appPackage':str(app_package),'expectedPackaged':not bool(unpacked),
             'asrEndpoint':asr_endpoint,'sentinel':sentinel,
-            'remoteOnly':mode=='remote','expectedPid':process.pid,'timeoutMs':args.timeout*1000,'output':str(stage/'ui-result.json'),**endpoint}
+            'remoteOnly':mode in ['remote','update'],'expectedPid':process.pid,'timeoutMs':args.timeout*1000,'output':str(stage/'ui-result.json'),**endpoint}
+        if previous_artifact:settings.update(updateFromVersion=previous_package['version'],updateRegistry=base,brokenVersion=broken_version)
         config=stage/'probe-input.json';config.write_text(json.dumps(settings),encoding='utf-8')
         result=subprocess.run([shutil.which('node'),str(ROOT/'tools/tests/desktop-install-ui-probe.mjs'),str(config)],
             cwd=fixture,env=env,capture_output=True,timeout=args.timeout*3)
         (stage/'probe.log').write_bytes(result.stdout+result.stderr)
         assert result.returncode==0,'Native '+mode+' distribution UI failed; inspect '+str(stage/'ui-result.json')
         report['ui'][mode]=json.loads((stage/'ui-result.json').read_text(encoding='utf-8'))
-        if mode=='local':
+        if mode in ['local','update']:
             installed=(profile/'node_modules/dsh-houdini').resolve(strict=True)
             assert installed.is_relative_to(fixture) and not installed.is_relative_to(ROOT)
             hashes={}
@@ -303,15 +436,16 @@ try:
         output.close();output=None
         report['ui'][mode]['normalExitCode']=process.returncode
         print('PASS Native '+mode+' UI stage',flush=True)
-    report['nativeElectronWindowTested']=True;report['installedByNativeUi']=True
+    report['nativeElectronWindowTested']=True;report['installedByNativeUi']=not bool(previous_artifact)
+    report['updatedByNativeApi']=bool(previous_artifact)
     assert server_facts['asrRequests']==0 and not server_facts['errors'],server_facts
-    if not args.local_only and not args.remote_url and not args.npm:assert server_facts['tarballGets']>0,server_facts
+    if not previous_artifact and not args.local_only and not args.remote_url and not args.npm:assert server_facts['tarballGets']>0,server_facts
     assert server_facts['sentinelAbsentFromModel'],server_facts
     if not args.remote_only:assert server_facts['chatRequests']==0 and not server_facts['toolCalls'],server_facts
     assert protocol_hash()==baseline and {file:digest(file) for file in immutable}==immutable
     report.update(ok=True,normalExitCode=process.returncode,loopback=server_facts,desktopInstallationAndProtocolUnchanged=True)
     remote_label='npm package' if args.npm else 'HTTPS tarball' if args.remote_url else 'HTTP tarball'
-    print(('PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
+    print(('PASS Native registry update from actual disabled 0.1.6 and failed-fixture restoration' if previous_artifact else 'PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
         'PASS Native UI local tgz + real tutorial Agent/credentials + '+remote_label+' distribution/lifecycle')+': '+str(fixture),flush=True)
 except BaseException as error:
     report['error']=repr(error);raise
@@ -329,6 +463,7 @@ finally:
     if 'protocolSha256Before' in report:
         try:
             report['protocolUnchangedAfterCleanup']=protocol_hash()==baseline
+            shutil.copy2(fixture/'protocol-current.json',fixture/'protocol-after.json')
             report['desktopInstallationUnchangedAfterCleanup']={file:digest(file) for file in immutable}==immutable
         except Exception as error:report['isolationVerificationError']=repr(error);report['ok']=False
     (fixture/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

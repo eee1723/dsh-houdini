@@ -8,7 +8,7 @@ import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
-export const inject=['loader','llm','settings','credentials','sessions','agents','sessionController','workspaceController','workspaceRegistry','sandboxPolicy','houdiniFrontend','sessionProjections']
+export const inject=['loader','llm','settings','credentials','sessions','agents','sessionController','workspaceController','workspaceRegistry','sandboxPolicy','houdiniFrontend','agentPresets']
 const driver='video-fixture-driver',sha=value=>createHash('sha256').update(value).digest('hex')
 export function apply(ctx){
  const workspace=process.env.DSH_VIDEO_FIXTURE_WORKSPACE,base=process.env.DSH_VIDEO_FIXTURE_BASE
@@ -136,7 +136,7 @@ export function apply(ctx){
    if(restart){
     sessionId=process.env.DSH_VIDEO_FIXTURE_SESSION;assert(sessionId)
     const resolved=await ctx.sessionController.resolveAgent(sessionId);assert(!('error'in resolved))
-    assert.equal(ctx.sessionProjections.stateOf(resolved.agent.session,'agentPreset'),'houdini')
+    assert.equal(ctx.agentPresets.presetForSession(resolved.agent.session),'houdini')
     assert.equal(ctx.houdiniFrontend.videoSelection().model,routeB.model)
    }else{
     const {workspace:record}=await ctx.workspaceController.create({path:workspace})

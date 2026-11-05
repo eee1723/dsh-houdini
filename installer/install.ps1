@@ -63,37 +63,38 @@ if ($ListHelpers) {
     return
 }
 if ($SelectHelper -and $SelectHelper -notmatch '^[0-9a-f]{16}$') { throw 'SelectHelper must name an installed helper identity from -ListHelpers.' }
-if ($SelectHelper -and -not $PackagesDir) {
-    $registrations = Join-Path $installRoot 'registrations.json'
-    if (-not (Test-Path -LiteralPath $registrations -PathType Leaf)) { throw 'No registered helper targets. Pass -PackagesDir explicitly.' }
-    $targets = @((Get-Content -LiteralPath $registrations -Raw -Encoding UTF8 | ConvertFrom-Json).packages)
-    if (@($targets | Where-Object { [IO.Path]::GetFileName($_) -ne 'dsh-houdini.json' }).Count) { throw 'The helper registration list is invalid.' }
-    $PackagesDir = @($targets | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique)
-    if (-not $PackagesDir.Count) { throw 'No registered helper targets. Pass -PackagesDir explicitly.' }
-}
-if (-not $PackagesDir) {
-    # Desktop may not inherit the environment of an existing Houdini process.
-    # An upgrade must retain custom preferences recorded by the old installer.
-    $registrations = Join-Path $installRoot 'registrations.json'
-    if (Test-Path -LiteralPath $registrations -PathType Leaf) {
-        try {
-            $targets = @((Get-Content -LiteralPath $registrations -Raw -Encoding UTF8 | ConvertFrom-Json).packages)
-            if (@($targets | Where-Object { [IO.Path]::GetFileName($_) -ine 'dsh-houdini.json' }).Count) { throw 'Invalid recorded package filename.' }
-            $PackagesDir = @($targets | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique)
-        } catch { throw "Cannot read recorded custom preferences; preserved: $registrations. $($_.Exception.Message)" }
+function Get-InstallPackageDirectories([string[]]$Directories) {
+    if ($SelectHelper -and -not $Directories) {
+        $registrations = Join-Path $installRoot 'registrations.json'
+        if (-not (Test-Path -LiteralPath $registrations -PathType Leaf)) { throw 'No registered helper targets. Pass -PackagesDir explicitly.' }
+        $targets = @((Get-Content -LiteralPath $registrations -Raw -Encoding UTF8 | ConvertFrom-Json).packages)
+        if (@($targets | Where-Object { [IO.Path]::GetFileName($_) -ne 'dsh-houdini.json' }).Count) { throw 'The helper registration list is invalid.' }
+        $Directories = @($targets | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique)
+        if (-not $Directories.Count) { throw 'No registered helper targets. Pass -PackagesDir explicitly.' }
     }
-}
-if (-not $PackagesDir) {
-    $PackagesDir = @(Get-DshEnvironmentPackageDirectories)
-}
-if (-not $PackagesDir) {
-    $documents = [Environment]::GetFolderPath('MyDocuments')
-    $PackagesDir = @($Versions | ForEach-Object {
-        if ($_ -notin @('21.0', '22.0')) { throw "Unsupported Houdini version: $_" }
-        if ($env:HOUDINI_USER_PREF_DIR) {
-            Join-Path ($env:HOUDINI_USER_PREF_DIR.Replace('__HVER__', $_)) 'packages'
-        } else { Join-Path (Join-Path $documents "houdini$_") 'packages' }
-    } | Select-Object -Unique)
+    if (-not $Directories) {
+        # Desktop may not inherit the environment of an existing Houdini process.
+        # An upgrade must retain custom preferences recorded by the old installer.
+        $registrations = Join-Path $installRoot 'registrations.json'
+        if (Test-Path -LiteralPath $registrations -PathType Leaf) {
+            try {
+                $targets = @((Get-Content -LiteralPath $registrations -Raw -Encoding UTF8 | ConvertFrom-Json).packages)
+                if (@($targets | Where-Object { [IO.Path]::GetFileName($_) -ine 'dsh-houdini.json' }).Count) { throw 'Invalid recorded package filename.' }
+                $Directories = @($targets | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique)
+            } catch { throw "Cannot read recorded custom preferences; preserved: $registrations. $($_.Exception.Message)" }
+        }
+    }
+    if (-not $Directories) { $Directories = @(Get-DshEnvironmentPackageDirectories) }
+    if (-not $Directories) {
+        $documents = [Environment]::GetFolderPath('MyDocuments')
+        $Directories = @($Versions | ForEach-Object {
+            if ($_ -notin @('21.0', '22.0')) { throw "Unsupported Houdini version: $_" }
+            if ($env:HOUDINI_USER_PREF_DIR) {
+                Join-Path ($env:HOUDINI_USER_PREF_DIR.Replace('__HVER__', $_)) 'packages'
+            } else { Join-Path (Join-Path $documents "houdini$_") 'packages' }
+        } | Select-Object -Unique)
+    }
+    return $Directories
 }
 # Only the Houdini package is installed here. Official Desktop owns its own
 # plugin package, Node runtime, profiles, Sessions, models, and application UI.
@@ -113,25 +114,35 @@ $package = @{
     )
     path = '$DSH_HOUDINI_PATH'
 }
-$migration = New-DshMigrationPlan $installRoot $PackagesDir ($package | ConvertTo-Json -Depth 6)
-if ($SelectHelper) {
-    foreach ($directory in $PackagesDir) {
-        $target = Join-Path $directory 'dsh-houdini.json'
-        if (Test-Path -LiteralPath $target -PathType Leaf) {
-            $owner = Get-DshPackageOwner $target
-            if ($owner.kind -ne 'unknown' -and -not (Test-DshPathEqual $owner.root $installRoot)) {
-                $migration.conflicts += @{path=$target; reason='Version selection cannot replace a registration belonging to another installation.'}
+function New-InstallMigration([string[]]$Directories) {
+    $plan = New-DshMigrationPlan $installRoot $Directories ($package | ConvertTo-Json -Depth 6)
+    if ($SelectHelper) {
+        foreach ($directory in $Directories) {
+            $target = Join-Path $directory 'dsh-houdini.json'
+            if (Test-Path -LiteralPath $target -PathType Leaf) {
+                $owner = Get-DshPackageOwner $target
+                if ($owner.kind -ne 'unknown' -and -not (Test-DshPathEqual $owner.root $installRoot)) {
+                    $plan.conflicts += @{path=$target; reason='Version selection cannot replace a registration belonging to another installation.'}
+                }
             }
         }
     }
+    return $plan
 }
 if ($PrintOnly -or $MigrationPreview) {
+    $PackagesDir = @(Get-InstallPackageDirectories $PackagesDir)
+    $migration = New-InstallMigration $PackagesDir
     @{root=$installRoot; helper=$helper; targets=$PackagesDir; package=$package; migration=$migration; desktop='Official DSH Desktop plugin must be installed separately'} | ConvertTo-Json -Depth 12
     return
 }
 New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
 $lock = [IO.File]::Open((Join-Path $installRoot 'helper-install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
+    # Registrations and migration snapshots belong to this write transaction.
+    # Another successful preparation before lock acquisition is current state,
+    # not a foreign edit to an earlier preview.
+    $PackagesDir = @(Get-InstallPackageDirectories $PackagesDir)
+    $migration = New-InstallMigration $PackagesDir
     # Unknown entries are rejected before helper copies or preference changes.
     # Invoke writes a concrete report even for a blocked plan.
     if ($migration.conflicts.Count) { Invoke-DshMigration $migration | Out-Null }

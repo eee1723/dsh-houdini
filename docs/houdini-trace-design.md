@@ -6,25 +6,29 @@ DSH 原生「轨迹」和工具结果卡是会话内通用调用详情的唯一�
 
 诊断分为两条路径，不建立第二份执行事实：
 
-- 在线：DSH 原生会话、trajectory、jobs 与 `src/execution-facts.ts` 的增量投影提供执行事实；`src/dsh-adapter.ts` 是原生/嵌套回执及 live job 解码唯一源。
+- 在线：DSH原生会话、trajectory、jobs与`src/execution-facts.ts`的增量投影提供执行事实；`src/dsh-adapter.ts`统一解码原生/嵌套工具结果、生产者Bridge终态事实及历史live job回执。
 - 离线：先运行 [trace 提取 skill](../skills/houdini-trace-analysis/SKILL.md) 的 `extract-trace-evidence.mjs`，再运行 [trace-report](../tools/trace-report.mjs)。它们读取原生 Session 日志，用于分析工具选择、重复工作、失败、视觉证据和完成差距，不进入 Agent 的生产提示词。
 
 `tools/out` 中的报告、截图和试验材料是过程证据，不是另一套生产数据通道。构建成功、UI 注册或本地 HTML 均不证明 live 已加载。
 
 ## 原生轨迹与节点交付
 
-通用工具调用使用 DSH 的 `presentCall`、`presentResult`、`presentationMeta` 和原生视图。参数、执行证据和错误按原生折叠与详情限额展示；模型可见文本、轻量canonical事实和完整hash归档分别处理。原生/嵌套canonical只承担恢复与节点交付所需事实，不向浏览器复制整份动词与作者结果；离线Trace通过`EXECUTION_FACT_PROJECTION`引用展开归档，缺失或篡改明确保留读取缺口。不能为了展示重新执行 Python 或重新解释领域结论。
+通用工具调用使用DSH的`presentCall`、`presentResult`、`presentationMeta`和原生视图。执行回执的持久canonical与文字正文各受64KiB预算约束，独立run多执行聚合也有同一总预算；超限展示既有作业摘要中的定位、结论、状态和检查数，并保留原run读取入口，原生图片独立按附件合同传递。原生/PTC当前结构返回保持完整，浏览器不复制整份动词和作者结果。完整JSON优先进入工作区长期hash归档；只读、归档失败或超预算时使用DSH原生opaque spill，后端拥有读取方式与保留期限；两者均失败明确durable unavailable，不回填全文，也不把成功执行改成失败。
 
-live job的模型结果复用普通执行渲染器的字段与优先级，在生产者声明的16 KB内保留开头的错误、请求和检查上下文，以及末尾的恢复提示和详情入口；中间省略处明确标注，完整值由job生产者值与原归档按各自合同读取，普通执行日志不再额外复制完整canonical。原生`job_output`最终裁剪保留尾部，因此不能先输出任意大的操作清单再依赖宿主裁剪来保住首部错误。插件在既有`tools/post-execute`扩展内适配自身回执，不改原生finalizer、其他job类型、会话或共享配置，也不另维护一套领域字段筛选器；消费方回归见[真实jobs组合](../tools/tests/dsh-job-completion-fixture.mjs)。宿主如提供保留领域优先字段的公开投影合同并验证等价，可替换此窄摘要实现。
+Bridge终态由生产者经`appendPluginRecord`写入同一Session的`plugin:dsh-houdini/execution`可忽略事实，保存原sourceCallId/rootCallId及轻量canonical；事实没有模型可见surface，不是另一次工具调用。投影、Trace与节点卡不依赖job_output被读取才看见完成；generic jobs始终保留原生定义、通知、取消和卸载生命周期，插件不再复制每个Agent的job_output定义。该事件不能仅依据DSH job/settled生成，缺少execution的排队取消也不补造HOM执行。
+
+live job的模型摘要复用普通执行渲染器，在生产者声明的16000字节内保留首部错误/请求/检查和尾部恢复/详情入口，中间省略明确标注。原生job_output最终裁剪保留尾部，因此摘要在提交给原生finalizer之前有界；`tools/post-execute`只适配自己的作业摘要，不生成另一份持久canonical，也不改变其他job。消费方验证见[真实jobs组合](../tools/tests/dsh-job-completion-fixture.mjs)。
+
+离线Trace通过`EXECUTION_FACT_PROJECTION`展开可验证的hash归档；历史文件保持原details地址。原生opaque locator只提供其真实读取指导，不按路径解读或假装已应用JSON Pointer。未展开、缺失、篡改与durable unavailable分别保留原因，不从缺少全文推断没有动词、错误或执行。不能为了展示重新执行Python或重新解释领域结论。留存与实际native/PTC消费验证见[结果读取](../tools/tests/result-details.test.mjs)。
 
 Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js) 提供：
 
 - 只读取成功 `present_nodes` 动词的真实回执，不依赖 `__result__` 包装、节点名称或自报路径。
-- 使用 DSH 公开 Conversation 与回复尾部插槽；原生和 PTC 子调用消费同一 canonical 解码。普通 `job_output` 只沿 `liveJobResult` 恢复原执行，不伪造新的 Houdini 操作。
+- 使用DSH公开Conversation与回复尾部插槽；原生/PTC结果及Bridge终态事实消费同一canonical解码，后台交付按rootCallId关联原调用。旧job_output回执只作历史读取，不伪造新的Houdini操作。
 - 节点持久标识、原交付 HIP、控制声明和重开/改名行为由 Bridge 执行事实决定。点击经 `src/node-delivery.ts` 按当前 Agent 的原执行绑定查回；浏览器不接收任意 PID、窗口或节点写入权限。
 - 不同 HIP、缺失或重复标识、失败导航明确拒绝；旧卡片不会把后续同名节点或另一个现场当作交付目标。
 
-[生成器](../tools/gen-node-delivery-client.mjs) 仅嵌入同源 live-job 解码、节点记录提取和卡片工厂。它不再生成工具目录、提示词来源或独立 Trace 页面。节点卡与文件交付并列，文件本体仍由 DSH `present` 负责。
+[生成器](../tools/gen-node-delivery-client.mjs)仅嵌入同源Bridge终态/历史live-job解码、节点记录提取和卡片工厂。它不生成工具目录、提示词来源或独立Trace页面。节点卡与文件交付并列，文件本体仍由DSH present负责。
 
 ## 上下文与提示词事实
 
@@ -35,7 +39,7 @@ Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js)
 | DSH 身份及其他系统段 | Host 最终组装/模型请求 | 开关、作用域遮蔽、顺序、覆盖与最终生效情况 |
 | Houdini persona | [persona.md](../presets/houdini/persona.md) 和生成 preset | 手写来源、生成声明与本次实际生效内容 |
 | 执行硬边界 | [src/index.ts](../src/index.ts) 的 `dsh-houdini:guidance` | 稳定工具路由和不可补救约束，不复制领域 recipe |
-| 现场摘要与恢复 | [src/context.ts](../src/context.ts)、[src/execution-state.ts](../src/execution-state.ts) | 一次消息绑定观察与未决事实；不是现场通过证书或第二份完成账本 |
+| 现场摘要与恢复 | [src/context.ts](../src/context.ts)、[src/execution-state.ts](../src/execution-state.ts) | 一次消息绑定观察与未决事实；本步toolSet/modelSelection与仅注册工具、旧模型配置分开，不是现场通过证书 |
 | 原始任务来源 | [src/task-sources.ts](../src/task-sources.ts)、`houdini_resource` | 按需原文与已消费状态；不向每次请求自动追加副本 |
 | 工具、技能与参考正文 | 最终 schema/messages、读取和压缩记录 | 已注册、已返回、仍保留、已压缩与未采集分别表达 |
 | 当前动词与节点交付合同 | [工具设计](tool-design.md)、[节点记录](../src/node-delivery-record.ts) | 当前维护源不能替代历史请求中的版本 |
@@ -49,14 +53,14 @@ Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js)
 | 动词名称、目录摘要和执行版本 | [工具设计](tool-design.md) → [gen-verb-contract](../tools/gen-verb-contract.mjs) → `src/generated-verb-contract.ts` |
 | 动词完整结构与例子 | `houdini/verb-operation-contracts.json` → `gen-verb-contract-docs` → [verb-contracts](verb-contracts.md)；运行时由 `verb_help` 读取 |
 | 节点操作知识 | `houdini/node-operation-contracts.json` → `gen-node-card-docs` → [节点操作卡](node-operation-cards.md) |
-| 节点交付客户端 | [节点记录](../src/node-delivery-record.ts)、[卡片工厂](../client/node-delivery.js)、live-job 解码 → [生成器](../tools/gen-node-delivery-client.mjs) |
+| 节点交付客户端 | [节点记录](../src/node-delivery-record.ts)、[卡片工厂](../client/node-delivery.js)、Bridge终态/历史live-job解码 → [生成器](../tools/gen-node-delivery-client.mjs) |
 | Houdini preset | [persona.md](../presets/houdini/persona.md) → `gen-agent-presets`；保留 DSH 标准能力，不替换其他 preset 或默认选择 |
 
 `npm run build` 生成上述 Host/客户端合同；`npm run docs:check` 验证漂移。加载新构建不等于运行中的 Desktop 或 Houdini 已更新，实际版本按[安装更新](setup.md)和[兼容设计](dsh-update-compatibility.md)核对，不为更新 UI 重启用户 live。
 
 ## 离线关联和计数契约
 
-[时序归一](../tools/normalized-trace-steps.mjs)、[会话解析](../tools/trace-session-lib.mjs)与 `execution-facts` 使用公开 Session 事件和 canonical 回执。请求按 turn/step、调用按 callId/jobId 关联；优先使用明确的 resultSeq 和原始回执，不用相邻时间或目录名称猜归属。并发返回不改变调用发起顺序；pending、unknown、结果过期与失败分别保留，不能自动重试或冒充成功。
+[时序归一](../tools/normalized-trace-steps.mjs)、[会话解析](../tools/trace-session-lib.mjs)与execution-facts使用公开Session事件和canonical事实。请求按turn/step、工具按callId关联；后台终态通过生产者sourceCallId/rootCallId连到原提交，并保留真实终态事件坐标，不新增模型调用或把一次执行计两次。优先使用明确的resultSeq与原回执，不用相邻时间或目录猜归属。并发返回不改变发起顺序；pending、unknown、结果过期与失败分别保留，不能自动重试或冒充成功。
 
 - 一次模型请求可有多个工具调用，一次调用可执行多个动词，一个动词可创建多个节点，分母不能混用。
 - `processOutcome` 区分送达结果与子进程真实退出；stdout 的错误字样不是退出事实，没有退出证据保持 unknown。

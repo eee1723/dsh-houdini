@@ -8,6 +8,7 @@ import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 import {fixturePresentation} from './fixture-presentation.mjs'
 import {executionHistory} from '../../lib/execution-history.js'
 import {expandArchivedExecution} from '../trace-session-lib.mjs'
+import {recordedJobExecution} from '../../lib/dsh-adapter.js'
 
 export const inject=['loader','llm','sessions','agents','sessionController','jobs','attachments']
 const provider='live-job-fixture',model='scripted-local'
@@ -42,11 +43,14 @@ export function apply(ctx){
     return expandArchivedExecution(event.data.meta.canonical)
   }
   const emitted=id=>events().findLast(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)
-  const parseResult=content=>{
-    for(const line of content.split('\n')){try{const value=JSON.parse(line);if(value.kind==='dsh-houdini/live-job-result-v1')return value}catch{}}
-    throw Error('Native job_output must carry the original self-identified Houdini result: '+content.slice(0,1600))
+  const jobFact=id=>{
+    const call=events().findLast(event=>event.type==='tool/call'&&event.data.callId===id)
+    const jobId=call&&JSON.parse(call.data.arguments).job_id
+    const record=events().map(recordedJobExecution).findLast(record=>record?.canonical?.job_id===jobId)
+    assert(record,'the actual completed Bridge result is recorded before generic collection: '+id)
+    return record.canonical
   }
-  const fullResult=id=>parseResult(native(id)?.text??text(emitted(id)?.data?.message))
+  const fullResult=id=>{const facts=jobFact(id);return {job_id:facts.job_id,value:expandArchivedExecution(facts)}}
   const waitFor=async(file)=>{
     const deadline=Date.now()+15000
     while(!fs.existsSync(file)){assert(Date.now()<deadline,'Owned Houdini fixture did not enter its job: '+file);await new Promise(resolve=>setTimeout(resolve,25))}
@@ -159,11 +163,12 @@ __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()
         if(stage===3){
           const value=checkValue('native',fullResult('native-output'))
           assert.equal(value.result.payload,'LIVE_BULK_HEAD:'+'x'.repeat(70000)+':LIVE_BULK_TAIL')
-          assert(native('native-output').text.length>70000,'the durable native job_output retains its complete generic value')
+          assert(JSON.stringify(jobFact('native-output')).length<70000,'the producer records bounded execution facts')
+          assert.equal(jobFact('native-output').details.projection,'dsh-houdini/execution-facts-v1')
           const visible=text(options.messages.find(message=>message.role==='tool'&&message.toolCallId==='native-output'))
           assert(Buffer.byteLength(visible)<=ctx.jobs.get(handles.native.job_id,sessionId).outputLimitBytes,
             'the model-facing read respects its producer byte cap')
-          checks.push('large native job output keeps its exact complete durable result while bounding the model presentation')
+          checks.push('large native job output keeps lightweight durable facts and restores its exact complete result from the immutable archive')
           stage++;yield*dispatch('native-lookup','houdini_request',{request_ref:handles.native.requestReceipt.request_ref},'run_code');return
         }
         if(stage===4){
@@ -190,11 +195,14 @@ __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()
         }
         if(stage===8){
           const output=nested('job_output');assert(output&&!output.data.isError,JSON.stringify(output))
-          const original=nestedValue(output)
-          const value=checkValue('running',parseResult(original?.text??(output.data.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')))
-          assert(original?.text.length>70000,'the PTC durable generic result stays complete before presentation retention')
+          assert.equal(output.data.meta,undefined,'nested generic job_output retains its native definition')
+          const facts=events().map(recordedJobExecution).findLast(record=>record?.canonical?.job_id===handles.running.job_id)?.canonical
+          assert(facts,'the original Bridge producer records completion independently of PTC collection')
+          const value=checkValue('running',{job_id:facts.job_id,value:expandArchivedExecution(facts)})
+          assert(JSON.stringify(facts).length<70000,'native and nested collectors share the same bounded producer fact')
+          assert.equal(facts.details.projection,'dsh-houdini/execution-facts-v1')
           assert.equal(value.result.payload,'LIVE_BULK_HEAD:'+'x'.repeat(70000)+':LIVE_BULK_TAIL')
-          checks.push('nested job_output preserves its complete generic value and the same original execution facts')
+          checks.push('nested job_output restores the complete archived value and preserves the same original execution facts')
           stage=10;yield*dispatch('queued-submit','houdini_job_submit',{code:code('queued',false)},'job_kill');return
         }
         if(stage===10){captureHandle('queued',native('queued-submit'),'queued-submit');stage++;yield*dispatch('queued-kill','job_kill',{job_id:handles.queued.job_id},'job_output');return}

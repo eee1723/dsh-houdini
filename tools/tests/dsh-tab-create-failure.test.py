@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+import tempfile
 import uuid
 
 
@@ -69,6 +70,45 @@ try:
         f"tab_create({parent.path()!r},'add',name='multi_failed',parms={{'points':2,'pt0':[0,0]}})",
         owner_session='tab-create-failure-test',owner_call='multiparm-failure')
     assert not broken['ok'] and parent.node('multi_failed') is None,broken
+    # Static discovery budgets must not limit an already-created native node.
+    large=dsh_bridge.run_code(
+        f"n=tab_create({parent.path()!r},'add',name='multi_large',parms={{'pt64':[7,8,9],'points':65}})\n"
+        "__result__={'count':n.evalParm('points'),'last':n.parmTuple('pt64').eval()}",
+        owner_session='tab-create-failure-test',owner_call='multiparm-large')
+    assert large['ok'] and large['result']=={'count':65,'last':[7.0,8.0,9.0]},large
+    before=set(parent.children())
+    static=dsh_bridge.run_code(
+        f"build_module({parent.path()!r},[{{'name':'static_large','type':'add','parms':{{'points':65}}}}],output='static_large',dry_run=True)",
+        owner_session='tab-create-failure-test',owner_call='multiparm-static-budget')
+    assert not static['ok'] and 'static multiparm count' in static['error'],static
+    assert set(parent.children())==before and static['transaction']['status']=='no_scene_change',static
+    # Inner counts and leaves precede their absent parents in the input. Each
+    # newly materialized native level must be discovered before leaf writes.
+    with tempfile.TemporaryDirectory(prefix='dsh-created-multiparm-') as asset_dir:
+        asset_file=str(Path(asset_dir)/'nested.hda')
+        asset_type='created_multiparm_fixture::nested::1.0'
+        prototype=parent.createNode('subnet','nested_prototype').createDigitalAsset(
+            name=asset_type,hda_file_name=asset_file)
+        outer=hou.FolderParmTemplate('groups','Groups',folder_type=hou.folderType.MultiparmBlock)
+        inner=hou.FolderParmTemplate('items#','Items',folder_type=hou.folderType.MultiparmBlock)
+        inner.addParmTemplate(hou.FloatParmTemplate('value#_#','Value',1))
+        outer.addParmTemplate(inner)
+        definition=prototype.type().definition()
+        group=definition.parmTemplateGroup();group.append(outer);definition.setParmTemplateGroup(group)
+        prototype.destroy()
+        values={'value2_2':22,'value1_2':12,'items2':2,'items1':2,'groups':2}
+        nested=dsh_bridge.run_code(
+            f"n=tab_create({parent.path()!r},{asset_type!r},name='multi_nested',parms={values!r})\n"
+            "__result__={p:n.evalParm(p) for p in ['groups','items1','items2','value1_2','value2_2']}",
+            owner_session='tab-create-failure-test',owner_call='multiparm-nested')
+        assert nested['ok'] and nested['result']=={'groups':2,'items1':2,'items2':2,'value1_2':12.0,'value2_2':22.0},nested
+        invalid={**values,'value2_2':[1,2]}
+        nested_failure=dsh_bridge.run_code(
+            f"tab_create({parent.path()!r},{asset_type!r},name='nested_failed',parms={invalid!r})",
+            owner_session='tab-create-failure-test',owner_call='multiparm-nested-failure')
+        assert not nested_failure['ok'] and parent.node('nested_failed') is None,nested_failure
+        parent.node('multi_nested').destroy()
+        hou.hda.uninstallFile(asset_file)
     not_network = dsh_bridge.run_code(
         f"tab_create({parent.node('out').path()!r}, 'box', name='invalid_child')",
         owner_session="tab-create-failure-test", owner_call="call-leaf-parent")

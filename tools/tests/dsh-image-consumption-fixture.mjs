@@ -11,6 +11,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {deflateSync} from 'node:zlib';
 import {createRun} from '../output-artifacts.mjs';
+import {fixturePresentation} from './fixture-presentation.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -79,7 +80,7 @@ export function apply(ctx) {
     }catch(error){fail(error);if(!res.headersSent)res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Owned fixture assertion failed'}}))}
   });
   const ready=new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
-  ctx.on('agent/created',({agent})=>agent.ctx.tools.presentAs('native'));
+  fixturePresentation(ctx);
   ctx.effect(()=>{
     queueMicrotask(async()=>{
       try{

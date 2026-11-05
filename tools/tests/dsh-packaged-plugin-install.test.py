@@ -212,14 +212,11 @@ def wait_until(probe,timeout,label):
         time.sleep(.2)
 
 
-def verify_real_houdini(installed,workspace_id):
-    hfs=args.hfs.resolve(strict=True)
-    installations=rpc('houdiniFrontend/projectInstallations',{})
-    selected=next(row for row in installations if Path(row['hfs']).samefile(hfs))
+def seed_legacy_components():
     install_root=Path(env['LOCALAPPDATA'])/'DSH-Houdini'
     package_path=Path(env['HOUDINI_PACKAGE_DIR'])/'dsh-houdini.json'
     assert install_root.is_relative_to(fixture) and package_path.is_relative_to(fixture)
-    assert not package_path.exists(),'The project action must perform the first component installation'
+    assert not package_path.exists(),'Legacy fixture must exist before the Host can automatically prepare components'
     legacy_files={}
     legacy_packages={}
     legacy_bootstrap=None
@@ -245,6 +242,17 @@ def verify_real_houdini(installed,workspace_id):
         }.items():
             path=install_root/relative;path.parent.mkdir(parents=True,exist_ok=True)
             path.write_bytes(data);legacy_files[path]=digest(path)
+    return legacy_files,legacy_packages,legacy_bootstrap
+
+
+def verify_real_houdini(installed,workspace_id):
+    hfs=args.hfs.resolve(strict=True)
+    installations=rpc('houdiniFrontend/projectInstallations',{})
+    selected=next(row for row in installations if Path(row['hfs']).samefile(hfs))
+    install_root=Path(env['LOCALAPPDATA'])/'DSH-Houdini'
+    package_path=Path(env['HOUDINI_PACKAGE_DIR'])/'dsh-houdini.json'
+    assert install_root.is_relative_to(fixture) and package_path.is_relative_to(fixture)
+    legacy_files,legacy_packages,legacy_bootstrap=legacy_fixture
     session=rpc('session/create',{'request':{'sessionId':uuid.uuid4().hex,'workspaceId':workspace_id,'agentPreset':'houdini'}})
     # The real public action owns all preparation. Its 120s installer budget is
     # separate from the subsequent native Houdini startup wait.
@@ -260,7 +268,11 @@ def verify_real_houdini(installed,workspace_id):
     component_report=None
     if args.legacy_components:
         reports=list((install_root/'migrations').glob('*/report.json'))
-        component_report=next(path for path in reports if json.loads(path.read_text(encoding='utf-8')).get('status')=='applied')
+        def retired_by(path):
+            recorded=json.loads(path.read_text(encoding='utf-8'))
+            return set(Path(action['path']) for action in recorded.get('actions',[])
+                       if recorded.get('status')=='applied' and (action['operation']=='disable' or action.get('retiredLegacy')))
+        component_report=next(path for path in reports if set(legacy_packages)<=retired_by(path))
         migration=json.loads(component_report.read_text(encoding='utf-8'))
         retired={Path(action['path']):action for action in migration['actions'] if action['operation']=='disable' or action.get('retiredLegacy')}
         assert set(legacy_packages)<=set(retired),'Automatic preparation must retire both canonical and copied legacy registrations'
@@ -336,6 +348,9 @@ fs.writeFileSync(process.argv[3],JSON.stringify({...value,health}));if(value.ok!
         'menuSessionId':menu['result']['sessionId'],'writerClaimed':True,'processStarted':birth,'externalDesktopActivationStubbed':True}
 
 
+# Users' old files precede Host startup. Writing them after automatic component
+# preparation begins creates a test-only race instead of an upgrade scenario.
+legacy_fixture=seed_legacy_components() if args.hfs else ({},{},None)
 with log.open('wb') as output:
     # Same immutable Desktop Host carrier as dsh.cmd. The public `web` command
     # is used, and the start gate establishes our Job before any child spawns.

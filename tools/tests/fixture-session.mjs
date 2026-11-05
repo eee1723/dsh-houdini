@@ -9,12 +9,12 @@ import {registerExecutorIdentityProjection} from '../../lib/executor-identity-pr
 const {version: HEADER_VERSION} = Session.create('fixture-header-schema').header
 
 /** Exercise DSH's real cursor/materialization contract in detached fixtures. */
-export function fixtureProjectionContext(overrides={}) {
+export async function fixtureProjectionContext(overrides={}) {
   const ctx=overrides instanceof Context?overrides:new Context()
   if(!ctx.get('sessionProjections'))new SessionProjectionRegistry(ctx)
-  registerExecutorIdentityProjection(ctx)
+  await registerExecutorIdentityProjection(ctx)
   if(overrides instanceof Context)return ctx
-  return {...overrides,get:name=>name==='sessionProjections'?ctx.get(name):overrides.get?.(name)}
+  return {...overrides,get:name=>['sessionProjections','houdiniExecutorState'].includes(name)?ctx.get(name):overrides.get?.(name)}
 }
 
 /**

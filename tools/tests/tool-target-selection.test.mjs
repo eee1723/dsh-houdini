@@ -5,6 +5,9 @@ import {HoudiniToolRuntime} from '../../lib/tool-runtime.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
 import {Context} from '@deepseek-ai/cordis'
+import {SystemPrompt} from '@deepseek-ai/dsh-system-prompt'
+import {ToolsService} from '@deepseek-ai/dsh-tools'
+import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native'
 import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs'
 import {recordedExecutionOrigin} from '../../lib/execution-history.js'
@@ -50,7 +53,7 @@ try {
     assert.deepEqual(target,{runtimeId:runtimeA},'request references carry their original runtime without retaining a live per-job origin index')
     return a.forRuntime(target.runtimeId)
   }}
-  const runtime=new HoudiniToolRuntime(fixtureProjectionContext(),connection)
+  const runtime=new HoudiniToolRuntime(await fixtureProjectionContext(),connection)
   let origin=await runtime.historicalTarget(exec,{requestRef:refA})
   assert.equal((await origin.bridge.requestStatus(refA,origin.owner)).requestReceipt.executor_id,executorA)
   origin=await runtime.historicalTarget(exec,{requestRef:refA})
@@ -86,18 +89,23 @@ try {
   assert.equal(resolveCalls,0,'a dead original process must not fall back to the new selected target')
 
   // Real tool dispatch distinguishes reads, writes and historical controls.
-  const definitions=new Map(),access=[],restored=[]
+  const access=[],restored=[]
   const value={ok:true,stdout:'',stderr:'',result:{}}
   const fake={targetExecutorId:undefined,exec:async()=>value,listUi:async()=>value,captureUi:async()=>value,forRuntime(){return this},
     submitJob:async()=>({jobId:job,requestReceipt:{request_ref:refA,runtime_id:runtimeA}}),jobStatus:async()=>({...value,jobId:job,status:'done'})}
-  const toolsContext=fixtureProjectionContext(new Context()),observers=[]
-  toolsContext.provide('tools',{register:def=>definitions.set(def.name,def)})
+  const toolsContext=await fixtureProjectionContext(new Context()),observers=[]
+  new SystemPrompt(toolsContext,{})
+  const tools=new ToolsService(toolsContext)
+  tools.setExecutor(new NativeToolExecutor(toolsContext))
   toolsContext.provide('houdiniRecovery',{beforeWrite:async agent=>restored.push(agent.id)})
   toolsContext.provide('jobs',{start(spec){const id='houdini-live-fixture';const hooks=spec.run({id,updateProgress(){},append(){}});observers.push(hooks.done);return id}})
   registerHoudiniTools(toolsContext,{resolve:async(_exec,options)=>{access.push(options.write);return fake}})
-  const toolExec={agent:{id:'artist',ctx:toolsContext,session:fixtureSession('artist')},callId:'new-call'}
+  const toolExec={agent:{id:'artist',ctx:toolsContext,session:fixtureSession('artist')},signal:new AbortController().signal}
   for(const [name,args] of [['houdini_inspect',{code:'__result__=1'}],['houdini_ui_list',{}],['houdini_ui_screenshot',{target:'ui:fixture'}],
-    ['houdini_exec',{code:'__result__=1'}],['houdini_job_submit',{code:'__result__=1'}]])await definitions.get(name).execute(args,toolExec)
+    ['houdini_exec',{code:'__result__=1'}],['houdini_job_submit',{code:'__result__=1'}]]) {
+    const result=await tools.execute({...toolExec,calls:[{type:'tool-call',id:'target-'+name,name,arguments:JSON.stringify(args)}]})
+    assert.equal(result.results[0].result.isError,false,JSON.stringify(result))
+  }
   assert.deepEqual(access,[false,false,false,true,true])
   assert.deepEqual(restored,['artist','artist'],'only mutation admission may attempt saved node permission recovery')
   await Promise.all(observers)

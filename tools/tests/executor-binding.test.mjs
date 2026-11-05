@@ -24,7 +24,7 @@ assert.equal(cleared.identity,null)
 assert.equal(cleared.selectedTarget,null)
 assert.equal(cleared.selectionRecorded,true,'explicit clear differs from a never-selected conversation')
 let hook
-installFixedTargetContext(fixtureProjectionContext({on:(name,fn)=>{assert.equal(name,'agent/pre-step');hook=fn}}),first)
+installFixedTargetContext(await fixtureProjectionContext({on:(name,fn)=>{assert.equal(name,'agent/pre-step');hook=fn}}),first)
 const fixed=Session.create('fixed-composition')
 const decision=await hook({agent:{session:fixed},signal:new AbortController().signal},async()=>({kind:'enter',messages:[]}))
 assert.equal(decision.messages.length,1)

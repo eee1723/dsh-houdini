@@ -110,6 +110,15 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     assert rows[1]['status']=='failed' and rows[1]['artifact']['file'].endswith('outside.png')
     assert rows[1]['error'], 'image transport failure stays separate from execution success'
 
+    second_preview=root/'checks'/'second.png';second_preview.write_bytes(b'different image fixture')
+    repeated=runner.visual_artifacts(root,[{'artifactCandidates':[
+        {'path':str(preview)}, {'path':str(second_preview)}, {'path':str(preview)}]}],
+        [{'status':'passed','artifact':{'file':'checks/preview.png','bytes':preview.stat().st_size,'sha256':runner.digest(preview)}}])
+    assert len(repeated)==2
+    for row, image in zip(repeated,(preview,second_preview)):
+        assert row['artifact']=={'file':image.relative_to(root).as_posix(),'bytes':image.stat().st_size,'sha256':runner.digest(image)}, \
+            'duplicate images must not overwrite another image fingerprint'
+
     # A manifest can live with scripts while explicitly naming the project
     # input root. File names still cannot traverse outside that root.
     manifest_dir=root/'scripts';manifest_dir.mkdir()

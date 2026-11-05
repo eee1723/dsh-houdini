@@ -1,52 +1,27 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.2.1-rc.5",
+  "preferredVersion": "0.2.2-rc.1",
   "host": "official-dsh-desktop",
   "runtimeOwnership": "host",
   "releases": [
     {
-      "dshVersion": "0.2.1-rc.3",
-      "rpcWire": "slash-generated-args-v1",
-      "browserAuth": "process-token-api-peer-signed-cookie-v2",
-      "trajectorySource": "useTrajectory(snapshot.eventNodes)",
-      "sessionFormatVersion": 4,
-      "verificationStatus": "official-native-desktop-isolated-plugin-distribution-verified",
-      "verifiedOn": [
-        "Unmodified official 0.2.1-rc.3 Host and scoped Houdini tools; native default and other presets preserved",
-        "Official client browser: selected Session/workspace/preset, history reload, mode-only UI and navigation acknowledgement",
-        "Real isolated Houdini 21.0.440 and 22.0.368 GUI new/open, main-thread Bridge and authenticated native-menu handoff; installed immutable helper Package new/open also verified on H22",
-        "Scripted provider receives actual scene context, native/PTC canonical originals and request/job recovery facts",
-        "Issue #4 exact dependency-name fixtures survive two official Host starts with native Session/profile/settings preserved",
-        "Standard tgz installed through native Electron plugin UI in new isolated profiles: local and owned HTTP URLs, explicit enable, disable/re-enable and uninstall; original modes/defaults/models and Desktop/protocol unchanged",
-        "Actual native Electron app.quit during pending H22 startup, same Houdini OS birth survives, successor Host completes the original ticket and selects the original native Session without another launch",
-        "OS-only process birth and canonical-root lifetime exclusion; detached resume, commit cancellation and transient identity regressions use native Session events",
-        "Tutorial setup uses direct native forms with revision guards and write-only credential Modal; deterministic configuration needs no Agent call; actual Python/FFmpeg ASR native/PTC results, origin isolation and same-task restart without duplicate upload; no paid cloud or recognition-quality claim",
-        "Current user Desktop profile with official CLI: dsh-codex-subscription@3.1.8 enabled with one running component and working native settings; Standard, Houdini and other preset choices remain visible; @deepseek-ai/dsh-home-paths 0.2.1-rc.3 and 0.2.1-rc.4 return the same path for an owned synthetic DSH_HOME"
-      ],
-      "pendingVerification": [
-        "System dsh:// activation into the end-user Desktop profile, existing user configuration and plugin upgrade/disable/uninstall",
-        "Recovery of legacy shared Sessions written with the removed private relocation semantics",
-        "User-authorized Codex login, account-returned model catalog including any GPT-6.1 Terra entry, real text/function-tool/image requests and a real Houdini task; installation or model visibility alone does not establish inference"
-      ]
-    },
-    {
-      "dshVersion": "0.2.1-rc.5",
+      "dshVersion": "0.2.2-rc.1",
       "rpcWire": "slash-generated-args-v1",
       "browserAuth": "process-token-api-peer-signed-cookie-v2",
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
       "sessionFormatVersion": 4,
       "verificationStatus": "official-host-browser-context-verified",
       "verifiedOn": [
-        "Unmodified official npm 0.2.1-rc.5 Host in an owned disposable profile; the public runtime-version API reports the exact selected version",
-        "Official composition preserves native default and other presets, additive Houdini scope, and exactly one root client module",
-        "Official browser selects the intended native workspace and Session, preserves draft/history and Standard/Houdini mode isolation; project menu, open dialog and native trajectory load without runtime exceptions",
-        "Scripted provider in the real native/PTC Agent loop receives original scene and recovery context; settled failures are not replayed and uncertain requests/active jobs remain observable",
-        "All declared runtime peers resolve from the official rc.3 and rc.5 installations to their respective DSH versions; shared Cordis/Schemastery/Koffi versions remain unchanged"
+        "Unmodified official npm 0.2.2-rc.1 with Cordis 4.1.0 and Schemastery 3.19.0; exact runtime peers and compiled public contracts",
+        "Official Host and real browser preserve standard/other presets, selected native workspace/Session, root client, Houdini mode scope, draft/history and node delivery",
+        "Native and PTC controlled provider loop receives captured model/tool context and exact recovery facts; disabled step capability removes stale Houdini contexts",
+        "Native ToolJobs unload/reload with surviving Agent uses current definitions; Bridge producer facts persist before job_output without changing generic controls or notification policy",
+        "33 MiB complete original retained by native spill; read-only, missing workspace and failed stores keep bounded client facts and unchanged execution outcome",
+        "Isolated Houdini 21.0.440 and 22.0.368 with real native/PTC jobs, cancellation, original images/results and cold Host reattachment without resubmission"
       ],
       "pendingVerification": [
-        "Native rc.5 Desktop application update, candidate tgz installation and end-user profile upgrade/disable/uninstall",
-        "Real model-provider requests and existing user Houdini scenes; owned provider/Bridge fixtures do not establish model quality or new live HOM execution",
-        "System dsh:// activation and the current user profile with its other installed plugins"
+        "End-user current profile upgrade, system dsh:// activation, real providers and existing user Houdini scenes",
+        "Packaged Desktop application update/protocol lifecycle; isolated development-carrier plugin checks do not establish those OS integrations"
       ]
     }
   ]

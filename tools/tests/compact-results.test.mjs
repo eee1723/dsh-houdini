@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {registerHoudiniTools} from '../../lib/tools.js';
+import {MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js';
 const definitions=new Map();registerHoudiniTools({tools:{register:d=>(definitions.set(d.name,d),()=>{})}},{});
 const render=value=>definitions.get('houdini_exec').output.render({},value).map(c=>c.text||'').join('\n');
 const conditions=Array.from({length:24},(_,i)=>({id:'domain-'+i,status:'pass',condition:{id:'domain-'+i,left:'gain',op:'ge',right:0},left_value:2,right_value:0,scope:'declared only'}));
@@ -34,8 +35,9 @@ assert(differing.includes('unique-top-level-failure') && differing.includes('res
 assert(differing.length<30000,'unchanged subtrees may be shared without hiding differing fields');
 const unknownTop={status:'unverified',unknown_payload:{novel:'unique future data'}};
 assert(render({...retained,result:unknownTop}).includes(JSON.stringify(unknownTop)));
-assert(render({...retained,result,details:{stored:false}}).includes(JSON.stringify(result)),
-  'without a stored original, top-level data must retain the full fallback');
+const failedRetention=render({...retained,result,details:{stored:false}});
+assert(Buffer.byteLength(failedRetention)<=MAX_PRESENTATION_BYTES&&failedRetention.includes('middle omitted'),
+  'failed storage cannot send the complete large fallback to the client');
 assert.equal(JSON.stringify(raw),original);
 // A render's artifact/framing objects can reach the evidence and selected
 // result through different JSON producers. Member order must not force a
@@ -95,7 +97,7 @@ for(const stored of [true,false]){
     execution:{runtime_id:'original-runtime',sequence:9,impact:{unavailable:true}},
     result:{selected:'large-selected-payload '.repeat(6000)},details:{stored},
     verbs:[{verb:'verb_help',ok:true,result:{doc:'large-help '.repeat(6000)}}]});
-  const bulky=Math.min(large.indexOf('verb-help:\n'),large.indexOf('__result__:\n'));
+  const bulky=Math.min(...[large.indexOf('verb-help:\n'),large.indexOf('__result__:\n'),large.indexOf('middle omitted')].filter(index=>index>=0));
   for(const fact of ['original-request','"status":"failed"','rolled_back_node','recovery-not-confirmed',
     'construction-failure','original-runtime','"unavailable":true','"gateOutcome":"blocked"','native diagnostic']){
     const index=large.indexOf(fact);assert(index>=0&&index<bulky,fact+' must precede bulk output');
@@ -203,7 +205,10 @@ assert(hdaText.length<3000 && hdaText.includes('"count":2000') && hdaText.includ
 assert(render({...envelope(hda),details:{stored:false}}).includes('/obj/asset/native/n1999'));
 assert(render({...envelope(hda),verbs:[]}).includes('/obj/asset/native/n1999'),'unknown provenance is not summarized');
 const unusualHda=structuredClone(hda);unusualHda.native_identity_transfers[999].error='middle-transfer-error';
-assert(render({...envelope(unusualHda),verbs:[{verb:'hda_create',ok:true,result:unusualHda}]}).includes('middle-transfer-error'));
+const unusualHdaText=render({...envelope(unusualHda),verbs:[{verb:'hda_create',ok:true,result:unusualHda}]});
+assert(Buffer.byteLength(unusualHdaText)<=MAX_PRESENTATION_BYTES&&unusualHdaText.includes('middle omitted'),
+  'unusual large data is explicitly partial, never guessed into a successful inventory summary');
+assert.equal(unusualHda.native_identity_transfers[999].error,'middle-transfer-error','the complete original remains untouched');
 const descendants=Array.from({length:2000},(_,i)=>['/obj/asset/n'+i,i+10]);
 const lock={ok:true,node:'/obj/asset',action:'lock',dry_run:true,applied:false,discard_changes:true,
   plan_sha256:'exact-plan',affected_instances:[['/obj/asset',1]],descendant_count:2000,

@@ -8,7 +8,18 @@ import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
 import {expandArchivedExecution} from '../trace-session-lib.mjs';
 import {readResource} from '../../lib/tool-query.js';
 import {HoudiniToolRuntime} from '../../lib/tool-runtime.js';
-import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js';
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT,recordHoudiniJobExecution} from '../../lib/dsh-adapter.js';
+import {Context} from '@deepseek-ai/cordis';
+import LocalSpillStore from '@deepseek-ai/dsh-spill-local';
+import {execPresentationMeta,renderExec} from '../../lib/tool-output.js';
+import {MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js';
+import {createHash} from 'node:crypto';
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
+import {ToolsService,defineTool} from '@deepseek-ai/dsh-tools';
+import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native';
+import {PtcExecutor} from '@deepseek-ai/dsh-tool-executor-ptc';
+import {Session} from '@deepseek-ai/dsh-session';
+import {execOutputSchema} from '../../lib/tool-output.js';
 
 // Use retention's native async resolver: Windows short names can survive realpathSync.
 const dir=await fs.promises.realpath(fs.mkdtempSync(path.join(os.tmpdir(),'dsh-result-details-')));
@@ -34,8 +45,9 @@ try {
     assert.equal(result.ok,true,'archive policy never changes the successful operation outcome');
     assert.equal(result.details.stored,false);assert.match(result.details.error,/read-only/);
     const {details,...original}=result;assert.deepEqual(original,raw,'the complete original receipt survives read-only archival');
-    assert.ok(exec.output.render({},result)[0].text.includes(JSON.stringify(raw.verbs[0].args)),
-      'read-only archival keeps complete inline rendering');
+    assert(Buffer.byteLength(exec.output.render({},result)[0].text)<=MAX_PRESENTATION_BYTES,
+      'read-only archival cannot turn complete current return values into unbounded client text');
+    assert(Buffer.byteLength(JSON.stringify(execPresentationMeta(result).canonical))<=MAX_PRESENTATION_BYTES);
   }
   assert.deepEqual(fs.readdirSync(readonlyWorkspace),[],'read-only result presentation creates no project files or directories');
   const value=await exec.execute({code:'set_parms(...)'},context);
@@ -54,7 +66,7 @@ try {
   assert.deepEqual(JSON.parse(fs.readFileSync(value.details.path,'utf8')),raw);
   const compact=exec.output.render({},value)[0].text;
   const original=exec.output.render({},raw)[0].text;
-  assert.ok(compact.length<original.length*0.25,[compact.length,original.length]);
+  assert.ok(compact.length<before.length*0.25,[compact.length,before.length]);
   assert.ok(compact.includes('useful diagnostic') && compact.includes('result-details'));
   const meta=exec.output.presentationMeta({},value);
   assert.deepEqual(expandArchivedExecution(meta.canonical).verbs,raw.verbs,'durable audit expands full args/results from the same archive');
@@ -95,8 +107,9 @@ try {
   for(const text of ['restore failed','external solver','important warning','rollback failure','relay failed','ownership boundary'])assert.ok(warningText.includes(text),text);
   const missing=await retainResult(raw,path.join(dir,'missing-workspace'));
   assert.equal(missing.details.stored,false);
-  assert.ok(exec.output.render({},missing)[0].text.includes(JSON.stringify(raw.verbs[0].args)),'retention failure disables compact rendering');
-  assert.equal(await retainResult(raw,null),raw);
+  assert(Buffer.byteLength(exec.output.render({},missing)[0].text)<=MAX_PRESENTATION_BYTES,'retention failure keeps display bounded');
+  const noWorkspace=await retainResult(raw,null);
+  assert.equal(noWorkspace.details.stored,false);assert.deepEqual(noWorkspace.result,raw.result);
   const events=[{seq:1,type:'tool/call',data:{callId:'c',name:'houdini_exec',arguments:{code:'set_parms(...)'}}},
     {seq:2,type:'tool/result',data:{meta,message:{source:{callId:'c'},content:[{type:'tool_result',content:[{type:'text',text:compact}]}]}}}];
   const step=normalizeTraceSteps(events).steps[0];
@@ -177,6 +190,94 @@ try {
   await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>native}}}),/hash mismatch/);
   await assert.rejects(readResultDetail(dir,value.details.sha256),/hash mismatch/);
   assert.equal((await retainResult(raw,dir)).details.stored,false,'existing corrupt artifacts are not silently overwritten');
+  // Use the unmodified native storage backend. Its opaque locator is never
+  // interpreted by production code; this fixture knows it selected local disk.
+  const storageContext=new Context(),nativeRoot=path.join(dir,'native-spill');
+  try {
+    await storageContext.plugin(LocalSpillStore,{root:nativeRoot,cleanupPeriodDays:0});
+    const spill=content=>storageContext.get('spillStore').saveText({owner:{sessionId:'result-owner'},
+      source:{kind:'tool',toolName:'houdini_exec',callId:'original',label:'complete JSON'},suggestedName:'original.json',content});
+    const huge={ok:true,status:'done',stdout:'original stdout',stderr:'',result:{payload:'x'.repeat(33*1024*1024)},
+      requestReceipt:{request_ref:'a'.repeat(32)+'.'+'b'.repeat(32),status:'done'},
+      execution:{runtime_id:'a'.repeat(32),sequence:1,observed_at:1}};
+    const retained=await retainResult(huge,dir,undefined,spill);
+    assert.equal(retained.details.storage,'dsh-spill');assert.equal(retained.details.stored,true);
+    assert.equal(retained.result,huge.result,'native storage never replaces the immediate complete structured return');
+    assert.equal(fs.statSync(retained.details.locator).size,retained.details.bytes);
+    assert.equal(createHash('sha256').update(fs.readFileSync(retained.details.locator)).digest('hex'),retained.details.sha256);
+    assert.equal(retained.details.sha256,createHash('sha256').update(JSON.stringify(huge)).digest('hex'),'native bytes equal every original JSON byte');
+    const producerSession=Session.create('retained-job-fact');
+    recordHoudiniJobExecution({agent:{session:producerSession},callId:'original-submission'},retained);
+    const producerRead=await readResource({kind:'result',ref:retained.details.sha256},
+      {agent:{session:producerSession}});
+    assert.equal(producerRead.result.locator,retained.details.locator,'producer facts keep the native original readable before job_output is called');
+    for(const envelope of [retained,await retainResult(raw,readonlyWorkspace,()=> 'read-only',spill),
+      await retainResult(raw,path.join(dir,'absent'),undefined,spill),await retainResult(raw,null,undefined,spill)]) {
+      assert.equal(envelope.details.storage,'dsh-spill');assert.equal(envelope.details.stored,true);
+      assert(Buffer.byteLength(JSON.stringify(execPresentationMeta(envelope).canonical))<=MAX_PRESENTATION_BYTES);
+      assert(Buffer.byteLength(renderExec(envelope)[0].text)<=MAX_PRESENTATION_BYTES);
+      const history=[{type:'tool/call',data:{callId:'native-ref',name:'houdini_exec'}},
+        {type:'tool/result',data:{message:{source:{callId:'native-ref'}},meta:execPresentationMeta(envelope)}}];
+      const resource=await readResource({kind:'result',ref:envelope.details.sha256,pointer:'/result/payload'},
+        {agent:{session:{header:{cwd:dir},snapshotEvents:()=>history}}});
+      assert.equal(resource.result.status,'native_retrieval_required');
+      assert.equal(resource.result.locator,envelope.details.locator);assert.equal(resource.result.retrievalHint,envelope.details.retrievalHint);
+    }
+    assert.deepEqual(fs.readdirSync(readonlyWorkspace),[],'native private storage does not write into a read-only project');
+    const opaque=await retainResult(raw,null,undefined,async content=>({locator:'native:opaque:original',bytes:Buffer.byteLength(content),retrievalHint:'Use the native retrieval tool.'}));
+    assert.equal(opaque.details.locator,'native:opaque:original','a locator is not validated or parsed as a filesystem path');
+    const unavailable=await retainResult(huge,dir,()=> 'read-only',async()=>{throw Error('ENOSPC fixture')});
+    assert.equal(unavailable.ok,true);assert.equal(unavailable.details.storage,'unavailable');assert.equal(unavailable.result,huge.result);
+    assert.match(unavailable.details.recovery,/not durably retained/);assert.match(unavailable.details.spill_error,/ENOSPC/);
+    assert(Buffer.byteLength(JSON.stringify(execPresentationMeta(unavailable)))<=MAX_PRESENTATION_BYTES+8192);
+    assert(Buffer.byteLength(renderExec(unavailable)[0].text)<=MAX_PRESENTATION_BYTES);
+    const unavailableSession=Session.create('unavailable-job-fact');
+    recordHoudiniJobExecution({agent:{session:unavailableSession},callId:'lost-original'},unavailable);
+    const unavailableRead=await readResource({kind:'result',ref:unavailable.details.sha256},{agent:{session:unavailableSession}});
+    assert.equal(unavailableRead.result.status,'durable_original_unavailable');
+    assert.equal(unavailableRead.result.request_ref,huge.requestReceipt.request_ref);
+    const noisy={...unavailable,error:'\u0000完整失败🧪'.repeat(10000),stderr:'诊断🧪'.repeat(10000),
+      outcome:{batch:'completed',operations:{total:1,failed:1},diagnostic:'x'.repeat(100000)},
+      checks:Array.from({length:1000},()=>({status:'unverified',diagnostic:'x'.repeat(1000)})),
+      execution:{...huge.execution,unexpected:'x'.repeat(100000)},verbs:[{verb:'new_schema',ok:false,result:{details:'x'.repeat(100000)}}]};
+    const metadata=execPresentationMeta(noisy);
+    assert(Buffer.byteLength(JSON.stringify(metadata.canonical))<=MAX_PRESENTATION_BYTES,'future/diagnostic fact schemas cannot bypass the client bound');
+    assert.equal(metadata.canonical.ok,true);assert.equal(metadata.canonical.requestReceipt.request_ref,huge.requestReceipt.request_ref);
+    assert.equal(metadata.canonical.execution.runtime_id,huge.execution.runtime_id);assert.equal(metadata.checksPending,true);
+    assert.equal(metadata.outcome.operations.failed,1);assert(Buffer.byteLength(JSON.stringify(metadata))<=MAX_PRESENTATION_BYTES+8192);
+    assert(!renderExec(noisy)[0].text.includes('\ufffd'),'UTF-8 presentation cuts introduce no replacement codepoint');
+    // The real rc.1 executors snapshot the complete structured result while
+    // persisting only presentation metadata/content, in native and PTC paths.
+    new SystemPrompt(storageContext,{});
+    const registry=new ToolsService(storageContext,{});
+    registry.register(defineTool({name:'original_result',description:'Fixture result',parameters:{},
+      output:{schema:execOutputSchema,render:(_args,value)=>renderExec(value),presentationMeta:(_args,value)=>execPresentationMeta(value)},
+      execute:()=>noisy}));
+    const liveSession=Session.create('result-memory-bound'),liveAgent={id:liveSession.id,session:liveSession,ctx:storageContext,options:{}};
+    const execute=(name,id)=>registry.execute({calls:[{type:'tool-call',id,name,arguments:JSON.stringify(name==='run_code'?{code:'return await tools.original_result({})',description:'Read fixture result'}:{})}],
+      agent:liveAgent,signal:new AbortController().signal,log:{turn:1,step:1}});
+    const releaseNative=registry.setExecutor(new NativeToolExecutor(storageContext));
+    const nativeBatch=await execute('original_result','bounded-native');
+    assert.equal(nativeBatch.results[0].result.isError,false,nativeBatch.results[0].result.error?.message);
+    assert.equal(nativeBatch.results[0].result.value.result.payload,huge.result.payload);
+    const nativeFact=liveSession.snapshotEvents().find(event=>event.type==='tool/result').data;
+    assert(Buffer.byteLength(JSON.stringify(nativeFact.meta.canonical))<=MAX_PRESENTATION_BYTES);
+    assert(Buffer.byteLength(nativeFact.message.content.map(block=>block.text??'').join(''))<=MAX_PRESENTATION_BYTES);
+    await releaseNative();
+    let nestedOriginal;
+    storageContext.provide('workingDirectory',{ensure:async()=>dir});
+    storageContext.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
+      nestedOriginal=await request.bindings[0].functions.original_result({});return {value:{read:true},logs:[]};
+    }});
+    const releasePtc=registry.setExecutor(new PtcExecutor(storageContext));
+    const nestedBatch=await execute('run_code','bounded-ptc');
+    assert.equal(nestedBatch.results[0].result.isError,false,nestedBatch.results[0].result.error?.message);
+    assert.equal(nestedOriginal.result.payload,huge.result.payload);
+    const nestedFact=liveSession.snapshotEvents().find(event=>event.type==='tool/ptc-dispatch').data;
+    assert(Buffer.byteLength(JSON.stringify(nestedFact.meta.canonical))<=MAX_PRESENTATION_BYTES);
+    assert(Buffer.byteLength(nestedFact.content.map(block=>block.text??'').join(''))<=MAX_PRESENTATION_BYTES);
+    await releasePtc();
+  } finally {await storageContext.fiber.dispose()}
   console.log(`result details: compact ${compact.length}/${original.length} chars; canonical roundtrip, paged query, caution/failure fallback and tamper protection passed`);
 } finally {
   assert.equal(path.dirname(dir),await fs.promises.realpath(os.tmpdir()));

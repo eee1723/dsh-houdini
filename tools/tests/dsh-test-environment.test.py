@@ -15,6 +15,7 @@ contaminated = dict(os.environ, HOUDINI_PACKAGE_DIR='foreign-packages',
                     HSITE='foreign-site', HFS='foreign-houdini',
                     QT_PLUGIN_PATH='foreign-qt', QTWEBENGINE_DISABLE_SANDBOX='1',
                     DSH_HOME='foreign-dsh', DSH_HOUDINI_MANAGED_CONTEXT='foreign-context',
+                    APPDATA='foreign-roaming', LOCALAPPDATA='foreign-local',
                     NODE_OPTIONS='--require foreign.js', EXAMPLE_API_KEY='test-only-placeholder',
                     HOUDINI_LICENSE_SERVER='test-license-host')
 calls = []
@@ -34,6 +35,8 @@ for call in calls:
         assert key not in env, f'test runner inherited {key}'
     assert env['HOUDINI_PACKAGE_DIR'] != 'foreign-packages'
     assert env['DSH_HOME'] != 'foreign-dsh'
+    assert Path(env['APPDATA']).is_dir() and env['APPDATA'] != 'foreign-roaming'
+    assert Path(env['LOCALAPPDATA']).is_dir() and env['LOCALAPPDATA'] != 'foreign-local'
     assert env['HOUDINI_LICENSE_SERVER'] == 'test-license-host'
 print('deployment runner rejects inherited Houdini/Python/Qt/DSH configuration')
 
@@ -76,7 +79,12 @@ print('complete and selected matrices keep pure Python fixtures separate from HO
 from houdini_test_environment import isolated_environment, launch_directory
 with tempfile.TemporaryDirectory(prefix='dsh-env-中文 空格-') as raw:
     fixture = Path(raw)
+    foreign_roaming, foreign_local = fixture / 'inherited-user' / 'roaming', fixture / 'inherited-user' / 'local'
+    for directory in (foreign_roaming, foreign_local):
+        directory.mkdir(parents=True)
     inherited = {**contaminated, 'pythonpath': 'case-alias', 'dsh_home': 'case-alias',
+                 'APPDATA': str(foreign_roaming), 'LOCALAPPDATA': str(foreign_local),
+                 'AppData': 'case-alias-roaming', 'localappdata': 'case-alias-local',
                  'QT_QPA_PLATFORM': 'offscreen', 'QTWEBENGINE_CHROMIUM_FLAGS': '--no-sandbox',
                  'Path': 'fixture-path'}
     before = dict(inherited)
@@ -88,6 +96,15 @@ with tempfile.TemporaryDirectory(prefix='dsh-env-中文 空格-') as raw:
     assert 'QT_QPA_PLATFORM' not in env and 'QTWEBENGINE_CHROMIUM_FLAGS' not in env
     assert 'pythonpath' not in env and 'dsh_home' not in env
     assert sum(k.upper() == 'PATH' for k in env) == 1
+    for name, directory in (('APPDATA', 'appdata'), ('LOCALAPPDATA', 'localappdata')):
+        assert sum(k.upper() == name for k in env) == 1, 'case aliases cannot select another Windows data root'
+        assert Path(env[name]) == (fixture / 'gui' / directory).resolve()
+        assert Path(env[name]).is_dir()
+    helper_marker = Path(env['LOCALAPPDATA']) / 'DSH-Houdini' / 'owned-helper-marker'
+    helper_marker.parent.mkdir()
+    helper_marker.write_text('fixture helper only', encoding='utf-8')
+    assert helper_marker.is_relative_to(fixture / 'gui')
+    assert not list(foreign_roaming.iterdir()) and not list(foreign_local.iterdir()), 'automatic helper defaults cannot write into inherited user roots'
     assert launch_directory(sys.executable) == Path(sys.executable).resolve().parent
 
     # Under licensed hython, verify actual startup, not only dictionary shape.

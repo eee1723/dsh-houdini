@@ -32,7 +32,7 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 | 项目 | 支持范围 |
 |---|---|
 | 操作系统 | Windows x64 |
-| 宿主 | DSH 0.2.1-rc.5（首选）及 DSH 0.2.1-rc.3；精确范围与验证边界见[兼容清单](dsh-runtime-compatibility.json) |
+| 宿主 | 当前源码／候选包：DSH 0.2.2-rc.1；公开 0.1.6：DSH 0.2.1-rc.5 / rc.3。按所选包的精确兼容范围安装，当前源码验证边界见[兼容清单](dsh-runtime-compatibility.json) |
 | Houdini | 21.0 / 22.0；构建兼容信息见[安装说明](docs/setup.md) |
 | 模型 | 在 DSH 中配置可用的主聊天模型；图像理解、生图和语音按所用模型与服务的实际能力配置 |
 

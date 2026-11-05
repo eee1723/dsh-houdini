@@ -6,6 +6,7 @@ import http from 'node:http'
 import {randomUUID} from 'node:crypto'
 import {LlmAdapter,createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
+import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native'
 
 export const inject=['loader','workspaceRegistry','sessionController','sessions','agents','houdiniTargets','tools','llm']
 const id=()=>randomUUID().replaceAll('-',''),tick=()=>new Promise(resolve=>setTimeout(resolve,10))
@@ -58,8 +59,9 @@ export function apply(ctx) {
     agent.session.append('user/message',createUserMessage({source:{kind:'user'},content:[{type:'text',text:'Execute the owned controlled Bridge writer fixture.'}]}),{surfaceOp:'append'})
     const arguments_={code:'__result__ = {"menu_writer_fixture": True}'}
     agent.session.append('tool/call',{turn,step:1,callId,name:'houdini_exec',arguments:JSON.stringify(arguments_)})
-    restorePresentation=agent.ctx.tools.presentAs('native')
-    const result=await ctx.tools.execute({agent,callId,name:'houdini_exec',arguments:arguments_,signal:AbortSignal.timeout(15000)})
+    restorePresentation=agent.ctx.tools.setExecutor(new NativeToolExecutor(agent.ctx))
+    const batch=await ctx.tools.execute({agent,calls:[{type:'tool-call',id:callId,name:'houdini_exec',arguments:JSON.stringify(arguments_)}],signal:AbortSignal.timeout(15000)})
+    const result=batch.results[0].result
     assert.equal(result.isError,false,JSON.stringify(result));assert.equal(result.value.ok,true,JSON.stringify(result))
     agent.session.append('tool/result',{turn,step:1,message:createToolResultMessage({callId,content:result.content,isError:result.isError}),
       ...(result.meta===undefined?{}:{meta:result.meta})},{surfaceOp:'append'})

@@ -329,6 +329,7 @@ def visual_artifacts(directory, executions, checks):
         if error is not None:
             row['error'] = error
         rows.append(row)
+        return row
 
     for envelope in executions:
         for candidate in envelope.get('artifactCandidates', []):
@@ -339,8 +340,9 @@ def visual_artifacts(directory, executions, checks):
                 path = Path(value).resolve()
                 relative = path.relative_to(directory.resolve()).as_posix()
                 artifact = regular_file(directory, relative)
-                add(relative, role=candidate.get('role'), source=candidate.get('source'))
-                rows[-1]['artifact'].update(bytes=artifact.stat().st_size, sha256=digest(artifact))
+                row=add(relative, role=candidate.get('role'), source=candidate.get('source'))
+                if row is not None:
+                    row['artifact'].update(bytes=artifact.stat().st_size, sha256=digest(artifact))
             except Exception as error:
                 add(value, role=candidate.get('role'), source=candidate.get('source'),
                     status='failed', error=_brief_text(str(error) or type(error).__name__))
@@ -348,9 +350,9 @@ def visual_artifacts(directory, executions, checks):
         artifact = check.get('artifact', {})
         value = artifact.get('file')
         if check.get('status') == 'passed' and isinstance(value, str) and value.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
-            add(value, role='visual-check', source='manifest_check')
-            if 'bytes' in artifact and 'sha256' in artifact:
-                rows[-1]['artifact'].update(bytes=artifact['bytes'], sha256=artifact['sha256'])
+            row=add(value, role='visual-check', source='manifest_check')
+            if row is not None and 'bytes' in artifact and 'sha256' in artifact:
+                row['artifact'].update(bytes=artifact['bytes'], sha256=artifact['sha256'])
     return rows
 
 

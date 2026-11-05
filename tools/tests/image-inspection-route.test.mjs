@@ -14,11 +14,14 @@ const value={ok:true,stdout:'',stderr:'',images:[
 let fetched=0,saved=0,sceneCalls=0;const deferred=[];
 const requestRef='a'.repeat(32)+'.'+'b'.repeat(32)
 const imageSession=Object.assign(fixtureSession('image-session',{cwd}),{requestHeader:()=>({config:{provider:'active',model:'native'}})})
-const exec={agent:{id:'image-session',options:{provider:'old',model:'wrong'},session:imageSession},callId:'image-call',signal:new AbortController().signal};
+const exec={agent:{id:'image-session',model:{current:()=>({provider:'active',model:'native'})},options:{provider:'old',model:'wrong'},session:imageSession},callId:'image-call',signal:new AbortController().signal};
 const refs=[];
 const attachments={imageLimits:{mediaTypes:['image/png'],maxImageBytes:100,maxMessageImageBytes:150},async saveImage({data,name}){saved++;const ref={attachmentId:'image-'+saved,mediaType:'image/png',bytes:data.length,width:1,height:1,name};refs.push(ref);return ref}};
 let modalities=['text','image'];
-const ctx=fixtureProjectionContext({on(){},get:n=>n==='attachments'?attachments:n==='llm'?{async resolveModelInfo(p,m){assert.equal(p,'active');assert.equal(m,'native');return {inputModalities:modalities}}}:undefined});
+const ctx=await fixtureProjectionContext({on(){},get:n=>n==='attachments'?attachments:n==='llm'?{async resolveModelInfo(p,m){assert.equal(p,'active');assert.equal(m,'native');return {inputModalities:modalities}}}:undefined});
+const pendingRoute=await visualCapability({...exec,agent:{...exec.agent,
+  model:{current:()=>({provider:'next-step',model:'pending'})}}},ctx);
+assert.equal(pendingRoute.status,'available','an in-flight tool uses its recorded request, not a later pending model selection');
 const bridge={forRuntime(runtimeId){assert.equal(runtimeId,'a'.repeat(32));return this},async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},
  async requestStatus(){return {ok:true,stdout:'',stderr:'',requestReceipt:{request_ref:requestRef,runtime_id:'a'.repeat(32),status:'job_submitted',jobId:'abcdef123456'}}},
  async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
@@ -53,19 +56,19 @@ console.log('native image attachments: current route, nested context, job output
 
 // Preflight runs before any render/HOM and before the first model request.
 const hooks={},contexts=[];let lookups=0;
-let model='text-only';const input={agent:{options:{provider:'stale',model:'stale'},
+let model='text-only';const input={agent:{model:{current:()=>({provider:'current',model})},options:{provider:'stale',model:'stale'},
   session:Object.assign(fixtureSession('vision-preflight'),{requestHeader:()=>({config:{provider:'current',model}})})},
   signal:new AbortController().signal};
 let visionModalities=['text','image'];
 const services={attachments,llm:{async resolveModelInfo(provider,name){lookups++;assert.equal(provider,'current');return {inputModalities:name==='vision'?visionModalities:['text']}}}};
-const preflightCtx=fixtureProjectionContext({get:n=>services[n],tools:{register(){},get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f});
+const preflightCtx=await fixtureProjectionContext({get:n=>services[n],tools:{register(){},get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f});
 const beforePreflight=fetched;
 assert.equal((await visualCapability(input,preflightCtx)).status,'unsupported');
 assert.equal(fetched,beforePreflight);
 installSceneContext(preflightCtx,{sceneContext(){throw Error('preflight must not render/query HOM')}});
-async function prepare(variables){
- const assembly={contexts:contexts.map(c=>({name:c.name,text:c.text({agent:input.agent})})),tools:[{name:'houdini_inspect'}],variables};
- await hooks['system-prompt/assemble'](assembly,{agent:input.agent,scope:{},signal:input.signal},async()=>assembly);
+async function prepare(modelSelection){
+ const assembly={contexts:contexts.map(c=>({name:c.name,text:c.text({agent:input.agent})})),tools:[{name:'houdini_inspect'}],variables:{provider:'stale',model:'stale'}};
+ await hooks['system-prompt/assemble'](assembly,{agent:input.agent,scope:input.agent,modelSelection,signal:input.signal},async()=>assembly);
  return {contexts:assembly.contexts};
 }
 let prepared=await prepare();
@@ -101,4 +104,4 @@ services.attachments=previousAttachments;
 model='text-only';
 prepared=await prepare({provider:'current',model:'vision'});
 assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')),
-  'newly assembled model selection outranks a stale previous request header');
+  'captured step selection outranks both a changed next-step selection and stale request header');

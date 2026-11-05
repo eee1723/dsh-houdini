@@ -206,7 +206,7 @@ failBridge=false
 // Managed image paths follow the same durable task target as scene tools.
 // In single-instance mode the ambient bridge must not replace an old binding.
 const firstExecutor='a'.repeat(32),otherExecutor='b'.repeat(32)
-const boundContext=fixtureProjectionContext(context)
+const boundContext=await fixtureProjectionContext(context)
 const bindingSession=fixtureSession('image-bound',{agentPreset:'houdini',cwd:root})
 await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(bindingSession,firstExecutor)
 const boundEvents=structuredClone(bindingSession.snapshotEvents())

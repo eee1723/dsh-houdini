@@ -145,6 +145,42 @@ for(const mode of ['native','metadata','legacy']) {
   assert.deepEqual(ignored.uniqueExecutions,[]);
 }
 
+// Current job producers commit the original execution independently of generic
+// job_output. Attach it to its real submission; do not invent another tool call.
+const completionRef='b'.repeat(32)+'.'+'c'.repeat(32);
+const completedJob={...actualJob,requestReceipt:{request_ref:completionRef,runtime_id:'b'.repeat(32),status:'done'}};
+const producerRecord=(seq=3,sourceCallId='submit',rootCallId=sourceCallId)=>({seq,time:1000+seq,
+  type:'plugin:dsh-houdini/execution',ignorable:true,data:{schema:1,callId:'bridge-job:'+completionRef,
+    sourceCallId,rootCallId,tool:'houdini_job_submit',canonical:completedJob}});
+const admission=result(2,'submit','Native job admitted');
+admission.data.meta={canonical:{jobId:actualJob.jobId,requestReceipt:{request_ref:completionRef,runtime_id:'b'.repeat(32),status:'job_submitted'}}};
+const observed=normalizeTraceSteps([call(1,'submit','houdini_job_submit',{code:'set_parm(part,"tx",3)'}),admission,
+  producerRecord(),call(4,'read','job_output',{job_id:'native-job'}),result(5,'read','Bounded native job summary'),producerRecord(6)]);
+assert.equal(observed.steps.length,2,'producer facts and their replay are not extra model tool calls');
+assert.equal(observed.steps[0].resultSeq,2,'the native result retains its actual admission sequence');
+assert.equal(observed.steps[0].resultText,'Native job admitted','cost text remains the actual native result');
+assert.equal(observed.steps[0].producerObservation.eventSeq,6);
+assert.deepEqual(observed.steps[0].canonical,completedJob);
+assert.equal(observed.steps[0].canonicalStatus,'retained_in_plugin_record');
+assert.equal(observed.steps[0].verbs[0].verb,'set_parm');
+assert.equal(observed.steps[1].isHoudini,false,'generic job reads retain their own native meaning');
+assert.equal(observed.uniqueExecutions.length,1);
+assert.deepEqual(unresolvedExecutionRequests(observed.steps),[],'the producer terminal observation settles its admitted request');
+const nestedSubmission={seq:2,type:'tool/ptc-dispatch-start',data:{rootCallId:'program',parentCallId:'program',subCallId:'child-submit',name:'houdini_job_submit',arguments:{code:'build()'}}};
+const nestedAdmission={seq:3,type:'tool/ptc-dispatch',data:{...nestedSubmission.data,isError:false,content:[],meta:admission.data.meta}};
+const nestedObservation=normalizeTraceSteps([call(1,'program','run_code',{}),nestedSubmission,nestedAdmission,producerRecord(4,'child-submit','program')]);
+assert.equal(nestedObservation.steps.length,1);
+assert.equal(nestedObservation.steps[0].callId,'child-submit');
+assert.equal(nestedObservation.steps[0].producerObservation.rootCallId,'program');
+assert.deepEqual(nestedObservation.steps[0].canonical,completedJob);
+const noResult=normalizeTraceSteps([call(1,'submit','houdini_job_submit',{}),producerRecord()]);
+assert.equal(noResult.steps.length,0,'a missing model result is never synthesized');
+assert.equal(noResult.producerObservations[0].status,'model_result_missing');
+assert.deepEqual(noResult.producerObservations[0].canonical,completedJob);
+assert.equal(noResult.uniqueExecutions.length,1,'a producer receipt still proves one real execution when its model result is missing');
+assert.equal(noResult.uniqueExecutions[0].firstResultSeq,null,'physical execution evidence does not fabricate a model result coordinate');
+assert.equal(normalizeTraceSteps([{...producerRecord(),ignorable:false}]).producerObservations.length,0);
+
 assert.deepEqual(normalized.steps[1].args, { _raw: '{broken' });
 assert.equal(normalized.steps[1].failed, true);
 assert.equal(toolResultText(original.data.message), ledger);

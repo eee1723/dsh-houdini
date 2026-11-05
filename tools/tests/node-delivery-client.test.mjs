@@ -6,11 +6,13 @@ import vm from 'node:vm'
 import {Context} from '@deepseek-ai/cordis'
 import {SystemPrompt} from '@deepseek-ai/dsh-system-prompt'
 import {ToolRuntime} from '@deepseek-ai/dsh-tools'
+import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native'
+import {PtcExecutor} from '@deepseek-ai/dsh-tool-executor-ptc'
 import {Session} from '@deepseek-ai/dsh-session'
 import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
 import {registerHoudiniTools} from '../../lib/tools.js'
-import {installHoudiniExecutionLog,liveJobResult,LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js'
+import {installHoudiniExecutionLog,liveJobResult,LIVE_JOB_KIND,LIVE_JOB_RESULT,recordHoudiniJobExecution} from '../../lib/dsh-adapter.js'
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {generatedNodeDeliveryBlock,generatedNodeDeliveryFactory} from '../gen-node-delivery-client.mjs'
 
@@ -42,10 +44,12 @@ function assemble(events) {
   return assembler
 }
 const executorId='a'.repeat(32), uuid='c'.repeat(32)
-const ctx=fixtureProjectionContext(new Context())
+const ctx=await fixtureProjectionContext(new Context())
 ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(ctx,{})
-const runtime=new ToolRuntime(ctx,{mode:'native'})
+const runtime=new ToolRuntime(ctx)
+const nativeExecutor=new NativeToolExecutor(ctx),ptcExecutor=new PtcExecutor(ctx)
+let releaseExecutor
 installHoudiniExecutionLog(ctx)
 const session=Session.create('node-delivery-client-task-a')
 await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,executorId)
@@ -67,12 +71,12 @@ const signal=new AbortController().signal
 session.append('turn/start',{turn:1})
 session.append('step/start',{turn:1,step:1})
 async function run(callId,name,args) {
-  session.append('tool/call',{turn:1,step:1,callId,name,arguments:JSON.stringify(args)})
-  runtime.defaultMode=name==='run_code'?'ptc':'native'
-  const result=await runtime.execute({callId,name,arguments:args,agent,signal})
+  releaseExecutor?.()
+  releaseExecutor=runtime.setExecutor(name==='run_code'?ptcExecutor:nativeExecutor)
+  const batch=await runtime.execute({calls:[{type:'tool-call',id:callId,name,arguments:JSON.stringify(args)}],
+    agent,signal,log:{turn:1,step:1}})
+  const result=batch.results[0].result
   assert.equal(result.isError,false,JSON.stringify(result))
-  session.append('tool/result',{turn:1,step:1,message:createToolResultMessage({callId,content:result.content,isError:result.isError}),
-    ...(result.meta===undefined?{}:{meta:result.meta})},{surfaceOp:'append'})
   return result
 }
 await run('native','houdini_exec',{code:'delivery'})
@@ -130,6 +134,26 @@ for(const mode of ['native','metadata','legacy']) {
   const originalCards=projection.forClosing(assemble([...events,issue,generic]).snapshot(projection.view.target),jobOwner);
   assert.equal(originalCards[0].path,'/obj/bicycle/CTRL_RENAMED','ordinary jobs cannot introduce Houdini node delivery');
 }
+const completionCall='background-submit',completionSession=Session.create(session.id,events,session.header);
+completionSession.append('tool/call',{turn:1,step:1,callId:completionCall,name:'houdini_job_submit',arguments:'{}'});
+recordHoudiniJobExecution({agent:{session:completionSession},callId:completionCall},{...liveValue,status:'done',
+  requestReceipt:{request_ref:'b'.repeat(32)+'.'+'8'.repeat(32)}});
+const completionEvents=completionSession.snapshotEvents(),completion=completionEvents.at(-1);
+assert.equal(completion.type,'plugin:dsh-houdini/execution');
+assert.equal(completion.ignorable,true);
+const completionOwner={...owner,seq:completion.seq+1};
+const completedCards=projection.forClosing(assemble(completionEvents).snapshot(projection.view.target),completionOwner);
+assert.equal(completedCards[0].path,'/obj/bicycle/CTRL_FROM_JOB');
+assert.equal(completedCards[0].callId,completion.data.callId,'native producer records keep their own exact Host coordinate');
+assert.equal(completedCards[0].eventSeq,completion.seq);
+const completedReplay=JSON.parse(JSON.stringify(completionEvents));
+assert.equal(JSON.stringify(projection.forClosing(assemble(completedReplay).snapshot(projection.view.target),completionOwner)),JSON.stringify(completedCards));
+assert.equal(projection.definition.match({...completion,type:'plugin:other/execution'}),null);
+const inLaterTurn=[...completionEvents.slice(0,-1),fake('turn/end',{turn:1},completion.seq),
+  fake('turn/start',{turn:2},completion.seq+1),fake('step/start',{turn:2,step:1},completion.seq+2),
+  {...completion,seq:completion.seq+3}];
+assert.equal(projection.forClosing(assemble(inLaterTurn).snapshot(projection.view.target),{...completionOwner,turn:{turn:2},seq:completion.seq+4}).length,0,
+  'a late producer fact stays in its actual root Context instead of the currently active turn');
 const start={event:fake('tool/call',{callId:'invalid',name:'houdini_exec'})}
 const empty=projection.definition.start({},start)
 function rejected(event) {

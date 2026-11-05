@@ -16,7 +16,7 @@ const standard=standardPatch[0].insert[0].config.plugins
 const check=process.argv.includes('--check')
 const directory=path.join(root,'presets/houdini')
 const metadata=yaml.load(fs.readFileSync(path.join(directory,'preset.yml'),'utf8'))
-const plugins=standard.filter(entry=>!['persona','tool-plugin-manager'].includes(entry.id))
+const plugins=standard.filter(entry=>entry.id!=='persona')
 plugins.unshift({id:'persona',name:'@deepseek-ai/dsh-persona',config:{
   prefix:fs.readFileSync(path.join(directory,'persona.md'),'utf8').trim()}})
 plugins.splice(plugins.findIndex(entry=>entry.id==='agent-instructions')+1,0,{id:'houdini',name:'dsh-houdini/agent',isolate:{houdiniNodeDelivery:true,houdiniRecovery:true},config:{

@@ -98,6 +98,7 @@ export function transitionExecutionScope(previous:ExecutionScope,event:SessionEv
   const outcome=executionResult(event)
   if(!outcome||history?.results.has(outcome.callId))return {scope:previous}
   const original=own(previous.calls,outcome.callId)??history?.calls.get(outcome.callId)
+    ??(outcome.recorded?{callId:outcome.callId,name:outcome.tool!}:undefined)
   if(!original||original.returned&&!history)return {scope:previous}
   const finish=(state:ExecutionScope,delta?:ScopeDelta)=>{
     const calls=put(state.calls,outcome.callId,{...original,returned:true})

@@ -33,7 +33,7 @@ DSH公开接口、插件安装与Bridge的耦合分类、维护源及升级检�
 
 两条入口走同一套会话、绑定与执行合同。菜单减少可由当前现场确定的步骤，不改变DSH存储含义或文件授权，也不从目录内全部历史猜测关联；未保存HIP不自动保存。绑定已有现场要求该Houdini已加载兼容Bridge，发现进程或HIP路径不等于取得控制连接。打开其他HIP默认新进程，不隐式替换已有未保存场景。
 
-Houdini侧Package/helper在插件启用或更新加载后由同一安装路径自动部署，新建工程复用在途准备，运行中发现缺失也沿该路径补齐；只有失败需要用户重试。Host消费安装器结构回执，启动路径使用回执中的固定版本helper，不再把可更新的Node插件目录加入Python搜索路径。环境清理复用DSH的scrubbedParentEnv，仅显式传入本次接入事实；Houdini作为独立应用可在Desktop退出后继续运行。准备失败或调用中止时不继续启动进程。标准用户在官方插件UI安装并启用tgz后即可从Houdini模式使用，无须另找Install.cmd。Desktop插件版本、helper版本、Houdini安装及Bridge执行合同分别识别。Host插件目录与Bridge安装目录可以不同，不以相同物理路径证明兼容。宿主插件管理拥有Node侧安装，插件只管理自己的Houdini侧组件与兼容信息，不替换Desktop运行时。
+Houdini侧Package/helper在插件启用或更新加载后由同一安装路径自动部署，新建工程复用在途准备；运行中状态观察只读，缺失或失败通过现有修复入口明确触发，不由轮询重新安装用户移除的组件。Host消费安装器结构回执，启动路径使用回执中的固定版本helper，不再把可更新的Node插件目录加入Python搜索路径。环境清理复用DSH的scrubbedParentEnv，仅显式传入本次接入事实；Houdini作为独立应用可在Desktop退出后继续运行。准备失败或调用中止时不继续启动进程。标准用户在官方插件UI安装并启用tgz后即可从Houdini模式使用，无须另找Install.cmd。Desktop插件版本、helper版本、Houdini安装及Bridge执行合同分别识别。Host插件目录与Bridge安装目录可以不同，不以相同物理路径证明兼容。宿主插件管理拥有Node侧安装，插件只管理自己的Houdini侧组件与兼容信息，不替换Desktop运行时。
 
 菜单通过插件认证窄通道提交明确意图，由原生工作区/会话接口准备并在前端核对所选任务、preset和现场后确认。`dsh://open`只负责唤起窗口，不携带宿主owner权限；其余接线在插件内完成，没有修改Desktop主程序。标准路径已移除独立Qt工作台与私有运行包，尚欠验收只维护于[H-06](handoff.md#h-06-官方dsh共存与插件边界)。
 
@@ -59,7 +59,15 @@ Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该
 
 现场长任务只通过`houdini_job_submit`启动，先取得DSH原生jobs准入，再向Bridge提交。DSH负责job_id、归属、界面、通知与job_output/job_kill；Bridge的jobId、request_ref和runtime保留真实执行身份。Host只观察原任务，不另建调度器。运行中的HOM不能强停，取消排队任务与请求取消已运行任务分别表达；Host/作者卸载只释放本机观察，不等待或终止用户Houdini。重开后houdini_request按原回执重新观察，不重发代码。队列异步不保证原生长计算期间Houdini界面可交互；适合独立副本的计算可用houdini_isolated。
 
-当前目标、待处理执行及恢复摘要由同一个DSH session projection增量维护；在线路由、上下文和恢复直接读取该投影，不在每个工具入口重扫日志。提交／恢复结果提供可直接调用的DSH job_id，界面沿用同一标识；模型上下文把内部任务显式标为bridge_job_id，不能传给原生作业工具。轻量事实留原生日志，完整结果以hash归档为长期维护源，按需历史读取和离线Trace复用同一解码与展开规则。job/settled只表示DSH观察生命周期，不能替代HOM终态；明确的live job_output原始回执由同一个adapter解码，普通DSH作业不会改变Houdini身份。
+当前目标、待处理执行及恢复摘要由同一个DSH session projection增量维护。根Host在启动时await注册并私有持有handle，再提供`houdiniExecutorState`域服务；在线路由、上下文和恢复经该服务读取，不按key直接访问注册表，也不在工具入口重扫日志。提交／恢复结果提供可直接调用的DSH job_id，界面沿用同一标识；模型上下文把内部任务显式标为bridge_job_id，不能传给原生作业工具。
+
+Bridge终态由生产者经DSH的`appendPluginRecord`写入同一Session中的`plugin:dsh-houdini/execution`可忽略事实，关联原sourceCallId/rootCallId和轻量canonical；它不是新的模型调用或伪造工具结果。投影、节点交付和Trace复用同一解码，事实记录不依赖用户或模型先读取job_output。generic jobs继续拥有原生工具定义、通知、取消和观察生命周期，插件不为每个Agent复制job_output定义；历史原生/嵌套job_output回执仍由同一adapter读取。job/settled本身不能替代HOM终态，普通DSH作业不会改变Houdini身份。
+
+### 结果留存与展示
+
+工作区可写且预算内时，完整原始JSON保存在`dsh-artifacts/results/`的hash归档，作为长期维护源。只读、工作区归档失败或超过其32MiB预算时，原文交DSH原生spill存储，保留opaque locator和后端读取指导；不解析locator、不把宿主临时后端称为长期归档。两种存储均不可用时明确标记durable unavailable，完整即时结构返回仍可供PTC程序消费，原操作的成功/失败不因留存失败改变；原Bridge请求可能仍可查回，但不保证无限期保留，不重放代码。
+
+执行回执的持久canonical和模型可见文字各受64KiB预算约束，归档失败也不回填整份结果；独立run报告聚合多份执行后仍受同一总预算，超限改为既有作业摘要，保留路径、实际结论、状态和检查数量及read入口。省略范围与原值/恢复入口明确表达，原生图片独立服从附件限额。预算由[结果政策](../houdini/result-detail-policy.json)同源维护，UTF-8文字保留复用DSH的TextRetainer。工作区hash归档可按字段验证和分页；原生opaque结果沿其读取指导取得，不能假装已应用JSON Pointer。完整run报告与各执行原值按自身地址读取。实际机制验证见[结果留存](../tools/tests/result-details.test.mjs)和[独立执行](../tools/tests/isolated-execution.test.mjs)，长期自然任务内存与用户加载缺口仍见[交接](handoff.md)。
 
 ### 一次性独立执行
 
@@ -103,8 +111,8 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | 源码 | 维护职责 |
 |---|---|
 | [src/tool-catalog.ts](../src/tool-catalog.ts) | 工具职责与调用种类的唯一源，注册、适配、离线分类及[工具说明](tools.md)共用；历史工具名只参与解码，不重新注册 |
-| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息与原生/嵌套持久工具日志适配；精确live job结果解码唯一源，节点交付生成器复用；日志原值与展示限额分离，不从普通作业文本猜Houdini事实 |
-| [src/live-jobs.ts](../src/live-jobs.ts) | 先原生jobs准入再提交现场任务，按原runtime观察/请求队列取消，卸载释放本机观察；不重放代码、不把断线或取消意图冒充HOM终态 |
+| [src/dsh-adapter.ts](../src/dsh-adapter.ts) | DSH消息、原生/嵌套工具结果及Bridge终态plugin事实的同源编解码；appendPluginRecord写同一Session，节点交付生成器与Trace复用；不复制generic job_output定义，不从普通作业文本猜Houdini事实 |
+| [src/live-jobs.ts](../src/live-jobs.ts) | 先原生jobs准入再提交现场任务，按原runtime观察/请求队列取消，生产者取得终态后记录同源事实，卸载释放本机观察；不重放代码、不把断线或取消意图冒充HOM终态 |
 | [src/execution-facts.ts](../src/execution-facts.ts) | 同源增量执行事实转换；在线只维护待处理事实和必要锚点，冷历史读取可捕获原始记录；不建立任务完成账本 |
 | [dsh_isolated_worker.py](../houdini/python3.11libs/dsh_isolated_worker.py) | 自有隔离进程初始化与退出，经[isolated-worker.py](../tools/isolated-worker.py)监管；一次性执行和开发评测复用 |
 | [src/index.ts](../src/index.ts) | Cordis注册、稳定且persona中性的guidance、配置入口 |
@@ -123,15 +131,15 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |
 | [src/isolated-execution.ts](../src/isolated-execution.ts) | 一次性builder/HIP副本；安装来自登记或显式HFS，不要求live健康。报告元数据与执行正文分开，正文复用通用结果呈现；完整报告与执行原值留run及hash归档，canonical保留轻量事实，成功报告不再作为stdout重复展示。消费DSH输入政策、作业和附件，不建立常驻子执行端 |
 | [src/execution-source.ts](../src/execution-source.ts) | exec/job共用的内联或文件源码读取；经DSH文件服务固定UTF-8字节和摘要、核对可选版本后提交，不选择现场、不执行HOM、不自动重放 |
-| [src/tool-query.ts](../src/tool-query.ts) | Host来源/历史结果/能力/回执读取；result可一次select多个精确JSON字段，单字段分页保留。两者共用同一原文、hash和指针解析，缺失/过大明确返回，不重复执行HOM |
-| [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与预览；canonical只保留同源轻量执行事实，完整原值按hash归档，重复内容和稳定审计清单按原详情引用，不再次解释领域结论 |
+| [src/tool-query.ts](../src/tool-query.ts) | Host来源/历史结果/能力/回执读取；工作区hash结果支持select批读与JSON Pointer分页，原生opaque结果返回真实读取指导，durable unavailable返回明确缺口及原请求恢复入口，不重复执行HOM |
+| [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与轻量执行事实；canonical和文字各有64KiB预算，复用DSH TextRetainer，完整即时结构返回不变；重复内容与审计清单引用原详情，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
 | [src/component-compatibility.ts](../src/component-compatibility.ts)、[src/component-installation.ts](../src/component-installation.ts) | 执行/界面共用兼容判断；异步消费安装器预览与实际加载身份，区分待安装和待重开，不以组件构建差异阻断兼容执行 |
 | [src/executor-routing.ts](../src/executor-routing.ts) | 按对话明确选择路由、同工作区首次候选、写时作者预留和原运行实例历史查询；固定请求的runtime/scene epoch，不寻找历史替代目标；独立worker只读所选登记的静态安装事实，不领取现场权限 |
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：按明确启动来源创建或定位指定会话，列出/选择/取消目标和退出活动查询；不扫描会话历史、不恢复节点或迁移目录 |
-| [src/executor-host.ts](../src/executor-host.ts) | 官方根插件拥有的现场目录与选择服务；原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
-| [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：原生目标选择/取消与旧格式读取，晚到回执不能覆盖新选择；输出当前工程与目标快照，历史本身不证明在线或节点归属 |
-| [src/context.ts](../src/context.ts) | 上下文装配与请求准入；异步准备的按任务文本由原生context provider同步读取，原生/PTC共用能力注册事实，不以当前工具schema判断能力是否存在 |
+| [src/executor-host.ts](../src/executor-host.ts) | 官方根插件拥有的现场目录与选择服务；await私有投影handle就绪后再公开域服务，原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
+| [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：目标选择/取消、Bridge终态与旧格式读取，晚到回执不能覆盖新选择；私有handle经域服务委托同步读取，不跨域按注册key访问；历史不证明在线或节点归属 |
+| [src/context.ts](../src/context.ts) | 上下文装配与请求准入；原生/PTC共用本步toolSet判断可用Houdini工具，图像能力消费本步modelSelection/agent.model；异步准备文本由原生context provider同步读取，不以仅注册存在或顶层schema猜准入 |
 | [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
 | [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As可在原授权项目内跟随原生工作目录，不改会话创建目录或历史位置 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
@@ -143,8 +151,8 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [inspect-support-report.py](../tools/inspect-support-report.py) | 命令行薄入口，复用同一不可信ZIP检查和离线HTML实现，不解压或执行日志 |
 | [src/execution-state.ts](../src/execution-state.ts) | 从公开工具事件重建运行状态、真实失败与未决请求；不按时间戳/计数触发注入，不维护另一事实库 |
 | [src/task-sources.ts](../src/task-sources.ts) | 公开session中的原始用户消息/澄清问答来源锚、去重、有限摘录及同session分页回读；目标仅为计划记录，不推导需求替代/授权/验收 |
-| [src/result-policy.ts](../src/result-policy.ts) | 结果归档阈值的唯一Host读取源；不把展示预算解释为执行事实 |
-| [src/result-details.ts](../src/result-details.ts) | 大返回的不可变hash文件、分页JSON Pointer读取、损坏校验和保存失败回退；普通详情及独立run的builder/check从原生/嵌套回执取原路径，加载警告从原生恢复记录取原路径，跨目录/重启仍可查；不执行HOM |
+| [src/result-policy.ts](../src/result-policy.ts) | 结果归档阈值与64KiB展示/事实预算的唯一Host读取源；不把省略解释为执行缺失或语义结论 |
+| [src/result-details.ts](../src/result-details.ts) | 完整JSON的工作区hash长期归档、DSH原生opaque spill与明确durable unavailable；原生日志同源定位，文件hash校验和JSON Pointer分页仅用于可读归档，原生后端消费其真实读取指导；不执行HOM |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域模块与反馈方法，[模拟skill](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时序与缓存消费，[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
@@ -289,15 +297,14 @@ Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](
 图层工具实现独立在 `dsh_cop_contracts.py`，skill 只组织调用；版本与行为门见其
 [验收矩阵](../skills/houdini-cop-workflow/references/evidence-and-validation.md)。
 
-上下文通过DSH原生systemPrompt.context提供现场、运行状态和视觉通道事实。插件不重写会话surface，不自行执行上下文压缩或建立持久化门槛。DSH管理会话与上下文生命周期。
+上下文通过DSH原生systemPrompt.context提供现场、运行状态和视觉通道事实，按本步toolSet和modelSelection装配；工具暂不可用时只移除插件拥有的贡献，尊重宿主覆盖与抑制。插件不重写会话surface，不自行执行上下文压缩或建立持久化门槛。DSH管理会话与上下文生命周期。
 
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
 Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifactCandidates`，区分`delivery-candidate`、`visual-check`和`diagnostic`；`scene_save`/`scene_save_as`、`component_export`、`render_frame`、`render_view`及`viewport_screenshot`只报告各自权威路径。整个exec失败时降为诊断。候选不调用`present`，不能替代用户要求和最终验收；未进入动词回执的图片只作visual-check。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
-节点交付使用普通执行结果中的显式引用，由DSH公开Conversation回放和回复尾部插槽展示。Root导航RPC重读原事件，使用`agentPresets.serviceFor`取得该任务隔离preset内的连接；与普通工具共用执行端绑定。Bridge导航路由只接受持久节点ID和原工程身份，主线程执行固定定位动作；票据/排队取消由同一RequestRegistry负责，不扩展普通同步HOM修改的取消语义。节点ID保存在HIP节点上，原路径只作历史显示，不另写节点交付账本。
-Trace记录动词ledger、rawUsage、Gate、transaction与execution观察；Host在原生metadata只保留恢复与节点交付所需的轻量事实，
-大结果原值在workspace的`dsh-artifacts/results/`保存唯一hash归档，浏览器不再通过canonical复制整份结果，离线Trace与详情按需展开同一归档；历史`.dsh-houdini-results`仍按回执原路径读取。该目录是工具返回副本，不是HIP内容输出。
-失败/警告/unsupported/恢复错误、媒体路径和权限提示保留；未知结果可通过已提供的result_ref按字段读取。
+节点交付使用普通执行结果或同源Bridge终态事实中的显式引用，由DSH公开Conversation回放和回复尾部插槽展示；后台交付按rootCallId关联原模型调用。Root导航RPC重读原事件，使用`agentPresets.serviceFor`取得该任务隔离preset内的连接；与普通工具共用执行端绑定。Bridge导航路由只接受持久节点ID和原工程身份，主线程执行固定定位动作；票据/排队取消由同一RequestRegistry负责，不扩展普通同步HOM修改的取消语义。节点ID保存在HIP节点上，原路径只作历史显示，不另写节点交付账本。
+Trace消费原生工具结果及同一Session的Bridge终态事实，保留动词ledger、rawUsage、Gate、transaction与execution观察；浏览器取得有界事实，完整原值按上文留存合同读取，不经canonical复制全文。离线Trace按需展开可验证的hash归档；历史`.dsh-houdini-results`仍按回执原路径读取，该目录是工具返回副本，不是HIP内容输出。
+原生opaque spill、缺失或篡改归档和durable unavailable分别保留未展开原因，不从展示省略推断没有错误、动词或执行，也不通过重放场景操作补证。
 页面信息架构、内容来源与历史快照同步规则见[Houdini Trace设计](houdini-trace-design.md)。
 该文档区分实际请求System/schema/usage、上下文事件与当前构建来源目录；逐段运行provenance和最终messages可见集合尚未提供。
 

@@ -12,17 +12,22 @@ import dsh_parameter_values
 
 
 def _apply_created_parameters(node, values):
-    """Initialize a new node using the same declared multiparm shape as discovery.
+    """Initialize counts from the real new node before its dependent fields.
 
-    Counts instantiate dependent fields, in template parent-before-child order.
+    Parent counts materialize nested counts; input dictionary order is irrelevant.
+    Static discovery expansion budgets do not constrain an existing native node.
     The caller owns removal of the entire new node/module if a later value fails.
     Existing-node set_parms keeps its stricter pre-existing-field transaction.
     """
-    parameters = dsh_node_types._node_parameter_cards(node.type(), values)
-    counts = [p['name'] for p in parameters if p.get('multiparm_count') and p['name'] in values]
-    for name in counts:
-        dsh_parameter_values.set_parm(node, name, values[name])
-    remaining = {name: value for name, value in values.items() if name not in counts}
+    remaining = dict(values)
+    while remaining:
+        counts = [(len(parm.multiParmInstanceIndices()), name)
+                  for name in remaining
+                  if (parm := node.parm(name)) is not None and parm.isMultiParmParent()]
+        if not counts:
+            break
+        _, name = min(counts)
+        dsh_parameter_values.set_parm(node, name, remaining.pop(name))
     if remaining:
         dsh_parameter_values.set_parms(node, remaining)
 
@@ -545,7 +550,8 @@ def tab_create(
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
     - ``inputs``：可选，创建后按序连到 input 0..n（节点、绝对路径或parent相对路径；None保留空槽；
       连接失败会抛错，不会静默跳过）。
-    - ``parms``：可选非空严格参数批次，创建/接线后先按声明实例化multiparm数量，再应用其字段；
+    - ``parms``：可选非空严格参数批次，创建/接线后从真实节点逐层设置multiparm数量，再应用其字段；
+      字段顺序无关，不受静态节点卡展开预算限制；build_module静态预检仍保留自己的预算。
       任一字段失败会连同新节点一起清理。复杂模块仍优先build_module。
       Sweep 2.0声明第二输入时在接线后校正surfaceshape=input；build_module显式parms随后可覆盖。
       新建Karma Render Settings默认关闭景深、按HIPNAME分组输出；显式parms可覆盖。

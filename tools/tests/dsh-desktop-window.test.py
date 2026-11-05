@@ -173,7 +173,8 @@ def install_plugin():
     init=fixture/'init-profile.mjs'
     init.write_text("import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';"
         "const require=createRequire(process.argv[2]);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));"
-        "boot.initProfile(process.argv[3],boot.PROFILE_TEMPLATES.web.bundles);",encoding='utf-8')
+        "const {PROFILE_TEMPLATES}=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-official-bundles')));"
+        "boot.initProfile(process.argv[3],PROFILE_TEMPLATES.web.bundles);",encoding='utf-8')
     env['ELECTRON_RUN_AS_NODE']='1'
     anchor=desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json'
     run([electron,init,anchor,profile])

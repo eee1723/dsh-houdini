@@ -79,6 +79,17 @@ try {
     assert.equal(observed.activeRequests,2)
     assert.equal(observed.activeJobs,1)
     assert.equal(observed.busy,true)
+    const observeComponents=service.components.observe
+    try {
+      // Removing only the on-disk Package leaves this live Bridge healthy.
+      // Periodic presence reads must not reverse the user's explicit removal.
+      service.components.observe=async()=>componentUpdate({helper:{id:'a'.repeat(16)}},'a'.repeat(16),false)
+      const [removed]=await service.presence()
+      assert.equal(removed.componentUpdate.state,'install')
+      await service.presence()
+      await new Promise(resolve=>setImmediate(resolve))
+      assert.equal(preparations,1,'presence polling must not reinstall explicitly removed components')
+    } finally {service.components.observe=observeComponents}
   } finally {HoudiniBridge.prototype.observeExecutor=inspect}
   const mismatch=await HoudiniFrontend.prototype.projectPresence.call({desktop:()=>({presence:async()=>[
     {status:'online',contractVersion:1}]})},new AbortController().signal)

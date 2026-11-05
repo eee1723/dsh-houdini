@@ -1,6 +1,6 @@
 # DSH 与插件版本适配
 
-插件是官方 DSH Desktop 的标准 bundle，使用宿主原生会话、模型、任务与文件权限。当前首选 **0.2.1-rc.5**，同时保留 **0.2.1-rc.3**；支持声明为精确版本集合，新版本须按下述资格流程重新核对，不以浮动 npm 标签推断兼容。精确支持源为[兼容清单](../dsh-runtime-compatibility.json)，开发依赖锁为[package-lock](../package-lock.json)。已公开发行包与候选源码分开，安装地址仍以[安装说明](setup.md)为准。同版本号不能代替组件身份与实际消费者验证。
+插件是官方DSH Desktop的标准bundle，使用宿主原生会话、模型、任务与文件权限。当前源码候选精确面向 **0.2.2-rc.1**；公开0.1.6仍使用其发行包内声明的rc.3/rc.5，不自动升级既有用户。新版本按下述资格流程核对，不以浮动npm标签推断兼容。当前支持源为[兼容清单](../dsh-runtime-compatibility.json)，开发依赖锁为[package-lock](../package-lock.json)；候选验证、正式发布和用户已加载分别表达，地址以[安装说明](setup.md)为准。
 
 ## 宿主所有权与数据兼容边界
 
@@ -27,6 +27,8 @@
 
 插件通过 engines.dsh 与实际 peer 合同声明支持范围，由官方加载器核对。[原生兼容检查](https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/packages/boot/app-boot/src/plugin-compatibility.ts)之外，还需验证 Houdini helper 的当次执行合同。插件不自动升级/降级 Desktop 或覆盖其内置包。
 
+跨不兼容宿主升级时，先在旧Desktop停用Houdini插件，再沿官方入口升级宿主，随后在原生插件管理更新到匹配的插件发行版并启用；不卸载会话或移除helper，也不添加版本豁免。匹配插件尚未正式可用时，现用用户继续原组合。原生CLI添加包可能直接选择启用，不能套用安装UI的默认停用语义；自动化迁移须通过公开管理API明确停用再换宿主。
+
 插件自己的Zod依赖独立固定版本，源码也不使用全局override重写官方包的精确依赖。两份依赖按各自包根解析；升级后需核对实际官方组合能读取插件的投影schema。受支持宿主仅调用schema.parse，却在ProjectionDefinition声明完整Zod链式API；[投影注册入口](../src/executor-identity-projection.ts)只在这两个schema字段隔离跨版本TypeScript类型，状态、事件及视图仍受类型检查，运行时保留原Zod对象及完整校验。公开声明收窄为实际解析协议后移除该类型边界，不加运行时适配器或扩大编译内存。生产依赖审计与包含开发宿主的全依赖审计分开解释；宿主公告沿官方修复版本验证，不通过插件替换其共享库。
 
 ## DSH耦合点与升级维护
@@ -41,7 +43,9 @@
 
 开发验证使用[官方宿主准备器](../tools/prepare-dsh-runtime.mjs)，只安装未修改的精确官方包，不应用核心补丁。运行时缓存不属于用户发行物。工作区、账户、网络、通知等通用问题先核对官方版本和公开接口，再按开发规范比较解决方案，不能恢复整套私有核心差异作为默认修复。
 
-后台完成的通知与唤醒完全由原生tool-jobs处理，包括quiet、唤醒预算及模型调用job_kill后的通知抑制。插件不在settled回调自行followup。取消请求不证明HOM已停止；需要其结果时用job_output等待，观察中断后用原request_ref恢复，实际终态仍保留于原生canonical回执。
+后台完成的通知与唤醒完全由原生tool-jobs处理，包括quiet、唤醒预算及模型调用job_kill后的通知抑制。插件不在settled回调自行followup。取消请求不证明HOM已停止；需要结果时用job_output等待，观察中断后用原request_ref恢复。Bridge结果生产者通过公开appendPluginRecord把轻量canonical写入同一Session的plugin:dsh-houdini/execution；通用job_output不再被复制或覆盖，卸载/重载自然遵守原工具生命周期。原生/嵌套工具结果与该事实记录共用一个解码器，记录不进入模型消息面。
+
+选择原生插件记录是因为直接工具的output.presentationMeta不能扩展通用job_output，post-execute也没有meta入口；复制定义会滞留旧execute，反复监听注册只是扩大维护面。窄上游的生产者元数据扩展可作为未来替代，核心补丁则破坏标准宿主边界。当前只使用公开插件命名空间，不新增Session核心事件或第二账本；未知读取器按ignorable保留/跳过，格式迁移可能按宿主合同丢弃该插件状态，因此恢复仍依赖原请求及原值地址。官方出现等价生产者合同后替换写入入口，保留历史解码，不恢复定义覆盖。
 
 媒体与转录共用公开subprocess服务的进程树生命周期，不维护taskkill/PID探测或另一套转录进程管理。插件只负责本次调用的JSON协议、输出限额与工作锁；服务不能证明整树退出时保留锁并返回未确认。独立GUI Houdini需要在Desktop退出后继续运行，因此保持独立启动，仅复用官方环境清理。隔离hython的Python监督器另有内存预算和取消回执合同，不能用GUI或媒体的生命周期替代。该方案无需核心补丁或新宿主依赖，维护范围限定于领域输入/输出；官方合同变更时沿精确版本资格流程核对。
 
@@ -65,9 +69,23 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ## 新 DSH 版本的资格流程
 
-核对官方发行、npm 标签与实际可获取包，选择精确版本，更新兼容声明和锁文件；构建后验证标准模式仍为原默认、其他 preset 可用、Houdini 工具只在对应 scope、根客户端只有一份。启动/导航变化必须在实际页面核对所选任务、工作区、preset 与现场；配置存在或局部 RPC 成功不能代替消费方状态。
+核对官方发行、npm 标签、Desktop实际更新通道与可获取包，在自有数据根完成候选资格验证后，再更新兼容声明和锁文件；GitHub tag不代表用户的Desktop已收到对应安装包。构建后验证标准模式仍为原默认、其他 preset 可用、Houdini 工具只在对应 scope、根客户端只有一份。启动/导航变化必须在实际页面核对所选任务、工作区、preset 与现场；配置存在或局部 RPC 成功不能代替消费方状态。
 
 涉及文件/持久化时核对未修改官方读取器的重开与原值。涉及执行边界才选择必要的 H21/H22 HOM 回归，不因移除 Qt 壳机械重跑全部模型质量评测。用户现场实际加载与源码验证分开报告。
+
+### 0.2.2 接口边界
+
+[官方0.2.2-rc.1](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1)的合同由当前候选直接消费，不保留旧disposer/新handle或旧工具mode的猜测分支；旧用户沿原插件发行版使用。实际资格范围由兼容清单维护，剩余验收只进[交接](handoff.md#h-06-官方dsh共存与插件边界)。
+
+| 官方合同 | 插件消费与验证 |
+|---|---|
+| [工具按步骤准入](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/core/tools/src/index.ts)通过resolve生成本步集合，executable决定实际可执行定义 | 现场上下文消费本步toolSet；注册存在不等于获准，本步禁用时移除先前自身上下文。原生与PTC使用宿主同一步选择 |
+| [投影注册](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/session/session-projection/README.md)须await取得handle，再暴露同步消费者；按key读取已弃用 | executor-host在启动阶段持有私有handle，控制器、上下文与前端通过所属服务读状态；不加延时轮询或再建历史扫描器 |
+| [提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/core/system-prompt/src/index.ts)区分呈现与工具声明，Agent在本步固定模型 | scene/execution/vision消费捕获的modelSelection，诊断组装才读agent.model.current()；保留宿主覆盖、取消及PTC作用域，不在agent/request改模型 |
+| 原生/PTC执行插件与配置overlay、run_code取消分类、官方组合包导出发生变化 | 更新隔离Host/原生与嵌套回执夹具和取消断言；生产插件不接管宿主PTC bootstrap或组合包安装 |
+| Cordis 4.1.0、Schemastery 3.19.0及Node最低24.9 | 按实际官方发行组合验证依赖单例、根客户端、热重载和原生安装；不从插件升级共享依赖或替换Desktop运行时 |
+
+第三方插件更新与失败恢复、后台完成通知、原始工具结果与嵌套调用展示继续消费宿主现有入口；新增统计、历史复制、文件预览和自动化也不在Houdini内重建。插件保留Bridge串行执行、现场身份、HOM权限、领域检查和不可变原值归档；官方通用结果展示不替代这些领域事实。新版Web Fetch对内网地址的策略变化与Windows沙箱修复须按实际部署复核，不能将它们写成插件网络或权限问题已经解决。
 
 ## 正式发行单元与发布门
 
@@ -81,6 +99,6 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 Node侧插件的安装、启停、卸载、升级与失败恢复只使用Desktop原生插件管理。Houdini工程菜单通过公开的`pluginNavigation.openBundle('dsh-houdini')`打开同一页面，不查询第二套Release目录，不维护更新缓存、忽略版本状态或自制安装弹窗。原生页面与官方CLI支持的安装来源和升级方式见[安装说明](setup.md#connection--support连接与维护)；当前rc对第三方插件的一键更新限制如实保留，不用插件网络查询伪装成更新能力。
 
-这个边界省去版本筛选、发布提示和恢复逻辑的平行实现，也让安装错误、来源选择及profile回滚由实际写入方负责。公开导航不可用时用户仍从原生「插件」页进入；宿主以后提供更完整更新能力时直接在该页面消费，不恢复插件内更新器。Houdini helper在插件加载后自动安装／更新，运行中发现缺失自动补齐，只有准备失败需要重试；实际加载版本与重开要求仍由插件判断，因为Desktop不知道进程内Python模块身份。
+这个边界省去版本筛选、发布提示和恢复逻辑的平行实现，也让安装错误、来源选择及profile回滚由实际写入方负责。公开导航不可用时仍从原生「插件」页进入，不恢复插件内更新器。Houdini helper在插件加载或明确新建／打开时准备；运行观察只读，缺失或失败通过已有修复入口处理。实际加载版本与重开要求由插件判断，因为Desktop不知道进程内Python模块身份。
 
 [组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。安装事实与加载事实分别返回：当前进程内容正确但Package缺失时提示安装修复，不报告整条链已就绪；磁盘未知或来自其他安装位置保持未知。只有同一安装位置、预期Package已准备好且已加载身份不同才提示重开。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[工程菜单](../tools/tests/executor-picker.test.mjs)、[真实页面](../tools/tests/dsh-client-navigation.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。

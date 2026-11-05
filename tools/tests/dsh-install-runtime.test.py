@@ -62,6 +62,13 @@ if os.name == 'nt':
                                          env=dict(environment, HOUDINI_USER_PREF_DIR=str(fixed_pref)), check=True,
                                          capture_output=True, text=True, encoding='utf-8', timeout=30)
         assert json.loads(default_preview.stdout)['targets'] == [str(fixed_pref / 'packages')]
+        unregister_preview_root = folder / 'uncreated-unregister'
+        unregister_preview = subprocess.run([*command[:6], str(first_source / 'installer/uninstall.ps1'),
+                                            '-Root', str(unregister_preview_root), '-MigrationPreview'],
+                                           env=dict(environment, HOUDINI_USER_PREF_DIR=str(fixed_pref)), check=True,
+                                           capture_output=True, text=True, encoding='utf-8', timeout=30)
+        assert json.loads(unregister_preview.stdout)['migration']['packagesDirs'] == [str(fixed_pref / 'packages')], 'An installation predating registrations still discovers its explicit preferences'
+        assert not unregister_preview_root.exists() and not fixed_pref.exists(), 'unregister preview cannot create locks, reports or target directories'
         package_directories = [folder / '环境 包目录/first', folder / '环境 包目录/second']
         package_environment = dict(environment, HOUDINI_PACKAGE_DIR=os.pathsep.join(map(str, [
             *package_directories, package_directories[0]])))
@@ -172,6 +179,95 @@ execFile(powershell,['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy'
 
         def ps_quote(value):
             return "'" + str(value).replace("'", "''") + "'"
+
+        # Two actual installer processes converge when another preparation
+        # completes immediately before the first acquires its write lock. A
+        # debugger breakpoint supplies scheduling only, without a production
+        # hook or a copied migration implementation.
+        concurrent = folder / 'concurrent preparations'
+        concurrent_root = concurrent / 'helper root'
+        concurrent_packages = concurrent / 'prefs/packages'
+        concurrent_script = first_source / 'installer/install.ps1'
+        lock_line = max(index + 1 for index, line in enumerate(concurrent_script.read_text(encoding='utf-8-sig').splitlines())
+                        if line.startswith('$lock = [IO.File]::Open'))
+        concurrent_wrapper = folder / 'fixture-concurrent-install.ps1'
+        concurrent_log = folder / 'concurrent-second.log'
+        concurrent_wrapper.write_text(
+            '$ErrorActionPreference="Stop"\n'
+            '$global:dshConcurrentinstaller=' + ps_quote(concurrent_script) + '\n'
+            '$global:dshConcurrenthelperRoot=' + ps_quote(concurrent_root) + '\n'
+            '$global:dshConcurrentpackageRoot=' + ps_quote(concurrent_packages) + '\n'
+            '$global:dshConcurrentpowerShell=' + ps_quote(powershell) + '\n'
+            '$global:dshConcurrentsecondLog=' + ps_quote(concurrent_log) + '\n'
+            '$global:dshConcurrentscheduled=$false\n'
+            '$breakpoint=Set-PSBreakpoint -Script $global:dshConcurrentinstaller -Line ' + str(lock_line) + ' -Action {\n'
+            ' if(-not $global:dshConcurrentscheduled){\n'
+            '  $global:dshConcurrentscheduled=$true\n'
+            '  $second=& $global:dshConcurrentpowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $global:dshConcurrentinstaller -Root $global:dshConcurrenthelperRoot -PackagesDir $global:dshConcurrentpackageRoot 2>&1\n'
+            '  [IO.File]::WriteAllLines($global:dshConcurrentsecondLog,[string[]]$second,(New-Object Text.UTF8Encoding($false)))\n'
+            '  if($LASTEXITCODE -ne 0){throw "Second real installer failed: $LASTEXITCODE"}\n'
+            ' }\n}\n'
+            'try { & $global:dshConcurrentinstaller -Root $global:dshConcurrenthelperRoot -PackagesDir $global:dshConcurrentpackageRoot }\n'
+            'finally { Remove-PSBreakpoint $breakpoint }\n'
+            'if(-not $global:dshConcurrentscheduled){throw "Concurrent installer scheduling breakpoint was not reached"}\n',
+            encoding='utf-8-sig')
+        converged = subprocess.run([*command[:6], str(concurrent_wrapper)], env=environment,
+                                   capture_output=True, text=True, encoding='utf-8', timeout=90)
+        assert converged.returncode == 0, converged.stdout + converged.stderr
+        assert concurrent_log.is_file() and 'DSH_HOUDINI_INSTALL_RESULT=' in concurrent_log.read_text(encoding='utf-8')
+        concurrent_target = concurrent_packages / 'dsh-houdini.json'
+        concurrent_bytes = concurrent_target.read_bytes()
+        assert len(json.loads((concurrent_root / 'registrations.json').read_text(encoding='utf-8'))['packages']) == 1
+        subprocess.run([*command[:6], str(concurrent_script), '-Root', str(concurrent_root),
+                        '-PackagesDir', str(concurrent_packages)], env=environment, check=True, capture_output=True, timeout=60)
+        assert concurrent_target.read_bytes() == concurrent_bytes
+
+        # Unregister must resolve the current registration set after acquiring
+        # the same lock: a completed preparation may have added another target.
+        additional_packages = concurrent / 'second prefs/packages'
+        foreign_helper = concurrent / 'other installation/helpers/0123456789abcdef/houdini'
+        foreign_registration = concurrent_packages / 'other-installation.json'
+        foreign_bytes = json.dumps({'env': [
+            {'DSH_HOUDINI_INSTALL_ROOT': foreign_helper.parents[2].as_posix()},
+            {'DSH_HOUDINI_PATH': foreign_helper.as_posix()},
+            {'PYTHONPATH': foreign_helper.as_posix() + '/python3.11libs;$PYTHONPATH'}],
+            'path': '$DSH_HOUDINI_PATH'}).encode()
+        foreign_registration.write_bytes(foreign_bytes)
+        user_file = concurrent_packages / 'studio-user.txt'
+        user_file.write_bytes(b'user fixture: preserve')
+        unregister_script = first_source / 'installer/uninstall.ps1'
+        unregister_line = max(index + 1 for index, line in enumerate(unregister_script.read_text(encoding='utf-8-sig').splitlines())
+                              if line.startswith('$lock = [IO.File]::Open'))
+        unregister_wrapper = folder / 'fixture-concurrent-unregister.ps1'
+        unregister_log = folder / 'concurrent-unregister-second.log'
+        unregister_wrapper.write_text(
+            '$ErrorActionPreference="Stop"\n'
+            '$global:dshUnregisterScript=' + ps_quote(unregister_script) + '\n'
+            '$global:dshUnregisterInstaller=' + ps_quote(second_source / 'installer/install.ps1') + '\n'
+            '$global:dshUnregisterRoot=' + ps_quote(concurrent_root) + '\n'
+            '$global:dshUnregisterNewTarget=' + ps_quote(additional_packages) + '\n'
+            '$global:dshUnregisterPowerShell=' + ps_quote(powershell) + '\n'
+            '$global:dshUnregisterLog=' + ps_quote(unregister_log) + '\n'
+            '$global:dshUnregisterScheduled=$false\n'
+            '$breakpoint=Set-PSBreakpoint -Script $global:dshUnregisterScript -Line ' + str(unregister_line) + ' -Action {\n'
+            ' if(-not $global:dshUnregisterScheduled){\n'
+            '  $global:dshUnregisterScheduled=$true\n'
+            '  $second=& $global:dshUnregisterPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $global:dshUnregisterInstaller -Root $global:dshUnregisterRoot -PackagesDir $global:dshUnregisterNewTarget 2>&1\n'
+            '  [IO.File]::WriteAllLines($global:dshUnregisterLog,[string[]]$second,(New-Object Text.UTF8Encoding($false)))\n'
+            '  if($LASTEXITCODE -ne 0){throw "Second preparation before unregister failed: $LASTEXITCODE"}\n'
+            ' }\n}\n'
+            'try { & $global:dshUnregisterScript -Root $global:dshUnregisterRoot }\n'
+            'finally { Remove-PSBreakpoint $breakpoint }\n'
+            'if(-not $global:dshUnregisterScheduled){throw "Concurrent unregister scheduling breakpoint was not reached"}\n',
+            encoding='utf-8-sig')
+        unregistered = subprocess.run([*command[:6], str(unregister_wrapper)], env=environment,
+                                     capture_output=True, text=True, encoding='utf-8', timeout=90)
+        assert unregistered.returncode == 0, unregistered.stdout + unregistered.stderr
+        assert unregister_log.is_file() and 'DSH_HOUDINI_INSTALL_RESULT=' in unregister_log.read_text(encoding='utf-8')
+        assert not concurrent_target.exists() and not (additional_packages / 'dsh-houdini.json').exists(), 'Unregister missed a preparation committed before its lock acquisition'
+        assert foreign_registration.read_bytes() == foreign_bytes and user_file.read_bytes() == b'user fixture: preserve'
+        assert list(concurrent_packages.glob('dsh-houdini.json.dsh-disabled-*'))
+        assert list(additional_packages.glob('dsh-houdini.json.dsh-disabled-*'))
 
         # Persist a real Unicode Windows shell link using the same native writer
         # interface used in the last 0.0.x release; no shortcut is executed.

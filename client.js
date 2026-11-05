@@ -880,10 +880,8 @@ window.__ModuleLoader__.load({
           { id: "new", label: "新建工程…", disabled: !presence.available || !!nativeRunning }];
         if (displayTarget && displayTarget.hip_path && displayTarget.hip_is_new === false) projectActions.push({ id: "reopen", label: "打开关联工程…", disabled: !presence.available || !!nativeRunning });
         var setup = presence.componentSetup;
-        if (setup && setup.state === "failed") componentNotice = { label: "Houdini 组件准备未完成", detail: setup.message, action: "重试组件准备" };
+        if (setup && setup.state === "failed") componentNotice = { label: "Houdini 组件准备未完成", detail: setup.message, details: setup.details, action: "重试组件准备" };
         else if (setup && setup.state === "preparing") componentNotice = { label: "正在准备 Houdini 组件", detail: setup.message, action: null };
-        else if (setup && setup.state === "ready" && componentNotice && componentNotice.state === "install")
-          componentNotice = { label: "正在补齐 Houdini 组件", detail: "已发现组件缺失，正在自动安装；不会重启当前工程。", action: null };
         var managementActions = [];
         if (target) managementActions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
         if (setup && setup.state === "failed") managementActions.push({ id: "prepareBridge", label: "重试组件准备", disabled: !presence.available || !!switchingDisabled });
@@ -915,6 +913,8 @@ window.__ModuleLoader__.load({
           componentNotice && React.createElement("div", { className: "dsh-houdini-component-notice", "data-houdini-component-update": componentRecord && componentRecord.componentUpdate && componentRecord.componentUpdate.state || setup && setup.state || "unknown" },
             React.createElement("strong", null, componentNotice.label),
             React.createElement("p", null, componentNotice.detail),
+            componentNotice.details && React.createElement("details", { className: "dsh-houdini-target-error" },
+              React.createElement("summary", null, "查看原因"), React.createElement("pre", null, componentNotice.details)),
             componentNotice.action && React.createElement(ui.MenuItemButton, { disabled: !presence.available || !!switchingDisabled,
               onSelect: function () { request("prepareBridge"); } }, React.createElement("span", { "data-houdini-project-action": "prepareBridge" }, componentNotice.action))),
           React.createElement("div", { className: "dsh-houdini-target-actions", "data-houdini-menu-section": "project" }, projectActions.map(actionItem)),
@@ -993,6 +993,20 @@ function nodeDeliveryRows(value) {
         ? verb.result.nodes : []);
 }
 
+  var JOB_EXECUTION_RECORD = "plugin:dsh-houdini/execution";
+function recordedJobExecution(event) {
+    if (event.type !== JOB_EXECUTION_RECORD || event.ignorable !== true)
+        return;
+    const data = event.data, value = data?.canonical, ref = value?.requestReceipt?.request_ref;
+    if (data?.schema !== 1 || data.tool !== 'houdini_job_submit' || typeof ref !== 'string'
+        || !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(ref) || data.callId !== 'bridge-job:' + ref
+        || typeof data.sourceCallId !== 'string' || !data.sourceCallId || typeof data.rootCallId !== 'string' || !data.rootCallId
+        || !value || typeof value !== 'object' || Array.isArray(value) || typeof value.ok !== 'boolean'
+        || !['done', 'failed', 'cancelled'].includes(value.status))
+        return;
+    return data;
+}
+
   var KIND = "houdini-node-delivery";
   var TARGET = "houdini-node-deliveries";
 
@@ -1002,17 +1016,20 @@ function nodeDeliveryRows(value) {
     if (event.type === "tool/call") return data.callId;
     if (event.type === "tool/result" && event.surfaceOp === "append") return data.message && data.message.source && data.message.source.callId;
     if (event.type === "tool/ptc-dispatch") return data.rootCallId;
+    var recorded = recordedJobExecution(event);
+    if (recorded) return recorded.rootCallId;
     return null;
   }
 
   function project(state, match) {
     var event = match.event, data = event.data;
     if (event.type === "tool/call") return { callName: data.name, nodes: state.nodes };
+    var recorded = recordedJobExecution(event);
     var nested = event.type === "tool/ptc-dispatch";
     var message = nested ? data : data.message;
-    if (!message || message.isError === true) return state;
-    var callId = nested ? data.subCallId : message.source && message.source.callId;
-    var canonical = readHoudiniCanonical({
+    if (!recorded && (!message || message.isError === true)) return state;
+    var callId = recorded ? recorded.callId : nested ? data.subCallId : message.source && message.source.callId;
+    var canonical = recorded ? recorded.canonical : readHoudiniCanonical({
       callId: callId,
       call: { name: nested ? data.name : state.callName },
       meta: data.meta,

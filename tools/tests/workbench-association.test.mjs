@@ -9,7 +9,9 @@ import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {registerExecutorIdentityProjection,foldExecutorState} from '../../lib/executor-identity-projection.js'
 import {fixtureSession} from './fixture-session.mjs'
 const ctx=new Context(),projections=new SessionProjectionRegistry(ctx)
-projections.register(agentPresetProjectionDefinition);registerExecutorIdentityProjection(ctx)
+const presetHandle=await projections.register(agentPresetProjectionDefinition)
+ctx.provide('agentPresets',{presetForSession:session=>presetHandle.stateOf(session)})
+await registerExecutorIdentityProjection(ctx)
 const executor='a'.repeat(32),signal=new AbortController().signal,cwd=path.resolve('tools/out/original-files')
 const record={executor_id:executor,registration_id:'b'.repeat(32),runtime_id:'c'.repeat(32),scene_epoch:'d'.repeat(32),scene_id:'e'.repeat(32),
   workbench:true,state:'registered',hip_path:path.resolve('tools/out/different-project/asset.hip'),hip_is_new:false,

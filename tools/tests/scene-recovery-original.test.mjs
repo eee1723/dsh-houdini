@@ -19,7 +19,7 @@ class Bridge extends HoudiniBridge {
   constructor(){super('http://127.0.0.1:1',100,b)}
   async recover(action){requests.push(action);throw new Error('recovery must not be reached for a different scene')}
 }
-installSceneRecovery(fixtureProjectionContext({provide:(_name,value)=>{service=value},on:(event,callback)=>{assert.equal(event,'agent/pre-step');hook=callback},
+installSceneRecovery(await fixtureProjectionContext({provide:(_name,value)=>{service=value},on:(event,callback)=>{assert.equal(event,'agent/pre-step');hook=callback},
   get:()=>({ask:async()=>{questions++;return {answers:[]}}}),sessions:{flush:async()=>true}}),new Bridge())
 const signal=new AbortController().signal
 await hook({agent,signal},async()=>({kind:'continue'}))

@@ -5,7 +5,8 @@ import type {HoudiniBridge,JobHandle,JobStatus,OwnershipScope,ExecResult} from '
 import type {ExecutionSource} from './execution-source.js'
 import {hostService} from './api-route.js'
 import {HoudiniToolRuntime} from './tool-runtime.js'
-import {LIVE_JOB_KIND,LIVE_JOB_RESULT,LIVE_JOB_OUTPUT_LIMIT_BYTES} from './dsh-adapter.js'
+import {LIVE_JOB_KIND,LIVE_JOB_RESULT,LIVE_JOB_OUTPUT_LIMIT_BYTES,recordHoudiniJobExecution} from './dsh-adapter.js'
+import {executionLogValue} from './tool-output.js'
 declare module '@deepseek-ai/dsh-jobs/view' {interface JobKindMap {'houdini-live':'houdini-live'}}
 
 type Admission=JobHandle&{job_id:string}
@@ -86,9 +87,13 @@ export class LiveJobs {
             const value=await this.runtime.retain({...status,requestReceipt:{...(handle.requestReceipt as any),
               status:'done',jobId:handle.jobId,job_status:status.status,job_finished:true,job_result_available:true,
               result:undefined}},exec)
+            let recordingError:string|undefined
+            try {recordHoudiniJobExecution(exec,{...value,job_id:job.id})}
+            catch(error){recordingError=String(error);this.ctx.logger.warn('Houdini execution fact was not recorded: '+recordingError)}
             return {status:status.status==='cancelled'?'killed':status.status==='failed'?'failed':'completed',
               detail:status.status==='cancelled'?'排队任务已取消':status.ok?'原执行已结束；检查与质量以回执为准':'Houdini 返回执行失败',
-              result:JSON.stringify({kind:LIVE_JOB_RESULT,job_id:job.id,value,
+              result:JSON.stringify({kind:LIVE_JOB_RESULT,job_id:job.id,value:executionLogValue(value),
+                ...(recordingError?{recording_error:recordingError}:{}),
                 next_action:nextAction((handle.requestReceipt as any)?.request_ref)})}
           }catch(error){
             admitted(handle)

@@ -10,6 +10,7 @@ import {createHash,randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs'
 import {expandArchivedExecution} from '../trace-session-lib.mjs'
+import {recordedJobExecution} from '../../lib/dsh-adapter.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES}
   from '../../lib/generated-verb-contract.js'
 
@@ -280,12 +281,10 @@ export function apply(ctx) {
           assert(skillResult.replaceAll('\r\n','\n').includes(decompositionBody),'registered decomposition skill reaches the actual provider intact')
           const events=ctx.sessions.get(options.sessionId).snapshotEvents()
           const nativeJob=events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId==='context-8')
-          const jobCanonical=nativeJob?.data?.meta?.canonical
-          assert.equal(jobCanonical?.job?.kind,'houdini-live','the official loop persists this producer\'s native job output metadata')
-          const originalJob=JSON.parse(jobCanonical.text)
-          assert.equal(originalJob.kind,'dsh-houdini/live-job-result-v1')
-          assert.equal(originalJob.value.status,'done')
-          assert.equal(originalJob.value.jobId,jobId)
+          assert.equal(nativeJob?.data?.meta,undefined,'generic job_output keeps its native definition and metadata')
+          const originalJob=events.map(recordedJobExecution).find(record=>record?.canonical?.jobId===jobId)
+          assert(originalJob,'the actual Bridge result is already in its producer-owned native Session record')
+          assert.equal(originalJob.canonical.status,'done')
           const visibleJob=options.messages.find(message=>message.role==='tool'&&message.toolCallId==='context-8')
             ?.content.filter(block=>block.type==='text').map(block=>block.text).join('\n')??''
           assert(visibleJob.includes('DSH job')&&visibleJob.includes('completed'),'the final provider retains the actual native job completion')

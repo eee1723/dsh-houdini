@@ -4,7 +4,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {Context} from '@deepseek-ai/cordis'
 import {SystemPrompt} from '@deepseek-ai/dsh-system-prompt'
-import {ToolRuntime} from '@deepseek-ai/dsh-tools'
+import ToolsService from '@deepseek-ai/dsh-tools'
+import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native'
+import {PtcExecutor} from '@deepseek-ai/dsh-tool-executor-ptc'
 import {Session} from '@deepseek-ai/dsh-session'
 import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {validateStoredEvents} from '@deepseek-ai/dsh-session-persistence'
@@ -15,17 +17,23 @@ import {installHoudiniExecutionLog,executionResult} from '../../lib/dsh-adapter.
 import {ExecutorBinding} from '../../lib/executor-binding.js'
 import {apply as applySpillPolicy} from '@deepseek-ai/dsh-spill-policy'
 
-const ctx=fixtureProjectionContext(new Context())
-// DSH 0.2.1 resolves run_code's working directory through this service; the
+const ctx=await fixtureProjectionContext(new Context())
+// DSH resolves run_code's working directory through this service; the
 // production Host provides it, while this fixture gets an explicit stable root.
 ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 const outcomeFixtures=process.env.DSH_OUTCOME_FIXTURE
   ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
 new SystemPrompt(ctx,{})
-const tools=new ToolRuntime(ctx,{mode:'native'})
-const execute=options=>{tools.defaultMode=options.name==='run_code'?'ptc':'native';return tools.execute(options)}
+const tools=new ToolsService(ctx,{})
+const nativeExecutor=new NativeToolExecutor(ctx),ptcExecutor=new PtcExecutor(ctx)
+let releaseExecutor
+const execute=async({callId,name,arguments:args,agent,signal})=>{
+  releaseExecutor?.();releaseExecutor=tools.setExecutor(name==='run_code'?ptcExecutor:nativeExecutor)
+  const batch=await tools.execute({calls:[{type:'tool-call',id:callId,name,arguments:JSON.stringify(args)}],agent,signal})
+  return {...batch.results[0].result,additionalContexts:batch.additionalContexts}
+}
 installHoudiniExecutionLog(ctx)
-const session=Session.create('dsh02-api'),agent={id:session.id,session,ctx,options:{provider:'fixture',model:'image'}}
+const session=Session.create('dsh02-api'),agent={id:session.id,session,ctx,model:{current:()=>({provider:'fixture',model:'image'})}}
 ctx.provide('jobs',{start(spec){spec.run({id:'houdini-live-unit',updateProgress(){}});return 'houdini-live-unit'}})
 const fixtureExecutor=outcomeFixtures?.caught_read?.execution?.executor_id??'d'.repeat(32)
 await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).ensure(session,fixtureExecutor)
@@ -105,7 +113,7 @@ const submit=await execute({callId:'job-submit',name:'houdini_job_submit',argume
 assert.equal(submit.isError,false)
 assert.deepEqual(submit.meta.canonical,submit.value,'native admission stores the same value as nested dispatch, without invented execution success')
 logNative('job-submit','houdini_job_submit',{code:'pass'},submit)
-assert.equal(projectExecutionNotice(session.snapshotEvents()).active_jobs.length,1)
+assert.equal(projectExecutionNotice(session.snapshotEvents()),null,'the real terminal producer settles recovery facts without a job_output read')
 const historicalCancel={jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}
 const cancel={content:[{type:'text',text:'Historical queued cancellation'}],isError:false,
   meta:{canonical:historicalCancel}}
@@ -178,37 +186,58 @@ if (outcomeFixtures) {
 }
 // Use the released middleware, not a hand-written truncator. A display spill
 // must never cut the PTC audit JSON in its middle or lose later failure facts.
-const spillCtx=fixtureProjectionContext(new Context())
+const spillCtx=await fixtureProjectionContext(new Context())
 spillCtx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(spillCtx,{})
-const spillRuntime=new ToolRuntime(spillCtx,{mode:'ptc'})
+const spillRuntime=new ToolsService(spillCtx)
+spillRuntime.setExecutor(new PtcExecutor(spillCtx))
 const spillCopies=[]
-spillCtx.provide('spillStore',{async saveText(input){spillCopies.push(input.content);return {
-  locator:'fixture:retained',retrievalHint:'Read the retained fixture',bytes:Buffer.byteLength(input.content)}}})
+const nativeOriginals=new Map()
+spillCtx.provide('spillStore',{async saveText(input){
+  spillCopies.push(input.content)
+  const locator='fixture:retained:'+spillCopies.length
+  nativeOriginals.set(locator,input.content)
+  return {locator,retrievalHint:'Read the retained fixture',bytes:Buffer.byteLength(input.content)}
+}})
 applySpillPolicy(spillCtx,{maxInlineTokens:1000})
 installHoudiniExecutionLog(spillCtx)
 const spillSession=Session.create('dsh02-spill-audit')
-const spillAgent={id:spillSession.id,session:spillSession,ctx:spillCtx,options:{provider:'fixture',model:'text'}}
+const spillAgent={id:spillSession.id,session:spillSession,ctx:spillCtx,model:{current:()=>({provider:'fixture',model:'text'})}}
 const largeReceipt={ok:false,stdout:'large process log '.repeat(12000),stderr:'',error:'FINAL_WRITE_FAILED',
   result:{kind:'houdini/node-delivery-v1',nodes:[]},outcome:{batch:'failed',operations:{failed:1}},
   execution:{owner_session:spillSession.id,executor_id:'a'.repeat(32),runtime_id:'b'.repeat(32),sequence:1,observed_at:1,hip_path:'fixture.hip'},
   verbs:[{verb:'tool_package_create',ok:false,error:'FINAL_WRITE_FAILED',summary:{restored:false,package_exists:true}}]}
 let spillExecuted=0
 registerHoudiniTools(spillCtx,{async exec(){spillExecuted++;return structuredClone(largeReceipt)}})
+let immediateSpillValue
 spillCtx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
-  return {value:await request.bindings[0].functions.houdini_exec({code:'fixture'}),logs:[]}
+  immediateSpillValue=await request.bindings[0].functions.houdini_exec({code:'fixture'})
+  return {value:immediateSpillValue,logs:[]}
 }})
-spillSession.append('tool/call',{turn:1,step:1,callId:'large-program',name:'run_code',arguments:JSON.stringify({code:'fixture'})})
-const spilled=await spillRuntime.execute({callId:'large-program',name:'run_code',
-  arguments:{code:'return await tools.houdini_exec({code:"fixture"})',description:'Retain original audit facts'},agent:spillAgent,signal})
+spillSession.append('turn/start',{turn:1})
+spillSession.append('step/start',{turn:1,step:1})
+const spillBatch=await spillRuntime.execute({calls:[{type:'tool-call',id:'large-program',name:'run_code',
+  arguments:JSON.stringify({code:'return await tools.houdini_exec({code:"fixture"})',description:'Retain original audit facts'})}],
+  agent:spillAgent,signal,log:{turn:1,step:1}})
+const spilled=spillBatch.results[0].result
 assert.equal(spilled.isError,false,JSON.stringify(spilled))
 assert(spillCopies.length>0&&spilled.content[0].text.includes('Full formatted result stored at:'),'the actual model display policy remains active')
 assert(!spilled.content[0].text.includes('dsh-houdini/execution-v1'),'audit framing is not model-facing text')
 assert.equal(spillExecuted,1,'retention never retries a scene operation')
 const durable=spillSession.snapshotEvents().find(e=>e.type==='tool/ptc-dispatch')
 const durableValue=durable.data.meta.canonical
-assert.deepEqual(durableValue,largeReceipt,'large PTC metadata remains complete after the released spill policy')
+assert.equal(durableValue.stdout,undefined,'persistent PTC facts do not duplicate the complete process log')
+assert.equal(durableValue.result,undefined,'persistent PTC facts do not duplicate authored bulk results')
+assert.equal(durableValue.details.storage,'dsh-spill')
+assert.equal(durableValue.details.stored,true)
+assert.deepEqual(JSON.parse(nativeOriginals.get(durableValue.details.locator)),largeReceipt,
+  'the native original store retains the exact complete receipt after the released display spill policy')
+assert.deepEqual({...immediateSpillValue,details:undefined},{...largeReceipt,details:undefined},
+  'the immediate PTC binding still consumes the complete structured original')
+assert.equal(durableValue.error,'FINAL_WRITE_FAILED')
+assert.deepEqual(durableValue.outcome,largeReceipt.outcome)
+assert(Buffer.byteLength(JSON.stringify(durableValue))<16000,'canonical facts remain bounded independently of formatted output spill')
 assert(durable.data.content.some(block=>block.text?.includes('Full formatted result stored at:')),'the durable display copy actually spills')
 const spillStored=validateStoredEvents(spillSession.header,JSON.parse(JSON.stringify(spillSession.snapshotEvents())))
-assert.deepEqual(executionHistory(Session.create(spillSession.id,spillStored,spillSession.header).snapshotEvents()).rows[0].value,largeReceipt)
-console.log('DSH 0.2 API: native/nested dispatch, durable replay, exact large receipts with real display spill, one execution each passed')
+assert.deepEqual(executionHistory(Session.create(spillSession.id,spillStored,spillSession.header).snapshotEvents()).rows[0].value,durableValue)
+console.log('DSH 0.2 API: native/nested dispatch, durable replay, bounded canonical facts and exact native original with real display spill, one execution each passed')

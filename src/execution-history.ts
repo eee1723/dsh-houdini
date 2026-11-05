@@ -4,7 +4,7 @@ import {executionCall,executionResult} from './dsh-adapter.js'
 import {executionOutstanding,initExecutionScope,transitionExecutionScope,resultOrigin,resultJob,type ScopeDelta,type ExecutionScope,type HistoricalExecutionOrigin} from './execution-facts.js'
 export {mergeRequestStatus,isPendingRequestStatus} from './execution-facts.js'
 export type {HistoricalExecutionOrigin} from './execution-facts.js'
-export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;surfaceOp?:string|{op:string}}
+export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;ignorable?:boolean;surfaceOp?:string|{op:string}}
 export type ExecutionRow = {eventSeq:number;callId:string;tool:string;value:any;execution:any;producer?:'live-job'}
 
 export function requestStatusGuidance(status:unknown):string|undefined {
@@ -41,7 +41,7 @@ function collect(target:ReturnType<typeof collector>,event:SessionEvent,delta:Sc
   const call=executionCall(event)
   if(call){target.calls.set(call.callId,call);target.callSeq.set(call.callId,event.seq??0)}
   const result=executionResult(event)
-  if(result&&target.calls.has(result.callId)&&!target.results.has(result.callId))target.results.set(result.callId,result.value)
+  if(result&&(target.calls.has(result.callId)||result.recorded)&&!target.results.has(result.callId))target.results.set(result.callId,result.value)
   if(!delta)return
   if(delta.row)target.rows.push({...delta.row,value:result?.value})
   if(delta.failure)target.failedCalls.push(delta.failure)

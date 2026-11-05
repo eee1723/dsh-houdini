@@ -23,7 +23,13 @@ function initializer(file, name) {
 export function generatedNodeDeliveryFactory() {
   const shared = ts.transpile(read("src/node-delivery-record.ts"), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })
     .replace(/^export /gm, "");
-  return read("client/node-delivery.js").replace("/* NODE_DELIVERY_RECORD */", shared);
+  const adapter = ts.createSourceFile("src/dsh-adapter.ts", read("src/dsh-adapter.ts"), ts.ScriptTarget.Latest, true);
+  const decoder = adapter.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "recordedJobExecution");
+  if (!decoder) throw new Error("Missing native job execution record decoder");
+  const recordDecoder = ts.transpile(decoder.getText(adapter), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext })
+    .replace(/^export /m, "");
+  return read("client/node-delivery.js").replace("/* NODE_DELIVERY_RECORD */", shared)
+    .replace("/* JOB_EXECUTION_RECORD */", `var JOB_EXECUTION_RECORD = ${JSON.stringify(initializer("src/dsh-adapter.ts", "JOB_EXECUTION_RECORD"))};\n${recordDecoder}`);
 }
 
 export function generatedNodeDeliveryBlock() {

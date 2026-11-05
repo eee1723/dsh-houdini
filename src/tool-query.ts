@@ -1,6 +1,6 @@
 /** Host resource reads and recovery use distinct contracts, never live code. */
 import type {ExecResult} from './bridge.js'
-import {readResultDetail,readResultSelection,recordedResultPath} from './result-details.js'
+import {readResultDetail,readResultSelection,recordedResultReference,resultRetrievalResource} from './result-details.js'
 import {readTaskSource} from './task-sources.js'
 import {HoudiniToolRuntime,workspaceOf} from './tool-runtime.js'
 import {recordedLoadWarningPath} from './executor-identity-projection.js'
@@ -11,7 +11,9 @@ export function readResource(args:{kind:'source'|'result';ref:string;pointer?:st
   if(args.kind==='result') {
     if(args.select!==undefined&&(args.pointer!==undefined||args.offset!==undefined))throw Error('select cannot be combined with pointer or offset; page an oversized selection separately')
     const events=exec?.agent?.session?.snapshotEvents?.()??[]
-    const retained=recordedResultPath(events,args.ref)??recordedLoadWarningPath(events,args.ref)
+    const reference=recordedResultReference(events,args.ref)
+    if(reference?.storage==='dsh-spill'||reference?.storage==='unavailable')return resultRetrievalResource(args.ref,reference)
+    const retained=reference?.path??recordedLoadWarningPath(events,args.ref)
     return args.select!==undefined?readResultSelection(workspaceOf(exec),args.ref,args.select,args.limit,retained)
       :readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit,retained)
   }

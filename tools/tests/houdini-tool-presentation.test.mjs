@@ -20,7 +20,7 @@ const ctx = {
   },
 };
 
-registerHoudiniTools(fixtureProjectionContext(ctx), {});
+registerHoudiniTools(await fixtureProjectionContext(ctx), {});
 assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit'].sort());
 
 const text = [{ type: 'text', text: 'fixture result' }];
@@ -111,7 +111,7 @@ function statusTextForReceipt() {
 // lookup success must not advertise a still-running or unavailable operation.
 const recoveryDefinitions = new Map();
 let recoveryReceipt;
-registerHoudiniTools(fixtureProjectionContext({tools:{register:definition=>recoveryDefinitions.set(definition.name,definition)}}), {
+registerHoudiniTools(await fixtureProjectionContext({tools:{register:definition=>recoveryDefinitions.set(definition.name,definition)}}), {
   forRuntime(runtimeId) { assert.equal(runtimeId,'a'.repeat(32)); return this; },
   async requestStatus() { return structuredClone(recoveryReceipt); },
   async jobStatus(jobId) {return {jobId,status:'done',ok:true,stdout:'',stderr:''};},
@@ -272,7 +272,7 @@ assert.deepEqual(status.output.render(frozenArgs,jobValue), status.output.render
 const workspaceDefinitions = new Map();
 let workspaceExecutions = 0;
 let workspaceResult = {ok:true,stdout:'',stderr:'',execution:{hip_dir:'C:/project'}};
-registerHoudiniTools(fixtureProjectionContext({tools:{register: d => workspaceDefinitions.set(d.name, d)}}), {
+registerHoudiniTools(await fixtureProjectionContext({tools:{register: d => workspaceDefinitions.set(d.name, d)}}), {
   async exec() { workspaceExecutions++; return workspaceResult; },
   async hipDir() { throw new Error('presentation must not probe Houdini'); },
 });
@@ -305,7 +305,7 @@ const strictBridge = {
   async jobStatus(jobId, owner) { sent++; seenOwner = owner; return {jobId, status:'done', ok:true, stdout:'', stderr:''}; },
   async cancelJob(jobId, owner) { sent++; seenOwner = owner; return {jobId, status:'cancelled', ok:true, stdout:'', stderr:''}; },
 };
-registerHoudiniTools(fixtureProjectionContext({tools:{register:d=>strictDefs.set(d.name,d)},
+registerHoudiniTools(await fixtureProjectionContext({tools:{register:d=>strictDefs.set(d.name,d)},
   sessions:{flush:async()=>{flushed++;return true}}}),
   {resolve: async () => {resolved++;return strictBridge},resolveHistorical:async(_exec,target)=>{assert.equal(target.runtimeId,'f'.repeat(32));return strictBridge}});
 const identity = (agentId, callId) => ({agent: agentId === undefined ? undefined : {id: agentId}, callId});
@@ -361,7 +361,7 @@ const countingServer = http.createServer((request, response) => {
 await new Promise((resolve) => countingServer.listen(0, '127.0.0.1', resolve));
 try {
   const realBridge = new HoudiniBridge(`http://127.0.0.1:${countingServer.address().port}`, 1000);
-  registerHoudiniTools(fixtureProjectionContext({tools:{register:d=>realDefs.set(d.name,d)}}), realBridge);
+  registerHoudiniTools(await fixtureProjectionContext({tools:{register:d=>realDefs.set(d.name,d)}}), realBridge);
   for (const bad of badIdentities) {
     await assert.rejects(realDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);
     await assert.rejects(realDefs.get('houdini_inspect').execute({code:'pass'},bad),/identity/);

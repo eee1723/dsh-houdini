@@ -38,6 +38,7 @@ Houdini交互控件按当前选中会话的原生preset投影显示；切换到�
 - 保持DSH已有字段、事件和存储版本的原意；`SessionHeader.cwd`的创建项目身份、当前文件目录、Houdini现场/HIP与写入授权分别处理。不能保留格式号而改变官方读取器依赖的含义，也不能将自定义核心状态写进共享会话或workspace域。
 - 通用能力优先使用已核对的公开合同；缺口通过上游改进或明确的产品取舍解决。必要的过渡核心补丁只能随私有运行时和独立数据根交付；不得要求用户给官方Desktop打补丁。数据导入、迁移和旧记录修复须单独明确范围并保留可恢复原值，不自动合并、链接或同步两套活动历史。
 - 涉及启动、依赖、preset、存储或目录语义的改动，先列明受影响的读写边界，再在自有fixture中核对官方包读取、正常工作区创建、插件启停及原有模式保持。共享格式还须核对重开与升级/回退的实际消费者；适配版自行读回和相同版本号不能代替兼容证据。测试不使用用户live数据。
+- 新Desktop的原生GUI测试启动前须保存系统协议逐字段原值，不能只留哈希。开发载体以官方同字节electron.exe、显式隔离目录运行，先在inspect-brk及官方main首语句前读取实际isPackaged=false、原进程与路径，再放行main；不靠无app.asar推断开发模式，不patch/stub协议API。运行前后逐字段比较，开发载体只证明窗口/Host/插件消费，不代替packaged协议注册或应用自动更新。
 
 未完成的用户入口、旧数据和发布验收只维护于[当前交接](handoff.md#h-06-官方dsh共存与插件边界)。纯文档修改运行文档门；不为这项纪律机械扩大HOM或模型评测。
 
@@ -323,9 +324,11 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 ## 运行与发行
 
-标准交付为包含Houdini/媒体资源的`.tgz`，通过受支持官方Desktop的原生插件管理安装已公开的npm包名、本地绝对路径或tarball URL；公开入口见[安装说明](setup.md)，未完成事项见[H-01](handoff.md#h-01-标准插件发布与用户加载)。源码目录和历史独立运行包不作为标准发行。宿主原生UI新装默认停用，须启用后配置主模型、进入Houdini模式。插件加载后由`DesktopIntegration.installHelper`在后台自动执行包内安装器并消费唯一结构回执；新建工程共享在途准备，运行中发现缺失自动补齐，失败重试复用同一路径，不要求用户解压找Install.cmd或配置Node。
+标准交付为包含Houdini/媒体资源的`.tgz`，通过受支持官方Desktop的原生插件管理安装已公开的npm包名、本地绝对路径或tarball URL；公开入口见[安装说明](setup.md)，未完成事项见[H-01](handoff.md#h-01-标准插件发布与用户加载)。源码目录和历史独立运行包不作为标准发行。宿主原生UI新装默认停用，须启用后配置主模型、进入Houdini模式。插件加载后由`DesktopIntegration.installHelper`在后台自动执行包内安装器并消费唯一结构回执；新建工程共享在途准备。运行状态观察只读，缺失或失败由明确修复入口复用同一路径，不因轮询重新安装已移除组件，也不要求用户解压找Install.cmd或配置Node。
 
 本端安装由[install.ps1](../installer/install.ps1)部署不可变helper并原子切换Package；[legacy-migration.ps1](../installer/legacy-migration.ps1)维护历史生成入口的唯一所有权识别、只读预览、原始字节/SHA256备份、停用和受变更保护的恢复，[uninstall.ps1](../installer/uninstall.ps1)复用同一边界解除登记。仅停用已确认的本插件入口，自定义或混合内容保留并报告；未知canonical冲突在新Houdini进程启动前停止。保留旧运行包、凭据、会话、HIP与其他插件，不自动合并或修复历史。已加载helper仍须保存重开，安装器不杀进程或替换进程内模块。
+
+安装与卸载的写路径取得同一安装锁后，才读取当前登记、解析目标并生成迁移计划；只读Preview的快照不用于随后写入。并发准备已完成的合法状态不作为用户改写误报，持锁后的真实外部文件变更仍由原有指纹保护拒绝。
 
 目标采用显式PackagesDir、已登记路径、HOUDINI_PACKAGE_DIR、HOUDINI_USER_PREF_DIR/系统Documents的顺序；公开package目录列表必须为绝对路径。安装入口以UTF-8输出`DSH_HOUDINI_INSTALL_RESULT=`结构回执，Host只消费该事实，不从stdout文案推断结果。[安装生命周期回归](../tools/tests/dsh-install-runtime.test.py)覆盖旧入口、未知冲突、定制目录、两版选择、重复安装、回退、卸载和真实Node UTF-8消费。测试必须隔离APPDATA、LOCALAPPDATA、DSH_HOME及Houdini目录；仅设置HOUDINI_PACKAGE_DIR不能隔离旧helper根中的有效安装记录。原生UI安装/启用和H21/H22加载仍须使用最终发行包验证，不能由纯安装回归或官方CLI安装代替。
 

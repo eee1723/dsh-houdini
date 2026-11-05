@@ -71,7 +71,12 @@ export class HoudiniToolRuntime {
 
   async retain<T extends ExecResult>(value: T, exec: any): Promise<T> {
     return retainResult(value, workspaceOf(exec), () =>
-      hostService(this.ctx,'sandboxPolicy')?.resolve({session:exec?.agent?.session})?.mode)
+      hostService(this.ctx,'sandboxPolicy')?.resolve({session:exec?.agent?.session})?.mode,async content=>{
+        const store=hostService(this.ctx,'spillStore'),owner=exec?.agent?.session?.header?.id??exec?.agent?.id
+        if(!store||typeof owner!=='string')throw Error('DSH native result spill requires storage and an owning session')
+        return store.saveText({owner:{sessionId:owner},source:{kind:'tool',toolName:exec.name??'houdini_exec',
+          callId:exec.callId,label:'original JSON result'},suggestedName:'houdini-result.json',content})
+      })
   }
 
   private withWorkspaceNote<T extends ExecResult>(value: T, exec: any): T {

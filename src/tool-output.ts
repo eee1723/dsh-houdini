@@ -3,6 +3,8 @@
 import type { GenericResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { ExecResult, JobHandle, JobStatus, JsonValue } from './bridge.js'
 import { imageBlocks } from './image-output.js'
+import {TextRetainer,formatRetentionNotice} from '@deepseek-ai/dsh-output-retention'
+import {DETAIL_THRESHOLD,MAX_PRESENTATION_BYTES} from './result-policy.js'
 
 const execOutputProperties = {
   job_id: {type:'string'},
@@ -44,11 +46,43 @@ export function codePresentationInput(args: { code?: string; script?:string; exp
 }
 
 export const EXECUTION_FACT_PROJECTION = 'dsh-houdini/execution-facts-v1'
+const pointerKey = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1')
+
+/** Keep complete values out of persistent browser facts even when archival
+ * fails. Budgeting changes presentation only; omitted fields remain identified
+ * by their pointer and the result's original-retention/recovery reference. */
+export function boundedFact(value:any,pointer='',budget=MAX_PRESENTATION_BYTES):any {
+  if(value===undefined)return value
+  if(Buffer.byteLength(JSON.stringify(value))<=budget)return value
+  const omitted={detail_pointer:pointer,value_omitted:true,...(Array.isArray(value)?{count:value.length}:{})}
+  if(budget<512||Array.isArray(value)||value===null)return omitted
+  if(typeof value==='string') {
+    // JSON may escape every retained byte as six ASCII bytes. Reserve both
+    // the exact omission notice and that worst-case encoding overhead.
+    const cap=Math.max(0,Math.floor((budget-256)/12)),retainer=new TextRetainer({kind:'headTail',headBytes:cap,tailBytes:cap})
+    retainer.push(value)
+    const retained=retainer.finish()
+    return retained.text+'\n['+formatRetentionNotice({scope:'result fact',strategy:'headTail',unit:'bytes',
+      limit:{head:cap,tail:cap},kept:Buffer.byteLength(retained.text),omitted:retained.omittedBytes},()=>`Original field: ${pointer}. See result details/recovery.`)+']'
+  }
+  if(typeof value!=='object')return omitted
+  const entries=Object.entries(value),result:Record<string,any>={}
+  let used=2,index=0
+  for(const [key,child] of entries) {
+    const overhead=Buffer.byteLength(JSON.stringify(key))+2
+    if(used+overhead+128>budget)break
+    const allowance=Math.max(128,Math.floor((budget-used-overhead)/(entries.length-index)))
+    const field=boundedFact(child,pointer+'/'+pointerKey(key),allowance)
+    result[key]=field;used+=overhead+Buffer.byteLength(JSON.stringify(field)??'null');index++
+  }
+  if(index<entries.length)result.__dsh_omitted_fields={count:entries.length-index,detail_pointer:pointer}
+  return Buffer.byteLength(JSON.stringify(result))<=budget?result:omitted
+}
 
 /** DSH history needs recovery and delivery facts, not another copy of every
  * authored result. The immutable archive owns those complete payloads. */
 export function executionLogValue(value: ExecResult): JsonValue {
-  if (object(value.details)?.stored !== true) return value as unknown as JsonValue
+  if(value.details===undefined&&JSON.stringify(value).length<DETAIL_THRESHOLD)return value as unknown as JsonValue
   const { result: _result, evidence: _evidence, stdout: _stdout, images: _images,
     artifactCandidates: _artifactCandidates, verbs, ...facts } = value as any
   const compactVerbs = Array.isArray(verbs) ? verbs.map((item: any) => {
@@ -61,7 +95,7 @@ export function executionLogValue(value: ExecResult): JsonValue {
     ? { count: rows.length, detail_pointer: pointer } : rows
   const execution = object(value.execution), impact = object(execution?.impact)
   const transaction = object(value.transaction)
-  return { ...facts, ...(compactVerbs ? { verbs: compactVerbs } : {}),
+  const projected={ ...facts, ...(compactVerbs ? { verbs: compactVerbs } : {}),
     ...(execution ? { execution: { ...execution,
       ...(impact ? { impact: impact.nodes !== undefined
         ? { ...impact, nodes: inventory(impact.nodes, '/execution/impact/nodes') } : impact } : {}),
@@ -70,11 +104,19 @@ export function executionLogValue(value: ExecResult): JsonValue {
     ...(transaction ? { transaction: transaction.nodes !== undefined
       ? { ...transaction, nodes: inventory(transaction.nodes, '/transaction/nodes') } : transaction } : {}),
     details: {
-      ...object(value.details), projection: EXECUTION_FACT_PROJECTION,
+      ...(value.details===undefined?{stored:false,storage:'unavailable',
+        recovery:'The producer supplied no durable original reference. The immediate structured return is complete; use the original Bridge request if still retained. Do not resubmit scene code.'}:object(value.details)),
+      projection: EXECUTION_FACT_PROJECTION,
       omitted: ['/result', '/evidence', '/stdout', '/images', '/artifactCandidates',
         '/execution/impact/nodes', '/execution/outputs', '/transaction/nodes',
         '/verbs/*/args', '/verbs/*/kwargs', '/verbs/*/result', '/verbs/*/summary'],
-    } } as unknown as JsonValue
+    } }
+  // Put identity/recovery and actual execution verdicts before optional
+  // diagnostics when a future or unusually large fact itself needs bounding.
+  const {ok,job_id,jobId,status,requestReceipt,execution:observed,transaction:changed,outcome,details,error,stderr,...rest}=projected
+  return boundedFact({ok,...(job_id?{job_id}:{}),...(jobId?{jobId}:{}),...(status?{status}:{}),
+    ...(requestReceipt?{requestReceipt}:{}),...(observed?{execution:observed}:{}),...(changed?{transaction:changed}:{}),
+    ...(outcome?{outcome}:{}),details,...(error?{error}:{}),...(stderr?{stderr}:{}),...rest},'',MAX_PRESENTATION_BYTES) as JsonValue
 }
 
 export function execPresentationMeta(value: ExecResult): PresentationMeta {
@@ -84,7 +126,7 @@ export function execPresentationMeta(value: ExecResult): PresentationMeta {
     imageCount: Array.isArray(value.imageAttachments)
       ? value.imageAttachments.filter(item => object(item)?.attachment).length : 0,
     ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
-    ...(value.outcome ? { outcome: value.outcome } : {}),
+    ...(value.outcome ? { outcome: boundedFact(value.outcome,'/outcome',4096) } : {}),
     canonical: executionLogValue(value),
   }
 }
@@ -139,8 +181,6 @@ export function jobResultTitle(action: string, result: ToolResult): string {
     ? `长任务 ${meta.jobId} · ${states[meta.status] ?? meta.status}` : `${action} · ${meta.jobId}`
   return `${action} · 已返回`
 }
-
-const pointerKey = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1')
 
 // JSON object member order is not execution evidence. Compare values without
 // changing the original payload, array order, or absent/explicit-null fields.
@@ -375,7 +415,7 @@ function executionSummary(value: ExecResult): string {
 }
 
 export function renderExec(value: ExecResult) {
-  return [{ type: 'text' as const, text: [executionSummary(value), ...renderFields(value)].join('\n\n') }, ...imageBlocks(value)]
+  return [{ type: 'text' as const, text: observationText([executionSummary(value), ...renderFields(value)].join('\n\n'),MAX_PRESENTATION_BYTES) }, ...imageBlocks(value)]
 }
 
 export function renderJobStatus(value: JobStatus) {
@@ -386,38 +426,24 @@ export function renderJobStatus(value: JobStatus) {
     failed: `Job failed:\n${value.error ?? 'unknown error'}`,
     done: executionSummary(value),
   }[value.status]
-  return [{ type: 'text' as const, text: [`job ${value.jobId}: ${value.status}`, summary,
-    ...renderFields(value)].join('\n\n') }, ...imageBlocks(value)]
-}
-
-function utf8Head(text:string,maxBytes:number):string {
-  let bytes=0,end=0
-  for(const char of text){
-    const size=Buffer.byteLength(char)
-    if(bytes+size>maxBytes)break
-    bytes+=size;end+=char.length
-  }
-  return text.slice(0,end)
-}
-
-function utf8Tail(text:string,maxBytes:number):string {
-  const chars=Array.from(text)
-  let bytes=0,start=chars.length
-  for(let index=chars.length-1;index>=0;index--){
-    const size=Buffer.byteLength(chars[index])
-    if(bytes+size>maxBytes)break
-    bytes+=size;start=index
-  }
-  return chars.slice(start).join('')
+  return [{ type: 'text' as const, text: observationText([`job ${value.jobId}: ${value.status}`, summary,
+    ...renderFields(value)].join('\n\n'),MAX_PRESENTATION_BYTES) }, ...imageBlocks(value)]
 }
 
 function observationText(full: string, maxBytes: number): string {
   if(Buffer.byteLength(full)<=maxBytes)return full
-  const marker='\n\n… [middle omitted to fit the native job output budget; use the original request/details references; omission is not evidence of absence] …\n\n'
-  const available=maxBytes-Buffer.byteLength(marker)
-  if(available<=0)return utf8Head(full,maxBytes)
+  const marker='\n\n… [middle omitted to fit the presentation budget; use original request/details references; omission is not evidence of absence] …\n\n'
+  const available=Math.max(0,maxBytes-Buffer.byteLength(marker))
   const headBytes=Math.ceil(available*2/3)
-  return utf8Head(full,headBytes)+marker+utf8Tail(full,available-headBytes)
+  if(maxBytes<Buffer.byteLength(marker)) {
+    const prefix=new TextRetainer({kind:'head',maxBytes});prefix.push(full);return prefix.finish().text
+  }
+  // Native retainers own both UTF-8 cuts. Encode once, and place the domain
+  // notice between the retained ends rather than making them look contiguous.
+  const bytes=Buffer.from(full)
+  const head=new TextRetainer({kind:'head',maxBytes:headBytes}),tail=new TextRetainer({kind:'tail',maxBytes:available-headBytes})
+  head.push(bytes);tail.push(bytes)
+  return head.finish().text+marker+tail.finish().text
 }
 
 /** Preserve the renderer's prioritized head and recovery/detail tail. The

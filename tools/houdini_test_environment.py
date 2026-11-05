@@ -177,7 +177,9 @@ def _run_unpacked_test_cli(command):
 def isolated_environment(fixture, *, executable=None, gui=False, base=None):
     fixture = Path(fixture).resolve()
     packages = fixture / 'packages'
-    packages.mkdir(parents=True, exist_ok=True)
+    appdata, localappdata = fixture / 'appdata', fixture / 'localappdata'
+    for directory in (packages, appdata, localappdata):
+        directory.mkdir(parents=True, exist_ok=True)
     env = {}
     for key, value in (os.environ if base is None else base).items():
         name = key.upper()
@@ -185,11 +187,12 @@ def isolated_environment(fixture, *, executable=None, gui=False, base=None):
             env[name] = value
             continue
         if (name.startswith(('HOUDINI_', 'PYTHON', 'QT_', 'QTWEBENGINE_', 'QML', 'DSH_', 'NODE_'))
-                or name in {'HSITE', 'HFS', 'HHP', 'HB', 'HDSO'}
+                or name in {'HSITE', 'HFS', 'HHP', 'HB', 'HDSO', 'APPDATA', 'LOCALAPPDATA'}
                 or re.search(r'TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL', name)):
             continue
         env[key] = value
-    env.update(HOUDINI_PATH='&', HOUDINI_NO_ENV_FILE='1',
+    env.update(APPDATA=str(appdata), LOCALAPPDATA=str(localappdata),
+               HOUDINI_PATH='&', HOUDINI_NO_ENV_FILE='1',
                HOUDINI_USER_PREF_DIR=str(fixture / 'prefs__HVER__'),
                HOUDINI_PACKAGE_DIR=str(packages), HOUDINI_MAXTHREADS='2',
                PYTHONNOUSERSITE='1', PYTHONIOENCODING='utf-8',

@@ -131,7 +131,7 @@ try{const anchored=createRequire(await fs.realpath(process.env.DSH_PIN_INSTALLED
 await fs.writeFile(file+'.tmp',JSON.stringify(facts));await fs.rename(file+'.tmp',file)}
 ''',encoding='utf-8')
     init=fixture/'init.mjs'
-    init.write_text("import{createRequire}from'node:module';import{pathToFileURL}from'node:url';const r=createRequire(process.argv[2]);const b=await import(pathToFileURL(r.resolve('@deepseek-ai/dsh-app-boot')));b.initProfile(process.argv[3],b.PROFILE_TEMPLATES.web.bundles);",encoding='utf-8')
+    init.write_text("import{createRequire}from'node:module';import{pathToFileURL}from'node:url';const r=createRequire(process.argv[2]);const b=await import(pathToFileURL(r.resolve('@deepseek-ai/dsh-app-boot')));const {PROFILE_TEMPLATES}=await import(pathToFileURL(r.resolve('@deepseek-ai/dsh-official-bundles')));b.initProfile(process.argv[3],PROFILE_TEMPLATES.web.bundles);",encoding='utf-8')
     env['ELECTRON_RUN_AS_NODE']='1';run([electron,'--expose-internals',init,desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json',profile]);env.pop('ELECTRON_RUN_AS_NODE',None)
     (profile/'cordis.patch.yml').write_text('- id: workspace-controller\n  config:\n    documentsDirectory: '+json.dumps(str(fixture/'documents'))+'\n'
         '- id: llm-pi-ai\n  config:\n    providers:\n      owned-pin-chat:\n        api: openai-completions\n        baseURL: '+json.dumps('http://127.0.0.1:'+str(server.server_port)+'/v1/')+'\n        apiKeyEnv: DSH_WINDOW_PIN_FIXTURE_KEY\n        models:\n          - id: idle-fixture\n            input: [text]\n'

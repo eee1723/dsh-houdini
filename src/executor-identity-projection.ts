@@ -56,8 +56,15 @@ type State=z.infer<typeof State>
 export type ExecutorIdentityState=State
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
-  interface SessionProjectionStateMap {houdiniExecutorIdentity:State}
   interface SessionProjectionMap {houdiniExecutorIdentity:Project|null}
+}
+
+/** The domain read face delegates to DSH's private registration handle. */
+export interface HoudiniExecutorState {
+  stateOf(session:Session):State
+}
+declare module '@deepseek-ai/cordis' {
+  interface Context {houdiniExecutorState:HoudiniExecutorState}
 }
 
 function add(state:State,id:unknown):State {
@@ -120,7 +127,7 @@ function projectMessage(state:State,message:any,event:SessionEvent):State {
 }
 
 export const executorIdentityProjection={
-  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:13,
+  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:14,
   init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},queuedBindings:{},
     executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{},
     selectedTarget:null,selectionRecorded:false,selectionRevision:0,pendingSelections:{},execution:initExecutionFacts(),sceneObservation:{}}),
@@ -244,8 +251,11 @@ function applyIdentity(state:State,event:SessionEvent):State {
     if (call && (LIVE.has(call.name)||call.name==='job_output')) return {...state,pending:{...state.pending,[call.callId]:state.identity},
       pendingSelections:{...state.pendingSelections,[call.callId]:state.selectionRevision}}
     const result=executionResult(event)
-    if (!result || !Object.hasOwn(state.pending,result.callId)) return state
-    const expected=state.pending[result.callId]
+    if (!result || !Object.hasOwn(state.pending,result.callId)&&!result.recorded) return state
+    // A producer's native fact is an observation, not a dispatched model call.
+    // It can refresh only the already selected scene, never create a binding.
+    if(result.recorded&&!state.identity)return state
+    const expected=result.recorded?state.identity:state.pending[result.callId]
     const pending={...state.pending}
     delete pending[result.callId]
     const pendingSelections={...state.pendingSelections};delete pendingSelections[result.callId]
@@ -256,7 +266,7 @@ function applyIdentity(state:State,event:SessionEvent):State {
       const target=state.selectedTarget,execution=result.value?.execution
       const epoch=execution?.scene_epoch??execution?.scene_recovery?.scene_epoch
       const scene=execution?.scene_id??execution?.scene_recovery?.scene_id
-      if(!target||state.pendingSelections[result.callId]!==state.selectionRevision||identity!==target.executor_id
+      if(!target||!result.recorded&&state.pendingSelections[result.callId]!==state.selectionRevision||identity!==target.executor_id
         ||execution?.runtime_id!==target.runtime_id||epoch!==target.scene_epoch||scene!==target.scene_id)return next
       const observed=projectObservation(next,execution,execution.observed_at,execution.sequence??0)
       if(observed===next||!observed.project)return observed
@@ -299,16 +309,17 @@ export function recordedLoadWarningPath(events:readonly SessionEvent[],ref:strin
   return path
 }
 
-export function registerExecutorIdentityProjection(ctx:Context):void {
+export async function registerExecutorIdentityProjection(ctx:Context):Promise<void> {
   // The qualified Host consumes only schema.parse(), but its declaration
   // exposes its pinned Zod fluent API. Keep our patched parser and all output
   // types; do not recursively compare two versions' schema-builder methods.
-  type HostProjection=ProjectionDefinition<'houdiniExecutorIdentity'>
+  type HostProjection=ProjectionDefinition<'houdiniExecutorIdentity',State>
   const definition={...executorIdentityProjection,
     stateSchema:State as unknown as HostProjection['stateSchema'],
     wire:{...executorIdentityProjection.wire,
       viewSchema:executorIdentityProjection.wire.viewSchema as unknown as NonNullable<HostProjection['wire']>['viewSchema']}} satisfies HostProjection
-  ctx.sessionProjections.register(definition)
+  const handle=await ctx.sessionProjections.register(definition)
+  ctx.provide('houdiniExecutorState',{stateOf:session=>handle.stateOf(session)})
 }
 
 export function projectedExecutorBindingState(ctx:Context,session:Session) {
@@ -317,7 +328,7 @@ export function projectedExecutorBindingState(ctx:Context,session:Session) {
 
 /** DSH owns replay, cursor advancement, persistence and invalidation. */
 export function projectedExecutorState(ctx:Context,session:{snapshotEvents():readonly SessionEvent[]}):State {
-  const state=ctx.get('sessionProjections')?.stateOf(session as Session,'houdiniExecutorIdentity')
+  const state=ctx.get('houdiniExecutorState')?.stateOf(session as Session)
   if (!state) throw new Error('Houdini executor identity projection unavailable')
   executorBindingState(state)
   return state

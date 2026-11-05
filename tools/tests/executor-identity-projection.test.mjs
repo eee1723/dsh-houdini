@@ -6,14 +6,14 @@ import {Session} from '@deepseek-ai/dsh-session'
 import {SessionProjectionRegistry} from '@deepseek-ai/dsh-session-projection'
 import {createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
-import {houdiniSnapshot,recordHoudiniContext,workspaceOpeningMessage} from '../../lib/dsh-adapter.js'
+import {houdiniSnapshot,recordHoudiniContext,workspaceOpeningMessage,recordHoudiniJobExecution} from '../../lib/dsh-adapter.js'
 import {recoveryMessage} from '../../lib/scene-recovery.js'
 import {executionHistory} from '../../lib/execution-history.js'
 import {executorIdentityProjection as projection,foldExecutorState,projectedExecutorState,projectedExecutionFacts,projectedExecutorBindingState,projectedExecutorIdentity,registerExecutorIdentityProjection}
   from '../../lib/executor-identity-projection.js'
 const first='a'.repeat(32),second='b'.repeat(32),ctx=new Context()
 new SessionProjectionRegistry(ctx)
-registerExecutorIdentityProjection(ctx)
+await registerExecutorIdentityProjection(ctx)
 const session=Session.create('identity-projection')
 const binding=new ExecutorBinding(current=>projectedExecutorBindingState(ctx,current))
 await binding.ensure(session,first)
@@ -251,7 +251,8 @@ assert.equal(executionHistory(afterClear.snapshotEvents()).calls.has('issued-whi
 // after the log becomes large; ordinary online reads cannot reopen that log.
 const hotCtx=new Context(),hotRegistry=new SessionProjectionRegistry(hotCtx)
 let applied=0
-hotRegistry.register({...projection,apply(state,event){applied++;return projection.apply(state,event)}})
+const hotHandle=await hotRegistry.register({...projection,apply(state,event){applied++;return projection.apply(state,event)}})
+hotCtx.provide('houdiniExecutorState',{stateOf:session=>hotHandle.stateOf(session)})
 const hot=Session.create('projection-long-history'),hotBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()))
 const hotTarget=snapshot(first),hotRef=hotTarget.runtime_id+'.'+'8'.repeat(32)
 await hotBinding.select(hot,hotTarget)
@@ -277,7 +278,7 @@ assert.equal(projectedExecutorState(hotCtx,hot),hotState,'unrelated events prese
 assert.equal(applied,afterMaterialize+1,'only the appended tail is advanced')
 const reopened=Session.create(hot.id,events,hot.header,hot.inheritedEventCount),reopenCtx=new Context()
 const reopenRegistry=new SessionProjectionRegistry(reopenCtx)
-registerExecutorIdentityProjection(reopenCtx)
+await registerExecutorIdentityProjection(reopenCtx)
 reopenRegistry.hydrate(reopened,JSON.parse(JSON.stringify(checkpoint)),events,0)
 reopened.snapshotEvents=()=>{throw Error('hydrated online consumer attempted a full history read')}
 assert.deepEqual(projectedExecutionFacts(reopenCtx,reopened),projectedExecutionFacts(hotCtx,hot))
@@ -318,3 +319,40 @@ firstRead.append('tool/result',{message:{source:{callId:'first-inspect'}},meta:{
   hip_path:'C:/selected/asset.hip',hip_is_new:false,sequence:1,observed_at:1}}}},{surfaceOp:'append'})
 assert.equal(projectedExecutionFacts(hotCtx,firstRead).anchor?.callId,'first-inspect',
   'first read-only tool facts survive selection answered inside that same dispatch')
+
+// The domain publishes consumers only after acquiring its private handle, and
+// a removed owner leaves no cached reader behind in unrelated plugin scopes.
+const lifecycleCtx=new Context()
+new SessionProjectionRegistry(lifecycleCtx)
+const projectionOwner={inject:['sessionProjections'],apply:registerExecutorIdentityProjection}
+let mount=lifecycleCtx.plugin(projectionOwner)
+await mount
+const originalReader=lifecycleCtx.get('houdiniExecutorState')
+assert(originalReader)
+assert.equal(projectedExecutorState(lifecycleCtx,firstRead).identity,first)
+await mount.dispose()
+assert.equal(lifecycleCtx.get('houdiniExecutorState'),undefined)
+assert.throws(()=>projectedExecutorState(lifecycleCtx,firstRead),/projection unavailable/)
+mount=lifecycleCtx.plugin(projectionOwner)
+await mount
+assert.notEqual(lifecycleCtx.get('houdiniExecutorState'),originalReader)
+assert.equal(projectedExecutorState(lifecycleCtx,firstRead).identity,first)
+await lifecycleCtx.fiber.dispose()
+console.log('Projection owner: awaited publication, unload refusal and remount use the current domain reader')
+
+const lateSession=Session.create('late-producer-selection'),lateBinding=new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents()));
+const oldTarget=snapshot(first),newTarget=snapshot(second),lateRef=oldTarget.runtime_id+'.'+'9'.repeat(32);
+await lateBinding.select(lateSession,oldTarget);
+lateSession.append('tool/call',{callId:'late-submit',name:'houdini_job_submit',arguments:'{}'});
+lateSession.append('tool/result',{message:createToolResultMessage({callId:'late-submit',content:[],isError:false}),
+  meta:{canonical:{jobId:'9'.repeat(12),requestReceipt:{request_ref:lateRef,runtime_id:oldTarget.runtime_id,
+    executor_id:first,scene_epoch:oldTarget.scene_epoch,status:'job_submitted'}}}},{surfaceOp:'append'});
+await lateBinding.select(lateSession,newTarget);
+recordHoudiniJobExecution({agent:{session:lateSession},callId:'late-submit'},{ok:true,stdout:'',stderr:'',status:'done',
+  execution:{executor_id:first,runtime_id:oldTarget.runtime_id,scene_id:oldTarget.scene_id,scene_epoch:oldTarget.scene_epoch,
+    hip_path:'C:/late-old-project.hip',hip_is_new:false,owner_session:lateSession.id,sequence:1,observed_at:20},
+  requestReceipt:{request_ref:lateRef,runtime_id:oldTarget.runtime_id,executor_id:first,status:'done'}});
+assert.deepEqual(projectedExecutorState(ctx,lateSession).selectedTarget,newTarget);
+assert.equal(projectedExecutorState(ctx,lateSession).project.hipPath,newTarget.hip_path);
+assert.equal(projectedExecutionFacts(ctx,lateSession).anchor,undefined,
+  'an asynchronous old-scene producer cannot update the newly selected scene');

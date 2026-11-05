@@ -35,12 +35,18 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
     const result = await next()
     const agent = (context as typeof context & {agent?:AgentView}).agent
     if (!agent || !context.scope) return result
-    // PTC exposes run_code in the request schema while retaining the same
-    // Houdini capabilities in the scoped registry.
-    if (!ctx.tools.get('houdini_inspect',context.scope)) { prepared.delete(agent); return result }
     const previous = prepared.get(agent) ?? {}
     // A scoped override or a suppressed section remains owned by DSH.
     const owned = (name:string) => result.contexts.find(section => section.name === name && section.text === (previous[name] ?? ''))
+    // PTC and native schemas share this step's admitted definitions. Drop only
+    // our previous contributions when the step cannot use Houdini tools.
+    if (!ctx.tools.get('houdini_inspect',context.scope,context.toolSet)) {
+      for(const name of [SCENE,EXECUTION,VISION]) {
+        const section=owned(name)
+        if(section)result.contexts.splice(result.contexts.indexOf(section),1)
+      }
+      prepared.delete(agent);return result
+    }
     const scene = owned(SCENE), execution = owned(EXECUTION), vision = owned(VISION)
     const texts = {...previous}
     if (scene) texts[SCENE] = scene.text = await provider.observe(agent,context.signal)
@@ -50,11 +56,8 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
     }
     if (vision && typeof ctx.get === 'function') {
       const llm = ctx.get('llm'), attachments = ctx.get('attachments')
-      const variables = result.variables
-      const route = variables?.provider && variables?.model
-        ? {provider:variables.provider,model:variables.model}
-        : (agent as any).session.requestHeader?.()?.config
-      const key = JSON.stringify(route ?? (agent as any).options)
+      const route=context.modelSelection??context.agent?.model.current()
+      const key = JSON.stringify(route)
       let cached = visionCache.get(agent)
       if (!cached || cached.key !== key || cached.generation !== visionGeneration
           || cached.llm !== llm || cached.attachments !== attachments

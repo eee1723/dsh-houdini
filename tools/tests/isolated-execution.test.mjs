@@ -3,7 +3,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {createHash} from 'node:crypto'
-import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary,renderIsolatedResult} from '../../lib/isolated-execution.js'
+import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary,renderIsolatedResult,isolatedLogValue} from '../../lib/isolated-execution.js'
+import {MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
 
 // DSH resolves local paths to their real spelling, including Windows TEMP aliases.
@@ -24,7 +25,7 @@ const ctx={fs:{resolve:async(filename,options={})=>({targetKey:await canonical(p
     saveImage:async({data,mediaType})=>{savedImages++;return {attachmentId:'unit-image',mediaType,bytes:data.length}}},
 }
 ctx.get=name=>ctx[name]
-const exec={agent:{id:'isolated-tool-owner',options:{provider:'test',model:'image'},session:{header:{cwd:root}}},callId:'run-1',rootCallId:'run-1',signal:new AbortController().signal}
+const exec={agent:{id:'isolated-tool-owner',model:{current:()=>({provider:'test',model:'image'})},session:{header:{cwd:root}}},callId:'run-1',rootCallId:'run-1',signal:new AbortController().signal}
 const runtimeResolver=async()=>{runtimeReads++;return {python:process.execPath,hython:process.execPath,hfs:path.dirname(process.execPath)}}
 const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a+p8AAAAASUVORK5CYII=','base64')
 let processRequests=[]
@@ -130,6 +131,44 @@ try {
   assert.deepEqual(tool.output.render({},echoed),renderIsolatedResult(echoed),'model rendering still consumes the complete original report')
   assert.equal(echoed.process.stdout,JSON.stringify(result.report),'the original process result is unchanged by its log projection')
   assert.deepEqual(JSON.parse(JSON.stringify(logMeta)),logMeta,'omitted process/worker fields stay lossless through the actual DSH metadata contract')
+  const aggregateDir=path.join(root,'aggregate-report');await fs.mkdir(aggregateDir)
+  const aggregateReport={...read.report,ok:false,error:'actual aggregate check failure',phase:'check:surface',finished:true,
+    worker:{status:'failed',returncode:1},metadata:'long report metadata '.repeat(12000),
+    result:{...read.report.result,visual_artifacts:[],checks:Array.from({length:6},(_,index)=>({id:'large-'+index,
+      status:index%2===0?'failed':'passed',execution:{ok:index%2!==0,stdout:'authored output '.repeat(6000),stderr:'',
+        error:index%2===0?'actual check '+index+' failure: '+'diagnostic 🧪'.repeat(12000):undefined,
+        result:{complete:'original check value '+index},details:{stored:true,path:path.join(aggregateDir,'executions','check-large-'+index+'.json'),
+          sha256:'b'.repeat(64),bytes:90000,format:'returned_bridge_envelope_json'}}}))}}
+  await fs.writeFile(path.join(aggregateDir,'report.json'),JSON.stringify(aggregateReport))
+  const aggregateRead=await executeIsolated(ctx,exec,{operation:'read',output_dir:aggregateDir},runtimeResolver,runner)
+  assert.equal(aggregateRead.report.result.checks[4].execution.error,aggregateReport.result.checks[4].execution.error,
+    'read still returns the complete original run structure')
+  aggregateRead.imageAttachments=read.imageAttachments
+  const aggregateOriginal=JSON.stringify(aggregateRead),aggregateFacts=isolatedLogValue(aggregateRead)
+  assert(Buffer.byteLength(JSON.stringify(aggregateFacts))<=MAX_PRESENTATION_BYTES,'many bounded checks cannot make an unbounded wrapper')
+  assert.equal(aggregateFacts.kind,'isolated-houdini');assert.equal(aggregateFacts.run_directory,aggregateDir)
+  assert.equal(aggregateFacts.report_path,path.join(aggregateDir,'report.json'));assert.equal(aggregateFacts.ok,false)
+  assert.equal(aggregateFacts.error,'actual aggregate check failure');assert.equal(aggregateFacts.report_summary.finished,true)
+  assert.equal(aggregateFacts.report_summary.worker.status,'failed');assert.equal(aggregateFacts.report_summary.phase,'check:surface')
+  assert.deepEqual(aggregateFacts.checks,{count:6,status_counts:{failed:3,passed:3}})
+  assert.deepEqual(aggregateFacts.read,{operation:'read',output_dir:aggregateDir});assert.match(aggregateFacts.next_action,/operation="read"/)
+  const aggregateBlocks=renderIsolatedResult(aggregateRead)
+  assert(Buffer.byteLength(aggregateBlocks.filter(block=>block.type==='text').map(block=>block.text).join(''))<=MAX_PRESENTATION_BYTES)
+  assert.deepEqual(aggregateBlocks.filter(block=>block.type==='image'),read.imageAttachments.filter(row=>row.attachment).map(row=>({type:'image',attachment:row.attachment})),
+    'aggregate text budgeting leaves actual native image blocks intact')
+  assert.equal(JSON.stringify(aggregateRead),aggregateOriginal,'budgeting never mutates the complete return or source report')
+  assert.equal(tool.presentResult({}, {meta:{canonical:aggregateFacts},content:[]}).title,'独立 Houdini · 失败')
+  const aggregatePending={...aggregateRead,report:{...aggregateRead.report,ok:false,finished:false,error:undefined,worker:{status:'running'}}}
+  const pendingFacts=isolatedLogValue(aggregatePending)
+  assert.equal(pendingFacts.ok,undefined,'in-progress reads do not invent a failed checker exit or final outcome')
+  assert.equal(pendingFacts.report_summary.finished,false)
+  assert.equal(tool.presentResult({}, {meta:{canonical:pendingFacts},content:[]}).title,'独立 Houdini · 执行中')
+  const pathological={...aggregateRead,report:{...aggregateRead.report,error:'error 🧪'.repeat(20000),
+    input_observations:Array.from({length:2000},(_,index)=>({status:index+'-'+('novel-status'.repeat(40))}))}}
+  for(const bounded of [isolatedLogValue(pathological),isolatedJobSummary(pathological)])
+    assert(Buffer.byteLength(JSON.stringify(bounded))<=MAX_PRESENTATION_BYTES,'even the locator/decision summary has an aggregate bound')
+  const pathologicalText=renderIsolatedResult(pathological).filter(block=>block.type==='text').map(block=>block.text).join('')
+  assert(Buffer.byteLength(pathologicalText)<=MAX_PRESENTATION_BYTES);assert(!pathologicalText.includes('\ufffd'))
   await fs.writeFile(path.join(output,'artifacts/image/test.png'),'changed after check')
   const changed=await executeIsolated(ctx,exec,{operation:'read',output_dir:output},runtimeResolver,runner)
   assert.equal(changed.imageAttachments[0].attachment,undefined)

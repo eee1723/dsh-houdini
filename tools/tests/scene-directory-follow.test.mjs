@@ -23,7 +23,7 @@ async function fixture(value,available=true,saveAs=true){
    executor_id:value.executor_id,runtime_id:executor,sequence:1,observed_at:1,owner_session:base.id,
    hip_path:value.hip_path,hip_is_new:false,scene_recovery:value}}}},{surfaceOp:'append'})
  let service,effective=old
- installSceneRecovery(fixtureProjectionContext({provide:(_name,value)=>{service=value},sessions:{flush:async()=>true},get:name=>
+ installSceneRecovery(await fixtureProjectionContext({provide:(_name,value)=>{service=value},sessions:{flush:async()=>true},get:name=>
   name==='workspaceRegistry'?{relocateSession(){throw Error('native session metadata must never move')}}:
   name==='workingDirectory'&&available?{get:()=>effective,set:async(agent,cwd)=>{moves.push({id:agent.id,cwd});effective=cwd;return cwd}}:undefined}),bridge)
  return {moves,session,run:()=>service.followDirectory(agent,signal,true)}

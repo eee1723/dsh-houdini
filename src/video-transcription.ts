@@ -31,7 +31,7 @@ export type VideoProcessRunner=LocalVideoRunner
 /** The selected executor, rather than the shared Host's parent HFS, owns automatic Python discovery. */
 export async function tutorialRuntime(ctx:any,python:string,exec?:any,connection?:HoudiniConnection) {
   if(python.trim()&&!['python','python.exe'].includes(python.trim().toLowerCase()))return resolveVideoRuntime(python)
-  const selected=exec&&hostService(ctx,'sessionProjections')?.stateOf(exec.agent.session,'houdiniExecutorIdentity')?.selectedTarget
+  const selected=exec&&hostService(ctx,'houdiniExecutorState')?.stateOf(exec.agent.session)?.selectedTarget
   if(selected&&connection&&'resolveRuntime' in connection&&connection.resolveRuntime) {
     const facts=await connection.resolveRuntime(exec)
     return {...await resolveVideoRuntime(facts.runtime.python),pythonSource:'houdini',pythonScope:'selected-installation' as const,hfs:facts.runtime.hfs}

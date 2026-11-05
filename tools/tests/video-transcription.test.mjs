@@ -89,7 +89,7 @@ await assert.rejects(()=>transcribeVideo(context,exec,{...args,vocabulary:[{word
 selected.model='qwen-audio-3.0-asr-flash';await assert.rejects(()=>transcribeVideo(context,exec,{...args,speaker_diarization:true},runner),/3.1/)
 const fakeHfs=path.join(root,'static-hfs'),fakePython=path.join(fakeHfs,'python313','python.exe');await fs.mkdir(path.dirname(fakePython),{recursive:true});await fs.writeFile(fakePython,'static runtime path fixture')
 selected.python='';context.houdiniDesktop={listInstallations:async()=>[{hfs:fakeHfs}]};assert.equal((await tutorialRuntime(context,'')).python,fakePython)
-context.sessionProjections={stateOf:()=>({selectedTarget:{executor_id:'a'.repeat(32)}})};let staticRuntimeCalls=0
+context.houdiniExecutorState={stateOf:()=>({selectedTarget:{executor_id:'a'.repeat(32)}})};let staticRuntimeCalls=0
 const connection={resolveRuntime:async()=>{staticRuntimeCalls++;return{runtime:{python:fakePython,hfs:fakeHfs}}}}
 assert.equal((await tutorialRuntime(context,'',exec,connection)).python,fakePython);assert.equal(staticRuntimeCalls,1)
 

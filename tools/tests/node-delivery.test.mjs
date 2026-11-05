@@ -39,7 +39,7 @@ try {
     const session=fixtureSession(task,{agentPreset:'houdini'})
     session.append('tool/call',{turn:1,step:1,callId:'deliver-call',name:'houdini_exec',arguments:'{}'})
     session.append('tool/call',{turn:1,step:1,callId:'file-call',name:'read',arguments:'{}'})
-    const ctx=fixtureProjectionContext(new Context()),agent={id:task,status:'idle',session,ctx}
+    const ctx=await fixtureProjectionContext(new Context()),agent={id:task,status:'idle',session,ctx}
     agents.push(agent)
     const server=http.createServer(async(req,res)=>{
       res.setHeader('content-type','application/json')
@@ -81,7 +81,7 @@ try {
     value.result={entries:value.result,other:'wrapped business result'}
     events.set(task,native(value))
   }
-  const projectionCtx=fixtureProjectionContext()
+  const projectionCtx=await fixtureProjectionContext()
   const router=new ExecutorRouter(new ExecutorDirectory(directory,directory),2000,new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),
     session=>projectedExecutorState(projectionCtx,session))
   for(const agent of agents) {

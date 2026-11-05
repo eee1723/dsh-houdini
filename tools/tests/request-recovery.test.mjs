@@ -16,7 +16,7 @@ let onCaptureAdmitted;
 let receiptOverride;
 let jobState='running';
 const pendingJobReplies=new Set(),observers=[];
-const host=fixtureProjectionContext(new Context());
+const host=await fixtureProjectionContext(new Context());
 let nativeJobs=0;
 host.provide('jobs',{start(spec){const id='houdini-live-fixture-'+(++nativeJobs);observers.push(spec.run({id,updateProgress(){},append(){}}).done);return id;}});
 const server=http.createServer((req,res)=>{

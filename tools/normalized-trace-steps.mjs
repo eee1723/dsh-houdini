@@ -6,7 +6,7 @@ import {
   processOutcomeFor,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
 import { toolResultCallId, uniqueToolResultEvents, expandArchivedExecution, EXECUTION_FACT_PROJECTION } from './trace-session-lib.mjs';
-import { executionResult, returnedExecutions, isHoudiniTool } from '../lib/dsh-adapter.js';
+import { executionResult, returnedExecutions, isHoudiniTool, recordedJobExecution } from '../lib/dsh-adapter.js';
 import { mergeRequestStatus, isPendingRequestStatus } from '../lib/execution-history.js';
 
 function nestedResultContent(message) {
@@ -98,7 +98,10 @@ export function unresolvedExecutionRequests(steps) {
  */
 export function normalizeTraceSteps(events) {
   const calls = new Map();
+  const completions = new Map();
   for (const event of events || []) {
+    const completion=recordedJobExecution(event);
+    if(completion)completions.set(completion.sourceCallId,event);
     const callId = event?.type === 'tool/call' ? event.data?.callId
       : event?.type === 'tool/ptc-dispatch-start' ? event.data?.subCallId : null;
     if (callId) {
@@ -114,7 +117,19 @@ export function normalizeTraceSteps(events) {
   const { uniqueResults, replayedResults } = uniqueToolResultEvents(events || []);
   const steps = [];
   const executions = new Map();
+  function trackExecution(observation,envelope,tool,resultSeq,producerEventSeq) {
+    const key=typeof observation?.runtime_id==='string'&&Number.isFinite(observation.sequence)
+      ?`${observation.runtime_id}:${observation.sequence}`:null;
+    const replay=key!==null&&executions.has(key);
+    if(key&&!replay)executions.set(key,{runtimeId:observation.runtime_id,sequence:observation.sequence,
+      firstResultSeq:resultSeq??null,firstTool:tool??null,
+      ...(producerEventSeq===undefined?{}:{firstProducerObservationSeq:producerEventSeq}),
+      recovered:envelope?.requestReceipt?.retrieved===true,
+      verbCalls:Array.isArray(envelope?.verbs)?envelope.verbs.length:0,transaction:envelope?.transaction?.status??null});
+    return replay;
+  }
   const unmatchedResults = [];
+  const observedCalls = new Set();
   for (const event of uniqueResults) {
     const callId = toolResultCallId(event);
     const call = calls.get(callId);
@@ -133,7 +148,9 @@ export function normalizeTraceSteps(events) {
     const args = parseToolArguments(call.arguments);
     const code = typeof args.code === 'string' ? args.code : '';
     const resultText = toolResultText(message);
-    const outcome = executionResult(event),retained = outcome?.value;
+    const completionEvent=completions.get(callId),completion=completionEvent&&recordedJobExecution(completionEvent);
+    if(completion)observedCalls.add(callId);
+    const outcome = executionResult(completionEvent??event),retained = outcome?.value;
     const canonical = expandArchivedExecution(retained);
     const isHoudini = isHoudiniTool(call.name) || call.name === 'job_output' && outcome?.producer === 'live-job';
     // Isolated operation=read returns the same retained report/images without
@@ -144,15 +161,7 @@ export function normalizeTraceSteps(events) {
     const scoped=returnedExecutions(outcome?.tool??call.name,envelope);
     const live=scoped.find(item=>item.domain==='live')?.execution;
     const observation = live?.execution;
-    const executionKey = typeof observation?.runtime_id === 'string' && Number.isFinite(observation.sequence)
-      ? `${observation.runtime_id}:${observation.sequence}` : null;
-    const executionReplay = executionKey !== null && executions.has(executionKey);
-    if(executionKey && !executionReplay)executions.set(executionKey,{
-      runtimeId:observation.runtime_id,sequence:observation.sequence,firstResultSeq:event.seq,
-      firstTool:call.name,recovered:envelope?.requestReceipt?.retrieved===true,
-      verbCalls:Array.isArray(envelope.verbs)?envelope.verbs.length:0,
-      transaction:envelope.transaction?.status??null,
-    });
+    const executionReplay=trackExecution(observation,envelope,call.name,event.seq,completionEvent?.seq);
     const rawUsage = envelope?.rawUsage ?? parseJsonBlock(resultText, 'raw-usage');
     const mutatingRawMethods = rawUsage && !rawUsage._raw
       ? [...(rawUsage.coveredMutations || []), ...(rawUsage.suspectedMutations || [])]
@@ -164,6 +173,8 @@ export function normalizeTraceSteps(events) {
     steps.push({
       index: steps.length + 1,
       callId,
+      ...(completion?{producerObservation:{eventSeq:completionEvent.seq??null,time:completionEvent.time??null,
+        callId:completion.callId,sourceCallId:completion.sourceCallId,rootCallId:completion.rootCallId}}:{}),
       ...(nested ? {parentCallId:event.data.parentCallId} : {}),
       callSeq: call.eventSeq ?? null,
       resultSeq: event.seq ?? null,
@@ -198,7 +209,7 @@ export function normalizeTraceSteps(events) {
       executionReplay,
       canonicalStatus: retained?.details?.projection === EXECUTION_FACT_PROJECTION
         ? canonical?.details_error ? 'referenced_artifact_unavailable' : 'referenced_artifact_expanded'
-        : envelope ? nested ? 'retained_in_dispatch' : 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
+        : envelope ? completion ? 'retained_in_plugin_record' : nested ? 'retained_in_dispatch' : 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
       archiveError: canonical?.details_error,
       executionLocation: (call.name === 'houdini_resource' && args.kind === 'result')
         || (call.name === 'houdini_query' && args.result_ref) ? 'host_result_artifact' : null,
@@ -206,5 +217,16 @@ export function normalizeTraceSteps(events) {
     });
   }
 
-  return { steps, replayedResults, unmatchedResults, uniqueExecutions:[...executions.values()] };
+  // Producer observations without a model result remain explicitly separate;
+  // they are execution evidence, never fabricated extra tool calls/results.
+  const producerObservations=[...completions].filter(([callId])=>!observedCalls.has(callId)).map(([callId,event])=>{
+    const value=recordedJobExecution(event),call=calls.get(callId);
+    const canonical=expandArchivedExecution(value.canonical);
+    const live=returnedExecutions(value.tool,canonical).find(item=>item.domain==='live')?.execution;
+    trackExecution(live?.execution,canonical,call?.name,undefined,event.seq);
+    return {eventSeq:event.seq??null,time:event.time??null,sourceCallId:callId,rootCallId:value.rootCallId,
+      callId:value.callId,tool:call?.name??null,producerTool:value.tool,callSeq:call?.eventSeq??null,
+      status:call?'model_result_missing':'source_call_unavailable',canonical};
+  });
+  return { steps, replayedResults, unmatchedResults, producerObservations, uniqueExecutions:[...executions.values()] };
 }

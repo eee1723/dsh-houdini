@@ -145,7 +145,7 @@ export class HoudiniFrontend extends TypertRemoteService {
 
 export function apply(ctx:Context,config:Config):void {
   new HoudiniFrontend(ctx,config)
-  ctx.inject(['houdiniTargets','workspaceRegistry','sessionController','sessions','sessionProjections'],async child => {
+  ctx.inject(['houdiniTargets','workspaceRegistry','sessionController','sessions','houdiniExecutorState','agentPresets'],async child => {
     const service=new DesktopIntegration(child,child.get('houdiniTargets') as ExecutorController)
     child.effect(()=>()=>service.dispose())
     await service.start()

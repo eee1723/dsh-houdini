@@ -3,6 +3,7 @@ import path from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {executionResult} from '../../lib/dsh-adapter.js'
+import {fixturePresentation} from './fixture-presentation.mjs'
 
 export const inject=['sessionController','sessions','agentPresets','houdiniTargets','tools','llm','sessionTitle','workspaceRegistry']
 export function apply(ctx) {
@@ -31,15 +32,7 @@ export function apply(ctx) {
     }
   }
   ctx.llm.registerAdapter([provider],new WorkbenchFixture())
-  // DSH 0.2.1 has one presentation per agent (native or PTC), not the removed
-  // 'both' mode. Direct commands use native tools; the nested run_code check
-  // switches only that agent while it runs, then restores native.
-  const presentations=new Map()
-  const present=(agent,mode)=>{
-    presentations.get(agent)?.()
-    presentations.set(agent,agent.ctx.tools.presentAs(mode))
-  }
-  ctx.on('agent/created',({agent})=>present(agent,'native'))
+  const {select:present}=fixturePresentation(ctx)
   let active=false,handled
   ctx.effect(()=>{
     const timer=setInterval(async()=>{

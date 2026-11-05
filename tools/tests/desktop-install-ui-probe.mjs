@@ -25,7 +25,7 @@ async function until(read,label,timeout=config.timeoutMs){
  throw Error('Not reached: '+label)
 }
 async function click(expression,label){
- const point=await until(`(()=>{const e=(${expression});if(!e||e.disabled)return null;e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return r.width&&r.height?{x:r.x+r.width/2,y:r.y+r.height/2}:null})()`,label)
+ const point=await until(`(()=>{const e=(${expression});if(!e||e.disabled)return null;e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;const hit=document.elementFromPoint(x,y);return r.width&&r.height&&hit&&e.contains(hit)?{x,y}:null})()`,label)
  await cdp.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point})
  await cdp.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point});await sleep(200)
 }
@@ -64,7 +64,21 @@ async function install(spec,label,enable){
  await shot(label+'-spec')
  await click(button('/^(安装|Install)$/',`[...document.querySelectorAll('[role=dialog]')].at(-1)`),'Native install submit')
  await shot(label+'-submitted')
- await until(button('/^(立即启用|Enable now)$/'),label+' completed Native dialog')
+ await until(async()=>{
+  const failed=await evaluate('/插件安装失败|Plugin installation failed/i.test(document.body.innerText)')
+  if(failed){
+   const details=button('/^(查看安装详情|View installation details)$/')
+   if(await evaluate(`!!(${details})`)){await click(details,'Native actual installation failure details');await sleep(150)}
+   throw Error('Native installation failed: '+await evaluate('document.body.innerText.slice(-16000)'))
+  }
+  const current=await bundle()
+  if(!current?.installed||current.version!==config.expectedVersion)return false
+  return evaluate(`(()=>{
+   const ready=(${button('/^(立即启用|Enable now)$/')});if(ready&&!ready.disabled&&ready.getBoundingClientRect().width)return true;
+   const dialog=[...document.querySelectorAll('[role=dialog]')].some(e=>e.getBoundingClientRect().width);
+   const toggle=(${enableSwitch()});return !dialog&&!!toggle&&!toggle.disabled&&toggle.getBoundingClientRect().width>0;
+  })()`)
+ },label+' completed Native dialog')
  const installed=await until(async()=>{const row=await bundle();return row?.installed&&typeof row.version==='string'?row:null},label+' actual installed bundle')
  assert.equal(installed.version,config.expectedVersion,'Native UI installed another release version')
  if(config.npmSpec)assert(['','^','~'].some(prefix=>installed.source==='dsh-houdini@'+prefix+config.expectedVersion),
@@ -73,17 +87,21 @@ async function install(spec,label,enable){
  report[label]={installed:true,enabledBeforeExplicitAction:installed.enabled,version:installed.version,source:installed.source}
  await shot(label+'-installed-disabled')
  if(enable){
-  await click(button('/^(立即启用|Enable now)$/'),'Native explicit enable')
+  const immediate=await evaluate(`!!(${button('/^(立即启用|Enable now)$/')})`)
+  await click(immediate?button('/^(立即启用|Enable now)$/'):enableSwitch(),'Native explicit enable')
+  report[label].enableEntry=immediate?'installation-result':'installed-plugin-switch'
   await until(async()=>{const row=await bundle();return row?.enabled},label+' enabled bundle')
   await until(async()=>{const roster=await rpc('agentPresets/list');return roster.presets.some(row=>row.id==='houdini'&&!row.broken)},'actual Houdini preset after Native enable')
+  await until(switchState(true),'native installed switch reflects enabled state')
   report[label].enabledByUi=true
  }else{
   const close=`[...document.querySelectorAll('[role=dialog]')].at(-1)?.querySelector('button[aria-label="关闭"],button[aria-label="Close"]')`
-  await click(close,'Native completed install close')
+  if(await evaluate(`!!(${close})`))await click(close,'Native completed install close')
  }
  return installed
 }
 function enableSwitch(){return `[...document.querySelectorAll('[role=switch]')].find(e=>/^(启用 |Enable )/.test(e.getAttribute('aria-label')||'')&&/Houdini|dsh-houdini/i.test(e.getAttribute('aria-label')||''))`}
+function switchState(checked){return `(()=>{const e=(${enableSwitch()});return !!e&&!e.disabled&&e.getAttribute('aria-checked')===${JSON.stringify(String(checked))}})()`}
 async function preservedRoster(before,withHoudini){
  const roster=await rpc('agentPresets/list')
  assert(roster.presets.some(row=>row.id==='standard'&&row.isDefault))
@@ -105,10 +123,18 @@ function wire(text,outgoing){
   if(!text.includes('credentials/set')){report.secretWrongChannel=true;return}
   report.secretTransport++
  }
- for(const method of ['pluginManager/inspect','pluginManager/registries','pluginManager/installBundle','pluginManager/setBundleEnabled','pluginManager/removeBundle','session/prompt','credentials/set']){
+ for(const method of ['pluginManager/inspect','pluginManager/registries','pluginManager/installBundle','pluginManager/updateBundle','pluginManager/setBundleEnabled','pluginManager/removeBundle','session/prompt','credentials/set']){
   if(outgoing&&text.includes('"'+method+'"'))report.uiMethods[method]=(report.uiMethods[method]||0)+1
  }
+ if(outgoing&&text.includes('pluginManager/setBundleEnabled'))try{
+  const message=JSON.parse(text)
+  if(message.method==='pluginManager/setBundleEnabled'){
+   report.toggleActions??=[];report.toggleActions.push(message.payload?.args)
+   writeProgress()
+  }
+ }catch{}
 }
+function writeProgress(){fs.writeFile(path.join(path.dirname(config.output),'ui-progress.json'),JSON.stringify(report,null,2)).catch(()=>{})}
 try{
  const targets=await(await fetch('http://127.0.0.1:'+config.port+'/json/list')).json()
  const target=targets.find(row=>row.type==='page'&&row.url.startsWith('dsh-app://app/'))
@@ -116,7 +142,7 @@ try{
  cdp=await connect(target.webSocketDebuggerUrl)
  evaluate=async expression=>{const result=await cdp.call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});assert(!result.exceptionDetails,JSON.stringify(result.exceptionDetails));return result.result.value}
  main=await connect(config.mainInspector)
- const shown=await main.call('Runtime.evaluate',{expression:`(()=>{if(process.pid!==${config.expectedPid})throw Error('Foreign Native carrier');const e=process.getBuiltinModule('module').createRequire(process.resourcesPath+'/app.asar/package.json')('electron');const w=e.BrowserWindow.getAllWindows().filter(w=>w.webContents.getURL().startsWith('dsh-app://app/'));if(w.length!==1)throw Error('Nonunique owned window');w[0].show();w[0].focus();return process.pid})()`,returnByValue:true})
+ const shown=await main.call('Runtime.evaluate',{expression:`(()=>{if(process.pid!==${config.expectedPid})throw Error('Foreign Native carrier');const e=process.getBuiltinModule('module').createRequire(${JSON.stringify(config.appPackage)})('electron');if(e.app.isPackaged!==${JSON.stringify(config.expectedPackaged)})throw Error('Unexpected official carrier mode');const w=e.BrowserWindow.getAllWindows().filter(w=>w.webContents.getURL().startsWith('dsh-app://app/'));if(w.length!==1)throw Error('Nonunique owned window');w[0].show();w[0].focus();return process.pid})()`,returnByValue:true})
  assert.equal(shown.result.value,config.expectedPid)
  cdp.on(event=>{
   if(event.method==='Runtime.exceptionThrown'){
@@ -140,11 +166,43 @@ try{
   assert.deepEqual(registries.fallbackRegistries,[],'A selected-registry check must not pass through another source')
   report.registry=registries
  }
- assert(!(await bundle()),'Fixture must begin without the product installed')
  const before=await rpc('agentPresets/list');assert(before.presets.some(row=>row.id==='standard'&&row.isDefault));assert(!before.presets.some(row=>row.id==='houdini'))
- report.initialNativeProfileWithoutPlugin=true
- await install(config.remoteOnly?config.remoteInstallSpec:config.artifact,config.npmSpec?'npmPackage':config.remoteOnly?'remoteTarball':'localTarball',true)
- report.installedByNativeUi=true
+ if(config.updateFromVersion){
+  const previous=await bundle()
+  assert.equal(previous.version,config.updateFromVersion);assert.equal(previous.enabled,false)
+  assert(previous.source.startsWith('dsh-houdini@'),'the previous official CLI must seed a registry dependency')
+  report.previousOfficialCli={version:previous.version,enabled:previous.enabled,source:previous.source}
+  await plugins()
+  const listing=await rpc('pluginManager/listVersions',{name:'dsh-houdini',options:{registry:config.updateRegistry}})
+  assert.equal(listing.status,'listed',JSON.stringify(listing))
+  assert(listing.versions.some(row=>row.version===config.expectedVersion&&!row.incompatible))
+  const update=await rpc('pluginManager/updateBundle',{name:'dsh-houdini',version:config.expectedVersion,
+   options:{registry:config.updateRegistry,requestId:'owned-native-update'}})
+  assert.equal(update.step,'install',JSON.stringify(update));assert(!['failed','cancelled'].includes(update.result.application),JSON.stringify(update))
+  await until(async()=>{const current=await bundle();return current.version===config.expectedVersion&&!current.enabled},'native registry update preserves the disabled selection')
+  await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native updated package details')
+  await until(`document.querySelector('[data-plugin-detail="dsh-houdini"]')?.textContent.includes(${JSON.stringify(config.expectedVersion)})`,'actual native details display the candidate version')
+  await shot('registry-updated-disabled-details');await plugins()
+  await click(enableSwitch(),'Native enable after host/plugin upgrade')
+  await until(async()=>(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'&&!row.broken),'updated candidate actually enabled')
+  await until(switchState(true),'native updated switch reflects enabled state')
+  await preservedRoster(before,true);await shot('registry-updated-candidate')
+  const failed=await rpc('pluginManager/updateBundle',{name:'dsh-houdini',version:config.brokenVersion,
+   options:{registry:config.updateRegistry,requestId:'owned-failed-update-fixture'}})
+  assert.equal(failed.result.application,'failed',JSON.stringify(failed));assert(failed.restore,JSON.stringify(failed))
+  assert(!['failed','cancelled'].includes(failed.restore.application),JSON.stringify(failed))
+  await until(async()=>{const current=await bundle();return current.version===config.expectedVersion&&current.enabled},'native failed update restores the enabled frozen candidate')
+  await until(async()=>(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'&&!row.broken),'restored candidate actually supplies Houdini')
+  await until(switchState(true),'native restored switch reflects enabled state')
+  await preservedRoster(before,true);await shot('registry-failed-fixture-restored')
+  report.nativeRegistryUpdate={update,failedFixture:failed,targetVersion:config.expectedVersion,restoredEnabled:true}
+  report.updatedByNativeApi=true
+ }else{
+  assert(!(await bundle()),'Fixture must begin without the product installed')
+  report.initialNativeProfileWithoutPlugin=true
+  await install(config.remoteOnly?config.remoteInstallSpec:config.artifact,config.npmSpec?'npmPackage':config.remoteOnly?'remoteTarball':'localTarball',true)
+  report.installedByNativeUi=true
+ }
  if(!config.remoteOnly){
  // Return to the exact existing native blank, then use its real mode menu.
  assert(initial?.sessionId)
@@ -205,13 +263,16 @@ try{
   await plugins();await click(enableSwitch(),'Native disable owned plugin switch')
   await until(async()=>{const row=await bundle();return row&&row.enabled===false},'actual package disabled')
   await until(async()=>!(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'),'Houdini mode removed after Native disable')
+  await until(switchState(false),'native switch actually reflects disabled state before another click')
   await preservedRoster(before,false)
   assert.equal(await evaluate('!!document.querySelector("[data-houdini-project-label],[data-houdini-video-settings]")'),false)
   await shot('remote-disabled-native')
   await click(enableSwitch(),'Native re-enable owned plugin switch')
   await until(async()=>{const row=await bundle();return row?.enabled},'actual package re-enabled')
   await until(async()=>(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'),'Houdini mode restored after Native re-enable')
+  await until(switchState(true),'native switch actually reflects re-enabled state')
   await preservedRoster(before,true)
+  if(!config.updateFromVersion){
   await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native installed package details')
   await until('document.querySelector("[data-plugin-detail=dsh-houdini]")','Native plugin detail page')
   await click(`[...document.querySelectorAll('button[aria-label]')].find(e=>/^(卸载 |Uninstall )/.test(e.getAttribute('aria-label'))&&/Houdini|dsh-houdini/i.test(e.getAttribute('aria-label')))`,'Native uninstall only owned plugin')
@@ -226,9 +287,17 @@ try{
   assert.equal(remained.sessionId,initial.sessionId);assert.equal(remained.agentPreset,'standard')
   await shot('remote-uninstalled-default-native')
   report.nativeLifecycle={disabled:true,houdiniRemoved:true,reEnabled:true,uninstalled:true,originalDefaultSessionPreserved:true,nativeModelSettingsPreserved:true}
+  }else{
+   assert(JSON.stringify(await rpc('session/modelCatalog')).includes('scripted-chat'))
+   await click(`document.querySelector('[data-row-key="session:${initial.sessionId}"]')`,'Native original blank after update and restoration')
+   const remained=await until(NATIVE_SELECTION,'original default conversation after update and restoration')
+   assert.equal(remained.sessionId,initial.sessionId);assert.equal(remained.agentPreset,'standard')
+   report.nativeLifecycle={disabled:true,houdiniRemoved:true,reEnabled:true,uninstalled:false,retainedForFrozenByteVerification:true,
+    originalDefaultSessionPreserved:true,nativeModelSettingsPreserved:true}
+  }
  }
  const finalRoster=await rpc('agentPresets/list');assert(finalRoster.presets.some(row=>row.id==='standard'&&row.isDefault))
- assert.equal(finalRoster.presets.some(row=>row.id==='houdini'&&!row.isDefault),!config.remoteOnly)
+ assert.equal(finalRoster.presets.some(row=>row.id==='houdini'&&!row.isDefault),!config.remoteOnly||!!config.updateFromVersion)
  report.otherModesAndDefaultPreserved=true
  await sleep(300)
  if(!config.remoteOnly){
@@ -236,9 +305,10 @@ try{
   assert(!report.secretReturned&&!report.secretWrongChannel&&!report.secretInConsole,'secret crossed an unexpected Native channel')
   assert((report.uiMethods['credentials/set']||0)>=1&&(report.uiMethods['session/prompt']||0)===0,'direct configuration and credential presence must not invoke an Agent')
  }
- assert((report.uiMethods['pluginManager/installBundle']||0)>=1&&(report.uiMethods['pluginManager/setBundleEnabled']||0)>=1)
+ assert((report.uiMethods[config.updateFromVersion?'pluginManager/updateBundle':'pluginManager/installBundle']||0)>=(config.updateFromVersion?2:1)
+  &&(report.uiMethods['pluginManager/setBundleEnabled']||0)>=1)
  report.ok=true
- const quit=await main.call('Runtime.evaluate',{expression:`(()=>{if(process.pid!==${config.expectedPid})throw Error('Foreign Native carrier');const e=process.getBuiltinModule('module').createRequire(process.resourcesPath+'/app.asar/package.json')('electron');setTimeout(()=>e.app.quit(),100);return true})()`,returnByValue:true})
+ const quit=await main.call('Runtime.evaluate',{expression:`(()=>{if(process.pid!==${config.expectedPid})throw Error('Foreign Native carrier');const e=process.getBuiltinModule('module').createRequire(${JSON.stringify(config.appPackage)})('electron');setTimeout(()=>e.app.quit(),100);return true})()`,returnByValue:true})
  assert.equal(quit.result.value,true);report.normalOwnedQuitRequested=true
 }catch(error){
  report.error=String(error.stack||error).replaceAll(config.sentinel,'[fixture-secret-redacted]');process.exitCode=1

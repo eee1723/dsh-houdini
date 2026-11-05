@@ -16,6 +16,7 @@ import {targetMatchesRecord,targetSnapshot,type ExecutorRecord} from './executor
 import {acquireDesktopLease,processStarted as systemProcessStarted} from './desktop-process.js'
 import {ComponentInstallation,type ComponentUpdate} from './component-installation.js'
 import {scrubbedParentEnv} from '@deepseek-ai/dsh-subprocess'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 
 const execute=promisify(execFile)
 const id=()=>randomUUID().replaceAll('-','')
@@ -327,11 +328,7 @@ export class DesktopIntegration {
         status=health.runtimeId===record.runtime_id&&health.sceneEpoch===record.scene_epoch?'online':'changed'
         contractVersion=health.executionContractVersion
         verbCatalogHash=health.verbCatalog?.hash
-        if(status==='online') {
-          componentUpdate=await this.components.observe(health,record.installation)
-          if(componentUpdate.state==='install'&&this.componentSetup.state==='ready')
-            void this.installHelper().catch(error=>{if(!this.lifetime.signal.aborted)this.ctx.logger.warn('Houdini component repair: '+String(error))})
-        }
+        if(status==='online')componentUpdate=await this.components.observe(health,record.installation)
         activeRequests=health.activeRequests??0;activeJobs=health.activeJobs??0
       }catch{status='unknown'}
       return {executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
@@ -386,7 +383,7 @@ export class DesktopIntegration {
   intent(after:number,signal:AbortSignal){return this.intents.read(after,AbortSignal.any([signal,this.lifetime.signal]))}
   private async houdiniSession(sessionId:string) {
     const resolved=await this.ctx.sessionController.resolveAgent(sessionId as any)
-    if('error' in resolved||this.ctx.sessionProjections.stateOf(resolved.agent.session,'agentPreset')!=='houdini')throw Error('请选择 Houdini 模式的对话。')
+    if('error' in resolved||this.ctx.agentPresets.presetForSession(resolved.agent.session)!=='houdini')throw Error('请选择 Houdini 模式的对话。')
     if(resolved.agent.status!=='idle')throw Error('请在当前对话完成后打开或新建工程。')
     return resolved.agent
   }
@@ -591,7 +588,7 @@ export class DesktopIntegration {
         if(!receipt)return {phase:'waiting'}
         const resolved=await this.ctx.sessionController.resolveAgent(ticket.sessionId as any)
         signal.throwIfAborted()
-        if('error' in resolved||this.ctx.sessionProjections.stateOf(resolved.agent.session,'agentPreset')!=='houdini'
+        if('error' in resolved||this.ctx.agentPresets.presetForSession(resolved.agent.session)!=='houdini'
           ||this.ctx.workspaceRegistry?.archivedSessionIds.includes(ticket.sessionId as any))throw new LaunchRejected('原对话已不可用、改为其他模式或归档，未改用另一段对话。')
         const agent=resolved.agent,state=projectedExecutorState(this.ctx,agent.session)
         let result:Omit<DesktopSelection,'source'>

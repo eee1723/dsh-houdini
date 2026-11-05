@@ -3,6 +3,7 @@
 // projects only declared execution facts; node addresses remain Host-owned.
 function createNodeDelivery(React, readHoudiniCanonical) {
   /* NODE_DELIVERY_RECORD */
+  /* JOB_EXECUTION_RECORD */
   var KIND = "houdini-node-delivery";
   var TARGET = "houdini-node-deliveries";
 
@@ -12,17 +13,20 @@ function createNodeDelivery(React, readHoudiniCanonical) {
     if (event.type === "tool/call") return data.callId;
     if (event.type === "tool/result" && event.surfaceOp === "append") return data.message && data.message.source && data.message.source.callId;
     if (event.type === "tool/ptc-dispatch") return data.rootCallId;
+    var recorded = recordedJobExecution(event);
+    if (recorded) return recorded.rootCallId;
     return null;
   }
 
   function project(state, match) {
     var event = match.event, data = event.data;
     if (event.type === "tool/call") return { callName: data.name, nodes: state.nodes };
+    var recorded = recordedJobExecution(event);
     var nested = event.type === "tool/ptc-dispatch";
     var message = nested ? data : data.message;
-    if (!message || message.isError === true) return state;
-    var callId = nested ? data.subCallId : message.source && message.source.callId;
-    var canonical = readHoudiniCanonical({
+    if (!recorded && (!message || message.isError === true)) return state;
+    var callId = recorded ? recorded.callId : nested ? data.subCallId : message.source && message.source.callId;
+    var canonical = recorded ? recorded.canonical : readHoudiniCanonical({
       callId: callId,
       call: { name: nested ? data.name : state.callName },
       meta: data.meta,

@@ -2,9 +2,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {Agent} from '@deepseek-ai/dsh-agent'
 import {createUserMessage,type ContentBlock,type ContextFormed} from '@deepseek-ai/dsh-llm'
+import {appendPluginRecord} from '@deepseek-ai/dsh-session'
+import type {ExecResult,JsonValue} from './bridge.js'
 import type { SessionEvent } from './execution-history.js'
 import { houdiniToolKind } from './tool-catalog.js'
-import {renderJobObservation} from './tool-output.js'
+import {executionLogValue,renderJobObservation} from './tool-output.js'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -31,13 +33,46 @@ export function returnedExecutions(tool:string,value:any):{domain:'live'|'isolat
         execution:check.execution,archive:`check-${check.id}.json`,runDirectory:value.run_directory})):[]),
     ].filter(row=>row.execution):[])
   }
-  return ['python','receipt','ui'].includes(houdiniToolKind(tool)??'')&&value&&typeof value==='object'
+  return (['python','receipt','ui'].includes(houdiniToolKind(tool)??'')||tool==='houdini_job_submit'&&value?.execution)
+    &&value&&typeof value==='object'
     ?[{domain:'live',execution:value}]:[]
 }
 
 export const LIVE_JOB_KIND='houdini-live'
 export const LIVE_JOB_RESULT='dsh-houdini/live-job-result-v1'
 export const LIVE_JOB_OUTPUT_LIMIT_BYTES=16000
+export const JOB_EXECUTION_RECORD='plugin:dsh-houdini/execution' as const
+export interface JobExecutionRecord {
+  schema:1;callId:string;sourceCallId:string;rootCallId:string;tool:'houdini_job_submit';canonical:JsonValue
+}
+declare module '@deepseek-ai/dsh-session/types' {
+  interface PluginRecordMap {'plugin:dsh-houdini/execution':JobExecutionRecord}
+}
+
+/** The actual Bridge result enters its owning native Session once produced.
+ * Generic jobs own observation and notifications, never the domain's result
+ * metadata. This ignorable plugin fact has no model-visible surface. */
+export function recordHoudiniJobExecution(exec:any,value:ExecResult):void {
+  const ref=(value.requestReceipt as any)?.request_ref
+  if(typeof ref!=='string'||!exec.agent?.session)throw Error('A completed Houdini job requires its original request and owning Session')
+  const data:JobExecutionRecord={schema:1,callId:'bridge-job:'+ref,sourceCallId:exec.callId,
+    rootCallId:exec.rootCallId??exec.callId,tool:'houdini_job_submit',canonical:executionLogValue(value)}
+  // Execution envelopes may contain omitted undefined fields. Commit the same
+  // JSON value that a native tool's metadata transport would persist.
+  appendPluginRecord(exec.agent.session,JOB_EXECUTION_RECORD,JSON.parse(JSON.stringify(data)))
+}
+
+/** Validate only our declared record, never infer execution from job status or prose. */
+export function recordedJobExecution(event:SessionEvent):JobExecutionRecord|undefined {
+  if(event.type!==JOB_EXECUTION_RECORD||event.ignorable!==true)return
+  const data=event.data,value=data?.canonical,ref=value?.requestReceipt?.request_ref
+  if(data?.schema!==1||data.tool!=='houdini_job_submit'||typeof ref!=='string'
+    ||! /^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(ref)||data.callId!=='bridge-job:'+ref
+    ||typeof data.sourceCallId!=='string'||!data.sourceCallId||typeof data.rootCallId!=='string'||!data.rootCallId
+    ||!value||typeof value!=='object'||Array.isArray(value)||typeof value.ok!=='boolean'
+    ||!['done','failed','cancelled'].includes(value.status))return
+  return data
+}
 /** A generic DSH job read becomes a Houdini fact only through this exact producer envelope. */
 export function liveJobResult(value:any):{job_id:string;value:any}|undefined {
   if(value?.job?.kind!==LIVE_JOB_KIND||typeof value.text!=='string')return
@@ -74,28 +109,9 @@ export function recordHoudiniContext(agent:Pick<Agent,'session'|'inject'>,messag
 }
 
 const LOG_KIND='dsh-houdini/execution-v1'
-/** Use the public per-agent shadowing contract; never mutate the native tool.
- * Other jobs retain their exact execution and rendering. An absent native
- * projector becomes JSON null because output projectors cannot return undefined. */
-function installHoudiniJobOutput(ctx:Context):void {
-  ctx.on('agent/created',({agent})=>{
-    const native=ctx.get('tools')!.get('job_output',agent)
-    if(!native)return
-    const output={...native.output,presentationMeta(args:unknown,value:any) {
-      const prior=native.output.presentationMeta?.(args,value)
-      if(!liveJobResult(value))return prior??null
-      return prior&&typeof prior==='object'&&!Array.isArray(prior)?{...prior,canonical:value}:{canonical:value}
-    }}
-    const release=agent.ctx.effect(()=>agent.ctx.get('tools')!.register({...native,output}),'Houdini job output metadata')
-    ctx.effect(()=>release,'Houdini job output metadata owner')
-    return undefined
-  })
-}
-
-/** Keep Houdini recovery facts in native/PTC metadata while rendering a bounded
- * domain summary. Complete returned payloads live in their immutable archives. */
+/** Render domain job summaries without copying or shadowing native controls.
+ * Execution facts are already committed by the actual Bridge producer. */
 export function installHoudiniExecutionLog(ctx:Context):void {
-  installHoudiniJobOutput(ctx)
   ctx.on('tools/post-execute',async(exec,result,next)=>{
     const decision=await next()
     if(decision.kind!=='accept'||decision.content||'value' in decision)return decision
@@ -111,7 +127,10 @@ export function installHoudiniExecutionLog(ctx:Context):void {
 }
 
 /** Read the declared canonical value, never infer facts from prose. */
-export function executionResult(event:SessionEvent):{callId:string;tool?:string;producer?:'live-job';value:any;isError?:boolean;error?:any}|null {
+export function executionResult(event:SessionEvent):{callId:string;tool?:string;producer?:'live-job';recorded?:true;sourceCallId?:string;rootCallId?:string;value:any;isError?:boolean;error?:any}|null {
+  const record=recordedJobExecution(event)
+  if(record)return {callId:record.callId,tool:record.tool,producer:'live-job',recorded:true,
+    sourceCallId:record.sourceCallId,rootCallId:record.rootCallId,value:record.canonical}
   const data=event.data
   if (event.type==='tool/result') {
     const value=data?.meta?.canonical,live=liveJobResult(value)
