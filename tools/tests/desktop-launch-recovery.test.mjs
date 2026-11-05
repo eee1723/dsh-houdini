@@ -74,7 +74,8 @@ try{
   assert.equal(env.DSH_INTERNAL_TOKEN,undefined,'only explicit plugin handoff facts may cross into Houdini')
   assert.equal(env.HOUDINI_LICENSE_SERVER,inherited.HOUDINI_LICENSE_SERVER)
   assert.equal(env.PYTHONPATH,path.join(helperRoot,'houdini/python3.11libs'),'launch uses the installed immutable helper')
-  assert.equal(env.HOUDINI_PATH.split(path.delimiter)[1],path.join(helperRoot,'houdini'))
+  assert.equal(env.HOUDINI_PATH.split(path.delimiter)[0],path.join(helperRoot,'houdini'),
+   'the installed Package owns the single native UI-ready entry for ordinary and ticketed launches')
   assert.equal(env.DSH_HOUDINI_DESKTOP_DESCRIPTOR,path.join(environmentFixture.home,'dsh-houdini/desktop.json'))
   assert.equal(env.DSH_HOUDINI_LAUNCH_TICKET,path.join(environmentFixture.home,'dsh-houdini/launches',launched.id+'.json'))
  } finally {
@@ -209,6 +210,11 @@ try{
  const r=await fixture('cleanup'),rs=r.create();await rs.start();const rt=await rs.project(r.action(),new AbortController().signal)
  await rs.dispose();r.state.birth='1002'
  const startup=path.join(r.home,'dsh-houdini/launches',rt.id),outside=path.join(r.home,'foreign-startup'),source='from dsh_workbench_entry import after_ui_ready\nafter_ui_ready()\n'
+ // Prior releases generated per-launch wrappers. Keep their safe retirement
+ // coverage without generating another startup source for current launches.
+ for(const version of ['3.11','3.13']){
+  const folder=path.join(startup,'python'+version+'libs');await fs.mkdir(folder,{recursive:true});await fs.writeFile(path.join(folder,'uiready.py'),source)
+ }
  await fs.mkdir(outside);await fs.writeFile(path.join(outside,'uiready.py'),source)
  await fs.unlink(path.join(startup,'python3.11libs/uiready.py'));await fs.rmdir(path.join(startup,'python3.11libs'))
  await fs.symlink(outside,path.join(startup,'python3.11libs'),process.platform==='win32'?'junction':'dir')

@@ -244,7 +244,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [installer/legacy-migration.ps1](../installer/legacy-migration.ps1) | 历史生成入口的唯一所有权识别、安装目标环境解析、只读预览、逐字节/SHA256备份、可逆停用与变更保护；未知/混合内容保留，旧运行包、凭据、会话和工程不搬动、不清空 |
 | [dsh_launcher.py](../houdini/python3.11libs/dsh_launcher.py) | 当前Bridge安全修复、版本事实及Desktop快捷入口；未保存工程目录由本进程维护 |
 | [dsh_desktop_client.py](../houdini/python3.11libs/dsh_desktop_client.py) | worker内读取插件描述符、认证窄通道、官方Desktop唤起与错误反馈，不取得宿主owner凭据 |
-| [dsh_workbench_client.py](../houdini/python3.11libs/dsh_workbench_client.py)、[dsh_workbench_entry.py](../houdini/python3.11libs/dsh_workbench_entry.py) | 菜单与uiready共享主线程捕获/worker接入流程，自动启动保留原票据准入、菜单保留明确现场导航语义；传输重试不重复HOM捕获与登记。保存转交下一原生脚本，uiready由Houdini平台调度所有匹配 |
+| [dsh_workbench_client.py](../houdini/python3.11libs/dsh_workbench_client.py)、[dsh_workbench_entry.py](../houdini/python3.11libs/dsh_workbench_entry.py)、[H21 uiready](../houdini/python3.11libs/uiready.py)、[H22 uiready](../houdini/python3.13libs/uiready.py) | Package唯一GUI启动入口；普通GUI仅自动登记，Desktop票据沿原准入绑定，菜单保留明确导航。主线程捕获HOM，worker解析登记根/发布；既有观察队列处理换HIP并使旧事实失效。Houdini调度全部原生uiready脚本，插件幂等、不重新执行其他脚本；Host不另生成启动器。headless不自动上线 |
 | [dsh_deployment.py](../houdini/python3.11libs/dsh_deployment.py) | 原子JSON、进程创建身份和原生FileLease，供登记和恢复材料复用；不激活DSH版本 |
 | [dsh_managed_runtime.py](../houdini/python3.11libs/dsh_managed_runtime.py) | 本进程执行端身份及隔离验证所需的自有进程树生命周期，不管理用户Desktop |
 | [dsh_executor_registry.py](../houdini/python3.11libs/dsh_executor_registry.py)、[dsh_shared_executor.py](../houdini/python3.11libs/dsh_shared_executor.py) | 现场登记、实际运行/场景事实、节点与HIP写租约；不复制会话或推断执行终态 |

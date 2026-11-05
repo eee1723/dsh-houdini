@@ -34,10 +34,12 @@ parser.add_argument('--npm',action='store_true',help='Install the frozen artifac
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--hfs',type=Path,help='Also verify the installed tarball with one owned real Houdini GUI')
 parser.add_argument('--legacy-components',action='store_true',help='Seed owned legacy entry/data fixtures before automatic component preparation (requires --hfs)')
+parser.add_argument('--startup-discovery',action='store_true',help='Ordinary no-ticket GUI A/B startup and reselect B from the original native browser conversation')
 parser.add_argument('--expected-helper-id',help='Verify installed helper sources match an already validated GUI build')
 parser.add_argument('--timeout',type=int,default=600)
 args=parser.parse_args()
 if args.legacy_components and not args.hfs:parser.error('--legacy-components requires --hfs')
+if args.startup_discovery and (not args.hfs or args.legacy_components):parser.error('--startup-discovery requires --hfs and cannot combine with --legacy-components')
 artifact=args.artifact.resolve(strict=True)
 assert artifact.is_file() and artifact.suffix=='.tgz','Pass the actual release tarball'
 with tarfile.open(artifact,'r:gz') as archive:
@@ -66,7 +68,7 @@ home=Path(env['DSH_HOME'])
 assert not home.exists() and home.parent==fixture
 print('Owned packaged-plugin evidence:',fixture,flush=True)
 
-if args.hfs:
+if args.hfs and not args.startup_discovery:
     # Real native menu code is used; only its system protocol activation is
     # stubbed so this fixture cannot activate the user's existing Desktop.
     hook=fixture/'menu-hook'
@@ -348,6 +350,111 @@ fs.writeFileSync(process.argv[3],JSON.stringify({...value,health}));if(value.ok!
         'menuSessionId':menu['result']['sessionId'],'writerClaimed':True,'processStarted':birth,'externalDesktopActivationStubbed':True}
 
 
+def verify_startup_discovery(installed,workspace_id,workspace_path):
+    """Real ordinary GUI processes, registered without a launch ticket or menu."""
+    hfs=args.hfs.resolve(strict=True)
+    binary=hfs/'bin/houdini.exe'
+    assert binary.is_file()
+    installation=next(row for row in rpc('houdiniFrontend/projectInstallations',{}) if Path(row['hfs']).samefile(hfs))
+    def prepared():
+        state=rpc('houdiniFrontend/capabilities',{}).get('componentSetup',{})
+        assert state.get('state')!='failed',state
+        return state if state.get('state')=='ready' else None
+    wait_until(prepared,120,'automatic installed component preparation')
+    session=rpc('session/create',{'request':{'sessionId':uuid.uuid4().hex,'workspaceId':workspace_id,'agentPreset':'houdini'}})
+    session_id=session['sessionId']
+    assert session['agentPreset']=='houdini',session
+    def collection():
+        value=rpc('workspace/create',{'request':{'path':str(workspace_path)}})
+        assert value['workspace']['workspaceId']==workspace_id and value.get('created') is not True,value
+        return sorted(value['workspace']['sessionIds'])
+    original_collection=collection()
+    gui_env=isolated_environment(fixture,executable=binary,gui=True,base=env)
+    gui_env.pop('ELECTRON_RUN_AS_NODE',None)
+    assert not any(key in gui_env for key in ['DSH_HOUDINI_LAUNCH_TICKET','DSH_HOUDINI_EXECUTOR_ID','DSH_HOUDINI_BRIDGE_URL'])
+    gui_env.update(HOUDINI_ANONYMOUS_STATISTICS='0',HOUDINI_NO_START_PAGE_SPLASH='1')
+    owned=[];logs=[];browser=None;browser_output=None
+    def launch(name):
+        output=(fixture/(name+'-ordinary-gui.log')).open('wb');logs.append(output)
+        process=subprocess.Popen([str(binary)],cwd=binary.parent,env=gui_env,stdin=subprocess.DEVNULL,
+            stdout=output,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0))
+        birth=_process_started(process.pid);assert birth,'A test-owned native process requires its OS birth fact'
+        owned.append((process,birth))
+        def registered():
+            assert process.poll() is None,'Test-owned ordinary Houdini exited before registration: '+name
+            listing=rpc('houdiniTargets/list',{'input':{'sessionId':session_id}})
+            return next((row for row in listing['candidates'] if row['pid']==process.pid),None)
+        record=wait_until(registered,240,name+' ordinary startup registration')
+        assert record['processStarted']==birth and record['workbench'] and record['hip_is_new'],record
+        assert record['houdini_version']==installation['version'],record['houdini_version']
+        helper=Path(record['installation']).resolve(strict=True)
+        assert helper.is_relative_to(fixture),'Ordinary GUI must load the installed test-owned helper, not user components'
+        assert record.get('helper')=={'id':helper.name,'version':expected_manifest['version']},record.get('helper')
+        assert record.get('task_id') is None,'Advertising a window must not claim an author'
+        assert collection()==original_collection,'Ordinary startup must not create a native conversation'
+        return process,record
+    def browser_signal(filename):
+        def read():
+            assert browser.poll() is None or browser.returncode==0,'Browser check failed; inspect startup-browser.log'
+            file=fixture/filename
+            return json.loads(file.read_text(encoding='utf-8')) if file.exists() else None
+        return wait_until(read,90,filename)
+    try:
+        first,a=launch('A')
+        browser_config=fixture/'startup-browser-config.json'
+        browser_config.write_text(json.dumps({'base':'http://127.0.0.1:'+str(port)+'/',
+            'output':str(fixture),'sessionId':session_id,'executorA':a['executor_id'],
+            'nativeStartupTimeoutMs':240000,
+            'browser':r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+            'cookies':[{'name':cookie.name,'value':cookie.value,'url':'http://127.0.0.1:'+str(port)+'/',
+                        'httpOnly':True} for cookie in auth._cookies]}),encoding='utf-8')
+        browser_output=(fixture/'startup-browser.log').open('wb')
+        browser=subprocess.Popen([shutil.which('node'),str(ROOT/'tools/tests/dsh-startup-discovery-browser.mjs'),str(browser_config)],
+            cwd=ROOT,env=env,stdin=subprocess.DEVNULL,stdout=browser_output,stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        browser_signal('startup-A-selected.json')
+        selected_a=rpc('houdiniTargets/list',{'input':{'sessionId':session_id}})
+        assert selected_a['selectedTarget']['executor_id']==a['executor_id'],selected_a
+        assert collection()==original_collection
+        # Terminate only our original Popen handle; this simulates an exited
+        # window and makes no claim about the cause of the user's crash.
+        first.terminate();first.wait(timeout=20)
+        def old_offline():
+            rows=rpc('houdiniFrontend/projectPresence',{})
+            return next((row for row in rows if row['executorId']==a['executor_id'] and row['status']=='offline'),None)
+        wait_until(old_offline,35,'original selected window offline')
+        second,b=launch('B')
+        assert b['executor_id']!=a['executor_id'] and b['runtime_id']!=a['runtime_id']
+        assert b['hip_path']==a['hip_path'],'Same untitled path must not identify the restarted process'
+        before_click=rpc('houdiniTargets/list',{'input':{'sessionId':session_id}})
+        assert before_click['selectedTarget']['executor_id']==a['executor_id'],'New discovery must not silently rebind the conversation'
+        (fixture/'startup-B-ready.json').write_text(json.dumps({'executorId':b['executor_id'],'pid':b['pid']}),encoding='utf-8')
+        browser_signal('startup-B-selected.json')
+        assert browser.wait(timeout=30)==0,'Actual browser selection failed; inspect startup-browser.log'
+        final=rpc('houdiniTargets/list',{'input':{'sessionId':session_id}})
+        assert final['selectedTarget']['executor_id']==b['executor_id'] and final['state']['status']=='selected',final
+        assert collection()==original_collection,'Reconnecting the original conversation must not create another Session'
+        page=rpc('session/events',{'request':{'address':{'kind':'session','sessionId':session_id},'maxMessages':100}})
+        assert not page['hasMore'],'The controlled reconnect conversation must remain a small complete log'
+        events=[row['event'] for row in page['records']]
+        forbidden=[event for event in events if event['type'] in ['turn/start','tool/call','tool/ptc-dispatch-start'] or event['type'].startswith('llm/')]
+        assert not forbidden,'Discovery/selection must not run a model or replay old code: '+str([row['type'] for row in forbidden])
+        raw=json.loads((Path(env['DSH_HOME'])/'dsh-houdini/executors/endpoints'/(b['executor_id']+'.json')).read_text(encoding='utf-8'))
+        assert raw.get('task_id') is None,'Selecting a newly advertised window grants no node ownership'
+        browser_review=json.loads((fixture/'startup-browser-result.json').read_text(encoding='utf-8'))
+        assert browser_review['ok'] and browser_review['selection']['sessionId']==session_id
+        print('PASS ordinary GUI startup A/B, same untitled path, automatic open-menu discovery and original native browser conversation reselect',flush=True)
+        return {'ok':True,'hfs':str(hfs),'sessionId':session_id,'originalSessionIds':original_collection,
+            'finalSessionIds':collection(),'first':a,'second':b,'oldWindowExitCode':first.returncode,
+            'noLaunchTicket':True,'noMenuActivation':True,'noModelOrToolCalls':True,'browser':browser_review}
+    finally:
+        if browser is not None and browser.poll() is None:browser.terminate();browser.wait(timeout=15)
+        for process,birth in owned:
+            if process.poll() is None:process.terminate();process.wait(timeout=20)
+        for output in logs:output.close()
+        if browser_output is not None:browser_output.close()
+
+
 # Users' old files precede Host startup. Writing them after automatic component
 # preparation begins creates a test-only race instead of an upgrade scenario.
 legacy_fixture=seed_legacy_components() if args.hfs else ({},{},None)
@@ -408,7 +515,8 @@ with log.open('wb') as output:
         assert ordinary['agentPreset']=='standard'
         refused=rpc('houdiniFrontend/prepareBridge',{'input':{'sessionId':ordinary['sessionId']}},allow_error=True)
         assert refused['ok'] is False,'Component preparation must refuse other modes before touching any Houdini preferences'
-        if args.hfs:report['houdiniGui']=verify_real_houdini(installed,workspace_id)
+        if args.startup_discovery:report['startupDiscovery']=verify_startup_discovery(installed,workspace_id,workspace)
+        elif args.hfs:report['houdiniGui']=verify_real_houdini(installed,workspace_id)
         media=installed/'runtime/video'
         for relative in ['runtime.json','build-provenance.json','SOURCE-NOTICE.txt','COPYING.LGPLv2.1','build-configure.txt',
                          'ffmpeg/bin/ffmpeg.exe','ffmpeg/bin/ffprobe.exe']:

@@ -45,6 +45,7 @@ with tempfile.TemporaryDirectory(prefix='dsh-desktop-client-') as temporary:
 
     with patch.dict(os.environ, {'DSH_HOME': str(home)}, clear=True):
         assert desktop.descriptor_path() == descriptor
+        assert desktop.discovery_registry() == descriptor.parent / 'executors'
         try:
             desktop.connect(timeout=0, activate=False)
         except RuntimeError:
@@ -63,6 +64,26 @@ with tempfile.TemporaryDirectory(prefix='dsh-desktop-client-') as temporary:
         descriptor.parent.mkdir(parents=True)
         descriptor.write_text(json.dumps(record), encoding='utf-8')
         before = descriptor.read_bytes()
+        with patch.dict(os.environ, {'DSH_HOME': str(home)}, clear=True):
+            assert desktop.discovery_registry() == folder / 'registry'
+        with patch.dict(os.environ, {'DSH_HOME': str(home), 'DSH_HOUDINI_EXECUTOR_REGISTRY': str(folder / 'explicit')}, clear=True):
+            assert desktop.discovery_registry() == folder / 'explicit'
+        with patch.dict(os.environ, {'DSH_HOME': str(home), 'DSH_HOUDINI_EXECUTOR_REGISTRY': 'relative'}, clear=True):
+            try:
+                desktop.discovery_registry()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Relative automatic discovery root was accepted')
+        descriptor.write_text('{}', encoding='utf-8')
+        with patch.dict(os.environ, {'DSH_HOME': str(home)}, clear=True):
+            try:
+                desktop.discovery_registry()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Malformed descriptor silently selected another discovery root')
+        descriptor.write_bytes(before)
         with patch.dict(os.environ, {'DSH_HOME': str(home), 'HTTP_PROXY': 'http://127.0.0.1:1'}, clear=True):
             with patch.object(desktop.urllib.request, 'HTTPSHandler', side_effect=AssertionError('Loopback HTTP must not initialize TLS')):
                 assert desktop.connect(timeout=1, activate=False) == record
@@ -143,15 +164,17 @@ with tempfile.TemporaryDirectory(prefix='dsh-desktop-client-') as temporary:
     assert descriptor.read_text(encoding='utf-8') == json.dumps(invalid)
     assert not (home / 'profiles').exists()
 
-    # Both native entry points delegate to the shared connection operation.
+    # The ticket is consumed once; later GUI discovery never repeats navigation.
     import dsh_workbench_entry as entry
     starts = []
     launcher = SimpleNamespace(_startup_failure=lambda error: starts.append(('error', str(error))))
-    shared = SimpleNamespace(open_workspace=lambda actual, **kwargs: starts.append((actual, kwargs)) or True)
-    with patch.dict(sys.modules, {'dsh_launcher': launcher, 'dsh_workbench_client': shared}), \
+    shared = SimpleNamespace(open_workspace=lambda actual, **kwargs: starts.append((actual, kwargs)) or True,
+                             discover_current_scene=lambda actual: starts.append(('discover', actual)) or True)
+    with patch.dict(sys.modules, {'hou': SimpleNamespace(isUIAvailable=lambda: True),
+                                'dsh_launcher': launcher, 'dsh_workbench_client': shared}), \
          patch.dict(os.environ, {'DSH_HOUDINI_LAUNCH_TICKET': str(ticket_path)}, clear=True):
         assert entry.attach() is True
-        assert entry.attach() is False
-    assert starts == [(launcher, {'launch_ticket': str(ticket_path)})]
+        assert entry.attach() is True
+    assert starts == [(launcher, {'launch_ticket': str(ticket_path)}), ('discover', launcher)]
 
 print('Desktop descriptor/authentication, source registration isolation and stable launch entry delegation passed')

@@ -2,7 +2,7 @@
 
 核对日期：2026-11-05
 
-公开0.1.6使用执行合同119和DSH rc.3/rc.5；源码候选0.1.7-rc.1使用120，精确面向DSH 0.2.2-rc.1，尚未正式发布或更新用户live。现役职责见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
+公开0.1.6使用执行合同119和DSH rc.3/rc.5；源码候选0.1.7-rc.2使用120，精确面向DSH 0.2.2-rc.1，尚未正式发布或更新用户live。现役职责见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
 
 ## 待交接事项
 

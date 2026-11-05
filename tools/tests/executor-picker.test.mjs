@@ -143,7 +143,35 @@ observations[0]={...observed(first),runtimeId:'9'.repeat(32)};intervals.at(-1)()
 observations[0]={...observed(first),status:'offline'};intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'offline')
 assert(!by(tree,n=>n.props['data-houdini-target']===first.executor_id),'a dead process must leave the candidate list even when its old record still says registered')
 assert.match(text(tree),/ship\.hip.*已断开/,'the original conversation keeps its offline selection')
+// A crash does not require a new conversation. A new runtime may even have
+// the same untitled HIP path; only explicit selection replaces the old target.
+const beforeCrashProject=project,crashed={...first,hip_path:'D:/Houdini22/bin/untitled.hip',hip_is_new:true}
+project={target:crashed,executorId:executor,runtimeId:runtime,sceneEpoch:epoch,hipPath:crashed.hip_path,hipIsNew:true}
+observations=[{...observed(crashed),status:'offline'}];intervals.at(-1)();await settle();tree=render(menu)
+if(!by(tree,n=>n.props.role==='menu')){chip(tree).props.onClick();await settle();tree=render(menu)}
+assert.match(text(tree),/新打开的 Houdini.*自动显示/,'an offline selection with no other window has discovery guidance')
+assert(!text(tree).includes('Open Workspace'),'discovery does not instruct users to create another conversation')
+const replacement={...crashed,executor_id:'3'.repeat(32),runtime_id:'4'.repeat(32),scene_epoch:'5'.repeat(32),
+ scene_id:'6'.repeat(32),registration_id:'7'.repeat(32),pid:6543}
+const beforeReplacement=JSON.stringify(project),requestsBeforeReplacement=requests.length
+observations.push(observed(replacement));intervals.at(-1)();await settle();tree=render(menu)
+assert.equal(chip(tree).props['data-state'],'offline','discovering a new window never silently substitutes the old target')
+assert.equal(JSON.stringify(project),beforeReplacement)
+const replacementItem=()=>by(tree,n=>n.props.role==='menuitem'&&by(n,child=>child.props['data-houdini-target']===replacement.executor_id))
+assert(replacementItem(),'a newly registered GUI appears in the open original-conversation menu')
+native.set(task,{running:true});tree=render(menu);assert.equal(replacementItem().props.disabled,true,'a running model step still prevents switching targets')
+native.set(task,{running:false});tree=render(menu);assert.equal(replacementItem().props.disabled,false)
+replacementItem().props.onClick();await settle();tree=render(menu)
+const replacementActions=requests.slice(requestsBeforeReplacement).filter(row=>!['houdiniFrontend/capabilities','houdiniFrontend/projectPresence'].includes(row.method))
+assert.deepEqual(replacementActions.map(row=>row.method),['houdiniTargets/select'],'reselection neither creates a conversation nor launches or replays Houdini work')
+assert.deepEqual({...replacementActions[0].payload.args.input},{sessionId:'task-a',executorId:replacement.executor_id,
+ registrationId:replacement.registration_id,expectedHip:replacement.hip_path,runtimeId:replacement.runtime_id,sceneEpoch:replacement.scene_epoch})
+assert.equal(JSON.stringify(project),beforeReplacement,'the native projection remains the only selection authority after the RPC')
+project={target:replacement,executorId:replacement.executor_id,runtimeId:replacement.runtime_id,sceneEpoch:replacement.scene_epoch,
+ hipPath:replacement.hip_path,hipIsNew:true};tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
+project=beforeCrashProject
 observations=[observed(first),observed(second)];intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
+if(!by(tree,n=>n.props.role==='menu')){chip(tree).props.onClick();await settle();tree=render(menu)}
 const third={...second,executor_id:'1'.repeat(32),hip_path:'D:/other/new-window.hip'}
 observations.push(observed(third));intervals.at(-1)();await settle();tree=render(menu)
 assert(by(tree,n=>n.props['data-houdini-target']===third.executor_id),'a newly connected window appears while the menu stays open')

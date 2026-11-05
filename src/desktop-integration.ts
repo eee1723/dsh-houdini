@@ -476,18 +476,13 @@ export class DesktopIntegration {
       const preparation=await this.installHelper()
       signal.throwIfAborted()
       ticket.message='正在打开 Houdini…'
-      const startup=path.join(this.paths.launches,identifier)
-      for(const version of ['3.11','3.13']) {
-        const directory=path.join(startup,'python'+version+'libs');await fs.mkdir(directory,{recursive:true})
-        await fs.writeFile(path.join(directory,'uiready.py'),'from dsh_workbench_entry import after_ui_ready\nafter_ui_ready()\n')
-      }
       // Houdini outlives Desktop, so it is deliberately not a managed child.
       // Reuse the host's credential/environment boundary without its lifetime.
       const environment=scrubbedParentEnv()
       for(const field of Object.keys(environment))if(/^(QT_|QTWEBENGINE_|QML|PYSIDE|SHIBOKEN)/i.test(field)
         ||['PYTHONHOME','PYTHONPATH','NODE_OPTIONS','NODE_PATH'].includes(field.toUpperCase()))delete environment[field]
       environment.HFS=selected.hfs
-      environment.HOUDINI_PATH=[startup,path.join(preparation.helperRoot,'houdini'),environment.HOUDINI_PATH||'&'].join(path.delimiter)
+      environment.HOUDINI_PATH=[path.join(preparation.helperRoot,'houdini'),environment.HOUDINI_PATH||'&'].join(path.delimiter)
       environment.PYTHONPATH=path.join(preparation.helperRoot,'houdini/python3.11libs')
       environment.DSH_HOUDINI_DESKTOP_DESCRIPTOR=this.paths.descriptor
       environment.DSH_HOUDINI_LAUNCH_TICKET=filename

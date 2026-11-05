@@ -58,6 +58,22 @@ def read_descriptor(filename=None):
     return value
 
 
+def discovery_registry():
+    """Worker-only discovery destination; this never activates a Desktop."""
+    explicit = os.environ.get('DSH_HOUDINI_EXECUTOR_REGISTRY', '').strip()
+    if explicit:
+        root = Path(explicit).expanduser()
+        if not root.is_absolute():
+            raise ValueError('Houdini 登记目录必须使用完整路径。')
+        return root
+    try:
+        return Path(read_descriptor()['executorRegistry'])
+    except FileNotFoundError:
+        # Match desktopPaths(): an absent Desktop can be opened later and read
+        # these ordinary discovery hints. A malformed descriptor is not absence.
+        return descriptor_path().parent / 'executors'
+
+
 def request(record, action, payload, *, timeout=15):
     if action not in _ACTIONS:
         raise ValueError('未知的 Houdini Desktop 操作。')

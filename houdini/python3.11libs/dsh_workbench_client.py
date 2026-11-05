@@ -11,6 +11,27 @@ if '_BUSY' not in globals():
     _OBSERVATIONS = None
 if '_PENDING_MENU' not in globals():
     _PENDING_MENU = None
+if '_AUTO_DISCOVERY' not in globals():
+    _AUTO_DISCOVERY = False
+
+
+def discover_current_scene(launcher):
+    """Advertise this GUI without opening Desktop or choosing a conversation."""
+    global _AUTO_DISCOVERY
+    import hou
+    if not hou.isUIAvailable():
+        return False
+    if _AUTO_DISCOVERY:
+        return True
+    launcher.require_local_modules()
+    install_observation()
+    _AUTO_DISCOVERY = True
+    try:
+        observe_scene()
+    except Exception:
+        _AUTO_DISCOVERY = False
+        raise
+    return True
 
 
 def observe_scene():
@@ -21,6 +42,10 @@ def observe_scene():
     try:
         registration = active_registration()
     except RuntimeError:
+        if _AUTO_DISCOVERY:
+            from dsh_shared_executor import prepare_registration
+            facts = prepare_registration(workbench=True, workspace=dsh_launcher._hip_dir(), reuse_busy=True)
+            _OBSERVATIONS.put((None, facts))
         return
     if not registration.workbench:
         return
@@ -33,20 +58,41 @@ def install_observation():
         return
     import hou
     import queue
+    from hutil.Qt import QtCore
     _OBSERVATIONS = queue.Queue()
+    pending = False
 
     def worker():
         while True:
             registration, observed = _OBSERVATIONS.get()
             try:
-                from dsh_shared_executor import observation_current
-                registration.observe(observed['hip'], observed['scene'], is_current=lambda: observation_current(observed))
+                from dsh_shared_executor import observation_current, publish_registration
+                if registration is None:
+                    from dsh_desktop_client import discovery_registry
+                    if observation_current(observed):
+                        publish_registration(discovery_registry(), observed)
+                else:
+                    registration.observe(observed['hip'], observed['scene'], is_current=lambda: observation_current(observed))
             except Exception as error:
-                print('[dsh-houdini] 工程登记更新未完成：' + str(error), flush=True)
+                from dsh_shared_executor import observation_current
+                if observation_current(observed):
+                    import dsh_launcher
+                    dsh_launcher._LAST_STARTUP_FAILURE = str(error)
+                    print('[dsh-houdini] 工程登记更新未完成：' + str(error), flush=True)
+
+    def settled():
+        nonlocal pending
+        pending = False
+        observe_scene()
 
     def changed(kind, **kwargs):
+        nonlocal pending
         if kind in (hou.hipFileEventType.AfterLoad, hou.hipFileEventType.AfterClear):
-            observe_scene()
+            from dsh_shared_executor import invalidate_observation
+            invalidate_observation()
+            if not pending:
+                pending = True
+                QtCore.QTimer.singleShot(0, settled)
 
     _CALLBACK = changed
     hou.hipFile.addEventCallback(changed)

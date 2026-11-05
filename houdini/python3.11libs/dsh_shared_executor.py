@@ -1,7 +1,7 @@
-"""Explicit candidate registration UI; never starts/stops a shared DSH Host.
+"""Bridge discovery publication and optional explicit registration maintenance.
 
-Current menu launch stays unchanged. Registry selection is a user action; main
-thread captures HIP/Bridge facts, worker owns file locks and publication.
+The main thread captures HIP/Bridge facts; workers resolve the configured
+registry, hold file locks and publish. This module never owns a DSH Host.
 """
 from pathlib import Path
 import os
@@ -13,6 +13,8 @@ _TIMER = None
 if '_OBSERVATION_KEY' not in globals():
     _OBSERVATION_KEY = None
     _OBSERVATION_TOKEN = None
+if '_PUBLISH_GUARD' not in globals():
+    _PUBLISH_GUARD = threading.RLock()
 
 
 def capture_scene(workspace=None):
@@ -31,6 +33,12 @@ def capture_scene(workspace=None):
 
 def observation_current(facts):
     return facts.get('observation_token') is not None and facts['observation_token'] is _OBSERVATION_TOKEN
+
+
+def invalidate_observation():
+    """Main-thread transition boundary; queued publications are already stale."""
+    global _OBSERVATION_KEY, _OBSERVATION_TOKEN
+    _OBSERVATION_KEY = _OBSERVATION_TOKEN = None
 
 
 def prepare_registration(*, workbench=False, workspace=None, reuse_busy=False):
@@ -67,6 +75,12 @@ def prepare_registration(*, workbench=False, workspace=None, reuse_busy=False):
 
 
 def publish_registration(root, facts):
+    """Serialize startup, menu and scene-change publication on their workers."""
+    with _PUBLISH_GUARD:
+        return _publish_registration(root, facts)
+
+
+def _publish_registration(root, facts):
     from dsh_executor_registry import activate, active_registration
     root = Path(root)
     if not root.is_absolute():

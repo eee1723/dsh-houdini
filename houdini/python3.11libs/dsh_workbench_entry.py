@@ -1,9 +1,10 @@
-"""Explicit command-line launch handshake after Houdini's GUI and HIP are ready."""
+"""Native GUI discovery and explicit launch handshake after the UI is ready."""
 import os
 from pathlib import Path
 
 
 _SAVE_HOOKS = set()
+_READY_SCHEDULED = globals().get('_READY_SCHEDULED', False)
 
 
 def after_save(native_context, wrapper):
@@ -63,23 +64,37 @@ def after_save(native_context, wrapper):
 
 
 def after_ui_ready(native_context=None, wrapper=None):
-    """Schedule attach; Houdini itself runs every matching uiready script."""
+    """One GUI attach; Houdini itself runs every matching uiready script."""
+    global _READY_SCHEDULED
+    import hou
+    if not hou.isUIAvailable() or _READY_SCHEDULED:
+        return False
     from hutil.Qt import QtCore
+    _READY_SCHEDULED = True
     QtCore.QTimer.singleShot(0, attach)
+    return True
 
 
 def attach():
-    """Hand the one launch intent to the same pipeline used by the native menu."""
-    ticket = os.environ.get('DSH_HOUDINI_LAUNCH_TICKET')
-    if not ticket:
+    """Keep ticket handoff explicit; ordinary GUI startup only advertises itself."""
+    import hou
+    if not hou.isUIAvailable():
         return False
+    ticket = os.environ.get('DSH_HOUDINI_LAUNCH_TICKET')
     import dsh_launcher
-    from dsh_workbench_client import open_workspace
     try:
+        if not ticket:
+            from dsh_workbench_client import discover_current_scene
+            return discover_current_scene(dsh_launcher)
+        from dsh_workbench_client import open_workspace
         started = open_workspace(dsh_launcher, launch_ticket=ticket)
         if started:
             os.environ.pop('DSH_HOUDINI_LAUNCH_TICKET', None)
         return started
     except Exception as error:
-        dsh_launcher._startup_failure(error)
+        if ticket:
+            dsh_launcher._startup_failure(error)
+        else:
+            dsh_launcher._LAST_STARTUP_FAILURE = str(error)
+            dsh_launcher._report('自动登记未完成：' + str(error))
         return False

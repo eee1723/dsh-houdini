@@ -1159,7 +1159,6 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
         raise
     _server = server
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True).start()
-    print(f"[dsh-houdini] bridge serving on http://{host}:{server.server_port}")
     return server
 
 
@@ -1169,7 +1168,8 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         hou.hipFile.load(sys.argv[1])
         print(f"[dsh-houdini] loaded scene {sys.argv[1]}")
-    start()
+    server = start()
+    print(f"[dsh-houdini] bridge serving on http://127.0.0.1:{server.server_port}")
     _pump_active = True  # headless: the main thread below IS the pump
     while True:  # hython exits when the script returns; keep the session alive
         _pump()
