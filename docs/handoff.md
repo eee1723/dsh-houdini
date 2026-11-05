@@ -2,7 +2,7 @@
 
 核对日期：2026-11-05
 
-公开0.1.6使用执行合同119和DSH rc.3/rc.5；源码候选0.1.7-rc.2使用120，精确面向DSH 0.2.2-rc.1，尚未正式发布或更新用户live。现役职责见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
+0.1.7使用执行合同120，精确面向DSH 0.2.2-rc.1；正式渠道状态以发行页和registry为准，用户live加载仍须单独回访。旧版0.1.6使用119和DSH rc.3/rc.5。现役职责见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
 
 ## 待交接事项
 
@@ -15,7 +15,7 @@
 - 下一步：回访用户默认profile与系统dsh://菜单唤起；独立资料下的原生窗口、工作区和启动中重开不代替这一真实用户路径。用户自己的多窗口、已有模型/账号配置、复杂工程和长期任务仍须正式入口回访。用户默认profile中的插件更新/停用/卸载、旧helper加载仍须验收，不将临时数据根中的最终tgz安装通过写成用户已经部署。
 - 已有共享记录：6条旧私有Host生成的v4会话头与物理项目目录不一致；已按用户确认在Desktop退出后完整备份并原值暂存至默认数据根的recovery目录，工作区入口已由用户回访确认恢复。暂存清单与字节备份保留，6条暂不在侧栏显示；每条仅有一个generation，不能从有损目录名猜回原始cwd。仍须单独核对原始来源、当前目录事件及详情/附件引用后恢复这些历史，不自动改header或合并整库，不将其余会话头可列出当作全部旧正文已完成迁移。
 - 外部模型验收：社区`dsh-codex-subscription@3.1.8`已安装启用，仍须用户亲自授权，再核对账户目录（包括GPT-6.1 Terra）、文本、函数工具、图片输入、真实Houdini任务及长期组合；不迁移旧授权，不把安装或目录可见写成推理成功。既有安装与职责见[DSH兼容](dsh-update-compatibility.md#模型提供方与账户验收)。
-- 依赖安全：公开0.1.6的直接Zod仍受GHSA-mrhx-c7xc-m3w5影响；源码已精确改为4.6.7并移除全局override，须随下一补丁交付。官方宿主的Zod、Undici、MCP客户端与LibreOffice附带fflate公告仍须按实际使用路径和官方修复版本处理；插件生产依赖审计通过不代表整套宿主无漏洞，不覆盖宿主共享依赖解析。
+- 依赖安全：0.1.7将直接Zod精确改为4.6.7并移除全局override，旧版0.1.6用户仍须升级。官方宿主的Zod、Undici、MCP客户端与LibreOffice附带fflate公告仍须按实际使用路径和官方修复版本处理；插件生产依赖审计通过不代表整套宿主无漏洞，不覆盖宿主共享依赖解析。
 - 通用工具故障：须在干净官方Desktop定位pwsh的`grantWrite`/Win32 5和外网`web_fetch`解析到非公网IP的失败，分别核对原生沙箱ACL与代理/DNS实际来源；尚未证明由Houdini插件造成。采用原生配置或窄上游修复，不在插件绕过读取政策、改机器ACL或放宽地址校验。
 - 系统代理缺口：旧适配版的Windows系统代理/PAC/WPAD自动继承，在官方Node Host尚无等价合同。保持原生显式代理环境，按[窄上游方案](dsh-update-compatibility.md#网络与窗口等宿主能力)补齐；不从Houdini插件暗中设置进程级代理。正式分发前须说明这一限制，并在用户实际网络上核对模型与转录路由。
 - 入口：[Desktop通道](../tools/tests/desktop-integration.test.mjs)、[真实官方组合](../tools/tests/dsh-host-smoke.test.py)、[真实页面](../tools/tests/dsh-client-navigation.mjs)、[本端接入](../tools/tests/dsh-desktop-client.test.py)、[安装](../tools/tests/dsh-install-runtime.test.py)、[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)、[原生插件页面](../tools/tests/dsh-distribution-ui.test.py)、[原生窗口生命周期](../tools/tests/dsh-desktop-window.test.py)。
@@ -37,8 +37,7 @@
 
 - 状态：待验证
 - 现状：已有profile、旧安装迁移与真实使用仍待回访。
-- 待交付：候选面向rc.1，仍须沿统一流程正式发布并回访用户实际加载；本地冻结包不等于npm/GitHub已公开。Node侧更新只经原生管理。正式版本须大于用户已安装候选，不能把多次同版本本地候选当作原生版本更新；源码、候选和用户现场分别核对。
-- npm展示：0.1.6包页README沿用冻结包中的旧安装段落，下一补丁同步当前包名指引并核对页面；当前以[安装说明](setup.md)和正式发行页为准，不覆写已发布版本。
+- 用户加载：0.1.7面向rc.1，仍须回访用户实际升级与加载；正式渠道可下载不等于用户live已更新。Node侧更新只经原生管理；源码、冻结包和用户现场分别核对。
 - 下一步：回访默认profile由GitHub来源迁移到npm的更新/启停/卸载、其他插件与账户保持、长短路径下新建/打开/重开及helper身份。原生更新按[适配边界](dsh-update-compatibility.md#022-接口边界)验证；隔离安装不代替用户live，入口迁移不修复历史。
 - 远程安装边界：全新缓存的HTTP/1.0关闭连接条件已复现官方pnpm的`Parser.finish: assert(!this.paused)`，同字节HTTP/1.1持续连接通过；这是传输条件对照，不是宿主缺陷已修。仍需用户实际缓存、企业网络/代理与正式HTTPS来源验证，失败可同包本地安装。保留实际安装失败，不把等不到启用按钮误报为检查超时，不私带pnpm或改宿主。入口为[原生分发测试](../tools/tests/dsh-distribution-ui.test.py)。
 - 外部依赖：模型供应商、账号授权、企业网络/代理和语义识图以所选提供方及真实请求为准。Houdini复用原生配置；可选订阅模型插件单独安装并由用户明确授权，模拟授权不证明真实账户可用。

@@ -32,7 +32,7 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 | 项目 | 支持范围 |
 |---|---|
 | 操作系统 | Windows x64 |
-| 宿主 | 当前源码／候选包：DSH 0.2.2-rc.1；公开 0.1.6：DSH 0.2.1-rc.5 / rc.3。按所选包的精确兼容范围安装，当前源码验证边界见[兼容清单](dsh-runtime-compatibility.json) |
+| 宿主 | 0.1.7：DSH 0.2.2-rc.1。旧版 0.1.6 使用 DSH 0.2.1-rc.5 / rc.3，升级插件前先确认宿主版本；精确兼容范围与验证边界见[兼容清单](dsh-runtime-compatibility.json) |
 | Houdini | 21.0 / 22.0；构建兼容信息见[安装说明](docs/setup.md) |
 | 模型 | 在 DSH 中配置可用的主聊天模型；图像理解、生图和语音按所用模型与服务的实际能力配置 |
 
@@ -43,10 +43,10 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
 
 ```text
-dsh-houdini@0.1.6
+dsh-houdini@0.1.7
 ```
 
-[npm 包](https://www.npmjs.com/package/dsh-houdini)与[GitHub 正式包及校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.6)提供同一完整安装包，无须解压或运行脚本。仅填写 `dsh-houdini` 可安装 npm 的当前 latest 版本；指定本次安装版本使用上面的写法。包名分发不等于宿主自动更新，已有用户按[更新说明](docs/setup.md#connection--support连接与维护)在原生插件管理中操作。
+[npm 包](https://www.npmjs.com/package/dsh-houdini)与[GitHub 正式包及校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.7)提供同一完整安装包，无须解压或运行脚本。仅填写 `dsh-houdini` 可安装 npm 的当前 latest 版本；指定本次安装版本使用上面的写法。包名分发不等于宿主自动更新，已有用户按[更新说明](docs/setup.md#connection--support连接与维护)在原生插件管理中操作。
 
 若显示“未找到相关插件”，可按[安装说明](docs/setup.md#普通安装)切换到npm官方源，或使用GitHub完整包地址；新版本可能尚未同步到所选镜像。
 
