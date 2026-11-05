@@ -78,7 +78,7 @@ print('complete and selected matrices keep pure Python fixtures separate from HO
 
 from houdini_test_environment import isolated_environment, launch_directory
 with tempfile.TemporaryDirectory(prefix='dsh-env-中文 空格-') as raw:
-    fixture = Path(raw)
+    fixture = Path(raw).resolve()
     foreign_roaming, foreign_local = fixture / 'inherited-user' / 'roaming', fixture / 'inherited-user' / 'local'
     for directory in (foreign_roaming, foreign_local):
         directory.mkdir(parents=True)
