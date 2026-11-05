@@ -207,7 +207,14 @@ try{
  // Return to the exact existing native blank, then use its real mode menu.
  assert(initial?.sessionId)
  await click(`document.querySelector('[data-row-key="session:${initial.sessionId}"]')`,'Native existing conversation')
- await click(`document.querySelector('button[title="选择新任务使用的 Agent 预设"],button[title="Choose the agent preset for your new task"]')||document.querySelector('[data-slot="conversation.hero.agentPreset"] button[aria-haspopup=menu]')||[...document.querySelectorAll('button[aria-haspopup=menu]')].find(e=>/标准|Standard/.test(e.textContent))`,'Native agent mode menu')
+ const modeMenu=`document.querySelector('button[title="选择新任务使用的 Agent 预设"],button[title="Choose the agent preset for your new task"]')||document.querySelector('[data-slot="conversation.hero.agentPreset"] button[aria-haspopup=menu]')||[...document.querySelectorAll('button[aria-haspopup=menu]')].find(e=>/标准|Standard/.test(e.textContent))`
+ // The native seat closes its menu when the newly enabled preset roster arrives.
+ // Reopen only when that observable transition closed it; a missing preset still fails.
+ await until(async()=>{
+  if(await evaluate(`[...document.querySelectorAll('[role=menuitem]')].some(e=>/Houdini/.test(e.textContent))`))return true
+  if(await evaluate(`(${modeMenu})?.getAttribute('aria-expanded')!=='true'`))await click(modeMenu,'Native agent mode menu')
+  return false
+ },'Native Houdini mode menu after enabled roster arrives')
  await click(`[...document.querySelectorAll('[role=menuitem]')].find(e=>/Houdini/.test(e.textContent))`,'Native Houdini mode item')
  await until('document.querySelector("[data-houdini-project-label]")','Houdini mode selected by Native picker')
  const selected=await evaluate(NATIVE_SELECTION);assert.equal(selected.sessionId,initial.sessionId)
