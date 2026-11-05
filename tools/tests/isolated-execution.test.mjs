@@ -36,7 +36,10 @@ async function runner(request){
     worker:{status:'completed',returncode:0,output:'verbose process log'},
     result:{ok:true,phase:'completed',runtime:{runtime_id:'independent-unit-runtime'},
       builder:{ok:true,result:{width:5},outcome:{batch:'completed'},verbs:[{verb:'set_parms'}],
+        details:{stored:true,path:path.join(request.output,'executions','builder.json'),sha256:'a'.repeat(64),bytes:1000,format:'returned_bridge_envelope_json'},
         stdout:'[verb] set_parms echo\nMeasured width: 5 m',stderr:'Authored diagnostic'},
+      visual_artifacts:[{id:'visual-0',kind:'render',status:'passed',role:'visual-check',source:'render_view',semantic_status:'unverified',
+        artifact:{file:'artifacts/image/test.png',bytes:pixel.length,sha256:createHash('sha256').update(pixel).digest('hex')}}],
       checks:[{id:'image',kind:'render',status:'passed',artifact:{file:'artifacts/image/test.png',bytes:pixel.length,sha256:createHash('sha256').update(pixel).digest('hex')},execution:{ok:true,result:{fresh:true}}}]}}
   await fs.writeFile(path.join(request.output,'report.json'),JSON.stringify(report))
   return {exit_code:0,cancel_requested:false,stderr:''}
@@ -64,6 +67,11 @@ try {
   assert.equal(presented.report.input_observations.preview[0].error,'source removed')
   assert.equal(presented.report.error,'worker error')
   assert(JSON.stringify(presented).length<1500)
+  const inFlight=isolatedPresentation({report_path:'cancelled/report.json',report:{ok:false,finished:false,run_id:'cancelled'},
+    progress:{ok:false,phase:'initialize',checks:[{id:'cook',status:'running'}]}})
+  assert.equal('builder' in inFlight.progress,false)
+  assert.equal('execution' in inFlight.progress.checks[0],false)
+  assert.deepEqual(JSON.parse(JSON.stringify(inFlight)),inFlight,'cancelled progress preserves absent optional executions losslessly')
   const failedInventory={...inventory,ok:false,process:{exit_code:1}}
   const summaryInventory=isolatedJobSummary(failedInventory)
   assert.equal(summaryInventory.error,'worker error')
@@ -112,7 +120,16 @@ try {
   assert.equal(tool.output.render({},read).filter(item=>item.type==='image').length,1)
   assert.equal(tool.presentResult({}, {meta:{canonical:read},content:[]}).title,'独立 Houdini · 已完成');
   assert.equal(tool.presentResult({}, {meta:{canonical:{report:{finished:true,ok:false}}},content:[]}).title,'独立 Houdini · 失败');
-  assert.deepEqual(JSON.parse(JSON.stringify(read)),read,'public canonical values are lossless JSON')
+  assert.deepEqual(JSON.parse(JSON.stringify(read)),read,'public returned values remain lossless JSON')
+  const logMeta=tool.output.presentationMeta({},echoed)
+  assert.equal(logMeta.canonical.process.stdout,undefined,'session projection does not duplicate the recorded report through process stdout')
+  assert.equal(logMeta.canonical.report.result.builder.result,undefined,'archived execution values are not copied into browser history')
+  assert.equal(logMeta.canonical.report.result.builder.details.projection,'dsh-houdini/execution-facts-v1')
+  assert.equal(logMeta.canonical.report.result.builder.outcome.batch,'completed')
+  assert.equal(logMeta.canonical.report.result.visual_artifacts.length,1,'builder images stay addressable in lightweight history')
+  assert.deepEqual(tool.output.render({},echoed),renderIsolatedResult(echoed),'model rendering still consumes the complete original report')
+  assert.equal(echoed.process.stdout,JSON.stringify(result.report),'the original process result is unchanged by its log projection')
+  assert.deepEqual(JSON.parse(JSON.stringify(logMeta)),logMeta,'omitted process/worker fields stay lossless through the actual DSH metadata contract')
   await fs.writeFile(path.join(output,'artifacts/image/test.png'),'changed after check')
   const changed=await executeIsolated(ctx,exec,{operation:'read',output_dir:output},runtimeResolver,runner)
   assert.equal(changed.imageAttachments[0].attachment,undefined)

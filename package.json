@@ -99,8 +99,7 @@
     "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3 || 0.2.1-rc.5",
     "@deepseek-ai/dsh-win32-process": "0.2.1-rc.3 || 0.2.1-rc.5",
     "@deepseek-ai/schemastery": "3.18.5",
-    "koffi": "3.1.1",
-    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.3 || 0.2.1-rc.5"
+    "koffi": "3.1.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
@@ -123,12 +122,10 @@
     "koffi": "3.1.1",
     "typescript": "^5",
     "@deepseek-ai/dsh-app-boot": "0.2.1-rc.5",
-    "@types/semver": "7.8.0",
     "@deepseek-ai/dsh-llm": "0.2.1-rc.5"
   },
   "dependencies": {
-    "zod": "4.6.7",
-    "semver": "7.8.5"
+    "zod": "4.6.7"
   },
   "engines": {
     "dsh": "0.2.1-rc.3 || 0.2.1-rc.5"

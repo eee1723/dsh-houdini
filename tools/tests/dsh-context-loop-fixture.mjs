@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url'
 import {createHash,randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs'
+import {expandArchivedExecution} from '../trace-session-lib.mjs'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES}
   from '../../lib/generated-verb-contract.js'
 
@@ -16,7 +17,7 @@ export const inject = ['loader', 'llm', 'sessions', 'agents', 'sessionController
 const provider = 'houdini-context-fixture', model = 'scripted-local'
 const defaultRuntimeId = 'a'.repeat(32), jobId = 'b'.repeat(12)
 const largePayload = 'FIXTURE_BULK_BEGIN:' + 'x'.repeat(70000) + ':FIXTURE_BULK_END'
-const nestedCanonical=event=>event?.data?.meta?.canonical??event?.data?.content
+const nestedCanonical=event=>expandArchivedExecution(event?.data?.meta?.canonical)??event?.data?.content
   ?.map(block=>{try{return JSON.parse(block.text)}catch{return null}})
   .find(value=>value?.kind==='dsh-houdini/execution-v1')?.value
 
@@ -297,7 +298,8 @@ export function apply(ctx) {
           assert(nestedVisible.includes('FIXTURE_UNKNOWN_PARAMETER')&&nestedVisible.includes(canonical.details.sha256),
             'the final provider receives the nested actionable error and its exact original detail reference')
           const nativeLarge=events.find(event=>event.type==='tool/result'&&event.data?.message?.source?.callId==='context-0')
-          assert.equal(nativeLarge?.data?.meta?.canonical?.result?.payload,largePayload,'later native and PTC steps preserve earlier full canonical values')
+          const retained=expandArchivedExecution(nativeLarge?.data?.meta?.canonical)
+          assert.equal(retained?.result?.payload,largePayload,'later native and PTC steps expand the same original archive')
         }
         const snapshots = options.messages.map(message => message.content.filter(block => block.type === 'text')
           .map(block => block.text).join('\n')).filter(text => text.includes('Houdini metadata observation.'))
@@ -307,7 +309,7 @@ export function apply(ctx) {
             const visible=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
             for(const fact of ['selected_final_primitives','geometry_scope','full_output',geometryReceipt.result.results[0].geometry_restore.full_output.baseline.sha256])assert(visible.includes(fact),fact);
           }
-          const canonical=ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+geometryStart)?.data?.meta?.canonical
+          const canonical=expandArchivedExecution(ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+geometryStart)?.data?.meta?.canonical)
           assert.deepEqual(canonical?.result,geometryReceipt.result,'final-output selection and whole-output restoration stay canonical')
         }
         if(hdaReceipt && step>hdaStart){
@@ -318,8 +320,8 @@ export function apply(ctx) {
             for(const fact of [offset===0?'definition_rebuild_descendants':'editable_discarded_descendants',hdaReceipt.result.plan_sha256])assert(visible.includes(fact),fact)
             for(const [node] of hdaReceipt.result.editable_discarded_descendants)assert(visible.includes(node),'editable discard target stays visible')
           }
-          const native=ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/result'
-            && e.data?.message?.source?.callId==='context-'+hdaStart)?.data?.meta?.canonical
+          const native=expandArchivedExecution(ctx.sessions.get(options.sessionId).snapshotEvents().find(e=>e.type==='tool/result'
+            && e.data?.message?.source?.callId==='context-'+hdaStart)?.data?.meta?.canonical)
           assert(native?.details?.stored,'full native receipt must be retained before projection')
           const archive=fs.readFileSync(native.details.path)
           assert.equal(createHash('sha256').update(archive).digest('hex'),native.details.sha256)
@@ -340,7 +342,7 @@ export function apply(ctx) {
           }
           const native=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+scriptStart)
           assert.equal(native?.data?.message?.isError,false,'native script arguments must pass the actual mounted tool schema')
-          preserve(native?.data?.meta?.canonical)
+          preserve(expandArchivedExecution(native?.data?.meta?.canonical))
           const nativeMessage=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+scriptStart)
           assert(nativeMessage?.content.some(b=>b.type==='text'&&b.text.includes(scriptFixture.record.sha256)),
             'the actual provider receives the exact native script fingerprint')
@@ -396,7 +398,7 @@ export function apply(ctx) {
             const event=offset===0
               ? events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===callId)
               : events.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec'&&e.data?.parentCallId===callId)
-            const canonical=offset===0?event?.data?.meta?.canonical:nestedCanonical(event)
+            const canonical=offset===0?expandArchivedExecution(event?.data?.meta?.canonical):nestedCanonical(event)
             for(const [key,value] of Object.entries(renderReceipt))assert.deepEqual(canonical?.[key],value,
               `native/PTC render consumption preserves the original Bridge ${key}`)
           }
@@ -444,8 +446,8 @@ export function apply(ctx) {
             'FIXTURE_EFFECT_UNVERIFIED','FIXTURE_GEOMETRY_UNVERIFIED','houdini_resource']) {
             assert(visible.includes(marker),'critical recovery/check/detail information must survive DSH truncation: '+marker)
           }
-          const canonical = ctx.sessions.get(options.sessionId).snapshotEvents().find(event =>
-            event.type === 'tool/result' && event.data?.message?.source?.callId === 'context-0')?.data?.meta?.canonical
+          const canonical = expandArchivedExecution(ctx.sessions.get(options.sessionId).snapshotEvents().find(event =>
+            event.type === 'tool/result' && event.data?.message?.source?.callId === 'context-0')?.data?.meta?.canonical)
           assert.equal(canonical?.result?.payload,largePayload,'canonical result must remain lossless')
           assert.equal(canonical?.details?.stored,true,'the real runtime must retain details')
           assert(visible.includes(canonical.details.sha256),'provider must receive the actual retained detail reference')
@@ -474,8 +476,8 @@ export function apply(ctx) {
           assert(visible.includes(JSON.stringify(expected.outcome)),'actual model input receives the Python outcome')
           assert.match(visible,name==='caught_read'?/Batch completed; one or more operations raised errors/:/checks failed or contain warnings/)
           assert.doesNotMatch(visible,/Executed successfully/)
-          const canonical=ctx.sessions.get(options.sessionId).snapshotEvents().find(event=>
-            event.type==='tool/result' && event.data?.message?.source?.callId===callId)?.data?.meta?.canonical
+          const canonical=expandArchivedExecution(ctx.sessions.get(options.sessionId).snapshotEvents().find(event=>
+            event.type==='tool/result' && event.data?.message?.source?.callId===callId)?.data?.meta?.canonical)
           assert.deepEqual(canonical.outcome,expected.outcome)
           assert.deepEqual(canonical.result,expected.result,'fallback and scoped validation are preserved')
           assert.equal(snapshots.length,requests[9].snapshotCount,'caught read/returned validation adds no duplicate scene snapshot')
@@ -512,7 +514,7 @@ export function apply(ctx) {
           assert.equal(events.length,2+(surfaceMethod?surfaceResources.filter(r=>r.kind!=='skill').length:0),'native and nested on-demand reference reads both execute')
           assert(events.every(s=>!s.failed),'reference delivery cannot be inferred from configuration')
         }
-        const nativeCatalog=currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+catalogStart)?.data?.meta?.canonical
+        const nativeCatalog=expandArchivedExecution(currentEvents.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='context-'+catalogStart)?.data?.meta?.canonical)
         if(catalogReceipt && step>catalogStart){
           assert.deepEqual(nativeCatalog.result,catalogReceipt.result,'native provider result preserves the selected catalog fields')
           if(catalogReceipt.result.conditions){

@@ -307,6 +307,53 @@ def artifact_target(directory, check):
     return target
 
 
+def visual_artifacts(directory, executions, checks):
+    """Record run-local images from actual returned executions, not just checks.
+
+    Image transfer is separate from execution success. Every read is content
+    addressed and later attachment verifies the same bytes again.
+    """
+    rows, seen = [], set()
+
+    def add(path, *, role=None, source=None, status='passed', error=None):
+        key = str(path).casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        row = {'id': 'visual-' + str(len(rows)), 'kind': 'render', 'status': status,
+               'artifact': {'file': path}, 'semantic_status': 'unverified'}
+        if role is not None:
+            row['role'] = role
+        if source is not None:
+            row['source'] = source
+        if error is not None:
+            row['error'] = error
+        rows.append(row)
+
+    for envelope in executions:
+        for candidate in envelope.get('artifactCandidates', []):
+            value = candidate.get('path')
+            if not isinstance(value, str) or not value.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                continue
+            try:
+                path = Path(value).resolve()
+                relative = path.relative_to(directory.resolve()).as_posix()
+                artifact = regular_file(directory, relative)
+                add(relative, role=candidate.get('role'), source=candidate.get('source'))
+                rows[-1]['artifact'].update(bytes=artifact.stat().st_size, sha256=digest(artifact))
+            except Exception as error:
+                add(value, role=candidate.get('role'), source=candidate.get('source'),
+                    status='failed', error=_brief_text(str(error) or type(error).__name__))
+    for check in checks:
+        artifact = check.get('artifact', {})
+        value = artifact.get('file')
+        if check.get('status') == 'passed' and isinstance(value, str) and value.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+            add(value, role='visual-check', source='manifest_check')
+            if 'bytes' in artifact and 'sha256' in artifact:
+                rows[-1]['artifact'].update(bytes=artifact['bytes'], sha256=artifact['sha256'])
+    return rows
+
+
 def manifest_input_root(path, manifest):
     value = manifest.get('input_root')
     if value is None:
@@ -636,6 +683,7 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POL
             builder = read_execution(output_dir, result.get('builder', {}))
             checked_executions = [read_execution(output_dir, row.get('execution', {})) if isinstance(row, dict) else {}
                                   for row in result.get('checks', [])]
+            result['visual_artifacts'] = visual_artifacts(output_dir, [builder, *checked_executions], result.get('checks', []))
             report['result'] = result
         else:
             result = {}

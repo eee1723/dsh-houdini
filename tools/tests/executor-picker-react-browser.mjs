@@ -41,8 +41,7 @@ const createUi=factories.createHoudiniDesktopUi;
 let selected=null,session='chat-a',hidden=false,mode='ready',listGate=null,releaseList=null,launchGate=null,releaseLaunch=null;
 let onlyCurrent=false,prepareFailure=false,prepareGate=null,releasePrepare=null,reverseRows=false;
 let generation={id:1},launchPhase='ready',loseActionReply=false,lastLaunch=null;
-let pluginUpdateState='available';
-window.fixturePluginUpdate=value=>{pluginUpdateState=value;};
+let componentSetup={state:'ready',message:'组件已自动准备'};
 const tickets=new Map(),listeners=new Set(),nativeListeners=new Set(),generationListeners=new Set(),calls=[];
 const viewListeners=new Set(),formListeners=new Set(),credentialEvents=new Set(),opened=[];
 let view='project',videoRevision={revision:1,status:'ready',writable:true},rejectKey=false,losePrompt=false,secretOnly=true;
@@ -76,8 +75,7 @@ if(method==='credentials/set'){
  videoFacts.service.credential.configured=true;credentialEvents.forEach(fn=>fn());return{ok:true};
 }
 if(method==='session/prompt'){if(losePrompt){losePrompt=false;throw Error('Fixture: prompt receipt lost')}return{ok:true,value:{accepted:true}};}
-if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true}};
-if(method==='houdiniFrontend/pluginUpdates')return{ok:true,value:pluginUpdateState==='available'?{state:'available',title:'有可选更新',message:'当前版本可以继续使用，可在方便时更新。',currentVersion:'0.1.3',hostVersion:'0.2.1-rc.5',canIgnore:true,ignoredVersion:'',checkedAt:Date.now(),update:{version:'0.1.4',url:'https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.4',summary:'改善更新提醒和工程选择。',urgency:'optional'}}:{state:'unknown',title:'暂时无法检查更新',message:'请稍后再试。当前工程可以继续使用。',checkedAt:Date.now()}};
+if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true,componentSetup:structuredClone(componentSetup)}};
 if(method==='houdiniFrontend/projectInstallations')return{ok:true,value:[{hfs:'C:/Program Files/Side Effects Software/Houdini 22.0.368',version:'22.0.368',series:'22.0'}]};
 if(method==='houdiniFrontend/projectAction'){
  const input=payload.args.input;if(!/^[a-f0-9]{32}$/.test(input.requestId))throw Error('Stable request identity missing');lastLaunch=input.requestId;
@@ -92,21 +90,26 @@ if(method==='houdiniFrontend/projectLaunchDetach'){
 if(method==='houdiniFrontend/projectLaunchResume'){
  const ticket=tickets.get(payload.args.input.id);Object.assign(ticket,{phase:'waiting',stage:'binding',message:'Host: 正在复核原启动回执'});return{ok:true,value:structuredClone(ticket)};
 }
-if(method==='houdiniFrontend/prepareBridge'){if(prepareGate)await prepareGate;if(prepareFailure)return{ok:false,error:{message:'Command failed: powershell.exe install.ps1\\nFixture: access denied while updating components.'}};return{ok:true,value:{message:'夹具：Houdini 组件已准备；已有窗口未重启。'}};}
+if(method==='houdiniFrontend/prepareBridge'){
+ if(prepareGate)await prepareGate;
+ if(prepareFailure){componentSetup={state:'failed',message:'自动准备未完成，可重试。'};return{ok:false,error:{message:'Command failed: powershell.exe install.ps1\\nFixture: access denied while updating components.'}};}
+ componentSetup={state:'ready',message:'夹具：Houdini 组件已准备；已有窗口未重启。'};return{ok:true,value:{message:componentSetup.message}};
+}
 if(method==='houdiniFrontend/projectPresence'){if(listGate)await listGate;return{ok:true,value:(reverseRows?[...rows].reverse():rows).filter(row=>!onlyCurrent||row===rows[0]).map(presence)};}
 if(method==='houdiniTargets/select'){const input=payload.args.input,row=rows.find(row=>row.executor_id===input.executorId);if(!row||row.scene_epoch!==input.sceneEpoch||row.hip_path!==input.expectedHip)return{ok:false,error:{message:'Fixture: scene changed; choose the window again.'}};selected=row;return{ok:true,value:{status:'selected',selectedTarget:selected}};}
 if(method==='houdiniTargets/clear'){selected=null;return{ok:true,value:{selectedTarget:null}};}
 return{ok:true,value:{}};}}};
 const selection={key:session};
 const owner={sessionStatus:{getSnapshot:()=>native,subscribe:fn=>{nativeListeners.add(fn);return()=>nativeListeners.delete(fn)}},adapter:{current:{getSnapshot:()=>selection,subscribe:()=>()=>{}}}};
-const workbench=createUi(connection,owner,{refreshProjections:async()=>publish(),list:{getSnapshot:()=>projection,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}}});
+const workbench=createUi(connection,owner,{refreshProjections:async()=>publish(),list:{getSnapshot:()=>projection,subscribe:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}}},undefined,
+{openBundle(name){opened.push({kind:'plugin',name});}});
 const video=factories.createVideoSettings(connection,{get:()=>({getSnapshot:()=>videoRevision,subscribe:fn=>{formListeners.add(fn);return()=>formListeners.delete(fn)}})},
 {$on:(name,fn)=>{if(name!=='credentials/reference-updated')throw Error(name);credentialEvents.add(fn);return()=>credentialEvents.delete(fn);}});
 const props={sessionId:session,useSessions:selector=>React.useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn)},()=>selector(projection))};
 function App(){const preset=props.useSessions(state=>state.byId[session].projectionValues.agentPreset);const active=React.useSyncExternalStore(fn=>{viewListeners.add(fn);return()=>viewListeners.delete(fn)},()=>view);return React.createElement(React.Fragment,null,preset==='houdini'&&React.createElement(workbench.Lifecycle),React.createElement('div',{className:'fixture-toolbar'},React.createElement('span',null,'旋转船体'),React.createElement(workbench.Label,props)),active==='video'&&React.createElement(sdk['@deepseek-ai/dsh-client-ui-primitives'].Modal,{open:true,onClose:closeVideo,title:'设置',closeLabel:'关闭设置',shortcutModal:'settings',className:'fixture-settings-modal'},React.createElement(video,{close:closeVideo})));}
 sdk['react-dom/client'].createRoot(document.querySelector('#fixture')).render(React.createElement(App));
 const initialRow={...rows[0]},initialOther={...rows[1]};
-window.fixture={calls,onlyCurrent(value){onlyCurrent=value;document.dispatchEvent(new Event('visibilitychange'));},reverse(value){reverseRows=value;document.dispatchEvent(new Event('visibilitychange'));},otherScene(){rows[1]={...rows[1],hip_path:'D:/岩石实验/changed.hip',scene_epoch:'5'.repeat(32)};document.dispatchEvent(new Event('visibilitychange'));},restoreOther(){rows[1]={...initialOther};document.dispatchEvent(new Event('visibilitychange'));},failPrepare(value){prepareFailure=value;},holdPrepare(){prepareGate=new Promise(resolve=>releasePrepare=resolve);},releasePrepare(){prepareGate=null;releasePrepare?.();releasePrepare=null;},selection:()=>({hip:selected?.hip_path,isNew:selected?.hip_is_new,cwd:projection.byId[session].cwd}),
+window.fixture={calls,onlyCurrent(value){onlyCurrent=value;document.dispatchEvent(new Event('visibilitychange'));},reverse(value){reverseRows=value;document.dispatchEvent(new Event('visibilitychange'));},otherScene(){rows[1]={...rows[1],hip_path:'D:/岩石实验/changed.hip',scene_epoch:'5'.repeat(32)};document.dispatchEvent(new Event('visibilitychange'));},restoreOther(){rows[1]={...initialOther};document.dispatchEvent(new Event('visibilitychange'));},componentSetup(value){componentSetup=value;document.dispatchEvent(new Event('visibilitychange'));},failPrepare(value){prepareFailure=value;},holdPrepare(){prepareGate=new Promise(resolve=>releasePrepare=resolve);},releasePrepare(){prepareGate=null;releasePrepare?.();releasePrepare=null;},selection:()=>({hip:selected?.hip_path,isNew:selected?.hip_is_new,cwd:projection.byId[session].cwd}),
 unsaved(){rows[0]={...initialRow,hip_path:'C:/项目/旋转船体/untitled.hip',hip_is_new:true,label:'未保存工程'};selected={...rows[0]};publish();document.dispatchEvent(new Event('visibilitychange'));},
 saveAs(){rows[0]={...rows[0],hip_path:'D:/交付/船体完成.hip',hip_is_new:false,workspace_path:'D:/交付'};document.dispatchEvent(new Event('visibilitychange'));},
 restoreScene(){rows[0]={...initialRow};selected=rows[0];publish();document.dispatchEvent(new Event('visibilitychange'));},videoOpen(){view='video';notifyView();},videoClose:closeVideo,videoUpdate:updateVideo,rejectKey(value){rejectKey=value;},losePrompt(){losePrompt=true;},secretOnly:()=>secretOnly,opened,
@@ -127,7 +130,7 @@ async function evaluate(expression){const value=await call('Runtime.evaluate',{e
 async function until(expression){for(let n=0;n<150;n++){if(await evaluate('Boolean('+expression+')'))return;await sleep(100)}throw Error('Not settled: '+expression)}
 async function click(selector){const box=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing '+${JSON.stringify(selector)});if(!e.getClientRects().length)throw Error('Hidden '+${JSON.stringify(selector)});e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);await call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...box});await call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...box});await sleep(120)}
 async function section(name){const selector='[data-houdini-menu-section="'+name+'"]';if(!await evaluate('document.querySelector('+JSON.stringify(selector)+').open'))await click('[data-houdini-menu-toggle="'+name+'"]');await until('document.querySelector('+JSON.stringify(selector)+').open')}
-async function projectAction(name){await section(['clear','prepareBridge'].includes(name)?'management':'project');await click('[data-houdini-project-action="'+name+'"]')}
+async function projectAction(name){if(['clear','prepareBridge','pluginManager'].includes(name))await section('management');await click('[data-houdini-project-action="'+name+'"]')}
 async function key(key,code,virtual){await call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:virtual,...(key==='Enter'?{text:'\r'}:key===' '?{text:' '}:{} )});await call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:virtual});await sleep(80)}
 async function screenshot(name){const shot=await call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,name+'.png'),Buffer.from(shot.data,'base64'))}
 const primaryColors={}
@@ -175,15 +178,11 @@ try{
  await screenshot('choose-wide')
  assert.equal(await evaluate('document.querySelector("[data-houdini-target]").dataset.houdiniTarget'),'a'.repeat(32))
  await key('Home','Home',36)
- assert.equal(await evaluate('document.activeElement.querySelector("[data-houdini-project-action]").dataset.houdiniProjectAction'),'pluginUpdates','an available update has a visible keyboard-reachable entry')
+ assert.equal(await evaluate('document.activeElement.querySelector("[data-houdini-project-action]").dataset.houdiniProjectAction'),'open','primary project actions are keyboard-reachable without expanding a section')
  await key('ArrowDown','ArrowDown',40)
- assert.equal(await evaluate('document.activeElement.dataset.houdiniMenuToggle'),'project')
- await key('Enter','Enter',13);await until('!document.querySelector("[data-houdini-menu-section=project]").open')
- await key(' ','Space',32);await until('document.querySelector("[data-houdini-menu-section=project]").open')
- await key('Enter','Enter',13);await until('!document.querySelector("[data-houdini-menu-section=project]").open')
- await key('ArrowDown','ArrowDown',40);assert.equal(await evaluate('document.activeElement.dataset.houdiniMenuToggle'),'management','closed project actions are skipped')
- await key('ArrowDown','ArrowDown',40)
- assert.equal(await evaluate('document.activeElement.querySelector("[data-houdini-target]").dataset.houdiniTarget'),'a'.repeat(32),'keyboard reaches the visible candidate, never a folded action')
+ assert.equal(await evaluate('document.activeElement.querySelector("[data-houdini-project-action]").dataset.houdiniProjectAction'),'new')
+ for(let attempt=0;attempt<3&&!await evaluate('!!document.activeElement.querySelector("[data-houdini-target]")');attempt++)await key('ArrowDown','ArrowDown',40)
+ assert.equal(await evaluate('document.activeElement.querySelector("[data-houdini-target]")?.dataset.houdiniTarget'),'a'.repeat(32),'keyboard reaches the visible candidate even while refresh is temporarily disabled')
  await key('Enter','Enter',13)
  await sleep(100)
  assert.equal(await evaluate('fixture.calls.filter(row=>row.method==="houdiniTargets/select").length'),1,'Enter invokes selection: '+JSON.stringify(await evaluate('fixture.calls')))
@@ -194,13 +193,11 @@ try{
  await evaluate('fixture.saveAs()');await until('document.querySelector("[data-houdini-project-name]").textContent==="船体完成.hip"')
  await click('[data-houdini-project-label]');await until('document.querySelector(".dsh-houdini-target-current")?.textContent.includes("船体完成.hip")')
  assert.equal(await evaluate('document.querySelector("[data-houdini-project-info=hip]").textContent.includes("D:/交付/船体完成.hip")'),true)
- assert.deepEqual(await evaluate('[...document.querySelectorAll(".dsh-houdini-target-group")].map(e=>e.textContent)'),['其他工程'])
+ assert.equal(await evaluate('document.querySelector(".dsh-houdini-target-list-heading").textContent.includes("其他工程")'),true)
  assert.equal(await evaluate('document.querySelector("[data-houdini-target]").dataset.houdiniTarget'),'a'.repeat(32))
  assert.deepEqual(await evaluate('fixture.selection()'),selectedBeforeSave,'Save As presentation leaves native selection and cwd unchanged')
  assert.equal(await evaluate(`document.querySelectorAll('[data-houdini-target="${'a'.repeat(32)}"]').length`),1,'current scene appears once')
  await screenshot('save-as-current-scene')
- await section('project');assert.equal(await evaluate('document.querySelector("[data-houdini-project-info=cwd]").textContent'),'C:/项目/旋转船体')
- await screenshot('project-details-expanded')
  await projectAction('reopen');await until('document.querySelector("[aria-label=\\"Houdini 工程路径\\"]")?.value==="D:/交付/船体完成.hip"')
  await screenshot('reopen-current-saved-path')
  await click('[aria-label="关闭打开工程对话框"]');await until('!document.querySelector("[data-houdini-project-dialog]")')
@@ -208,14 +205,13 @@ try{
  // One current window needs no duplicate row or fixed-height empty list.
  await evaluate('fixture.onlyCurrent(true)');await click('[data-houdini-project-label]');await until('document.querySelectorAll("[data-houdini-target]").length===1')
  assert.equal(await evaluate('document.querySelector(".dsh-houdini-target-choices").getBoundingClientRect().height'),0)
- assert(await evaluate('document.querySelector(".dsh-houdini-target-menu").getBoundingClientRect().height<240'))
- const sectionRect=()=>evaluate('(()=>{const r=document.querySelector("[data-houdini-menu-toggle=project]").getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})()')
- const pinned=await sectionRect();await screenshot('compact-single-current')
+ assert(await evaluate('document.querySelector(".dsh-houdini-target-menu").getBoundingClientRect().height<360'))
+ const primaryActionRect=()=>evaluate('(()=>{const r=document.querySelector("[data-houdini-project-action=new]").getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height}})()')
+ const pinned=await primaryActionRect();await screenshot('compact-single-current')
  await evaluate('fixture.onlyCurrent(false)');await until('document.querySelectorAll("[data-houdini-target]").length===2')
- assert.deepEqual(await sectionRect(),pinned,'a new candidate cannot move the project disclosure')
- assert.equal(await evaluate('document.querySelector("[data-houdini-menu-section=project]").open'),false)
+ assert.deepEqual(await primaryActionRect(),pinned,'a new candidate cannot move the primary actions')
  await evaluate('fixture.reverse(true)');await sleep(150)
- assert.equal(await evaluate('document.querySelector("[data-houdini-menu-section=project]").open'),false,'refresh does not open a user-collapsed section')
+ assert.deepEqual(await primaryActionRect(),pinned,'background refresh keeps primary actions stable')
  await evaluate('fixture.reverse(false)')
  // Pointer-down owns the expected scene. A refresh before release must not
  // silently select the new HIP/epoch now rendered in that same window row.
@@ -292,6 +288,8 @@ try{
  await call('Emulation.setDeviceMetricsOverride',{width:420,height:720,deviceScaleFactor:1,mobile:false});await click('[data-houdini-project-label]');await until('document.querySelectorAll("[data-houdini-target]").length===2');await screenshot('choose-narrow-dark')
  const clear=await evaluate(`(()=>{const e=[...document.querySelectorAll('[role="menuitem"]')].find(e=>e.textContent.includes('取消此对话'));if(!e)throw Error('clear item missing');e.dataset.fixtureClear='true';return true})()`);assert(clear)
  await section('management');await click('[data-fixture-clear]');await until('document.querySelector("[data-houdini-project-label]").dataset.state==="unbound"')
+ assert.equal(await evaluate('document.querySelector("[data-houdini-project-action=prepareBridge]")===null'),true,'ready components do not show a redundant install action')
+ await evaluate('fixture.componentSetup({state:"failed",message:"自动准备未完成，可重试。"})')
  await click('[data-houdini-project-label]');await until('document.querySelector("[data-houdini-project-action=prepareBridge]")')
  await evaluate('fixture.failPrepare(true);fixture.holdPrepare()');await projectAction('prepareBridge')
  await click('[data-houdini-menu-toggle=management]');await until('!document.querySelector("[data-houdini-menu-section=management]").open')
@@ -304,21 +302,10 @@ try{
  assert.equal(await evaluate('fixture.calls.find(row=>row.method==="houdiniFrontend/prepareBridge")?.input.sessionId'),'chat-a','first setup remains scoped to the selected Houdini session')
  await screenshot('bridge-setup-in-menu')
  await evaluate('document.querySelectorAll(".dsh-houdini-toast button").forEach(button=>button.click())')
- await section('management');await click('[data-houdini-project-action=pluginUpdates]')
- await until('document.querySelector("[data-houdini-plugin-updates=available]")')
- assert.equal(await evaluate('document.body.innerText.includes("可以继续使用")'),true)
- assert.equal(await evaluate('document.querySelector("[data-houdini-update-notes]").textContent'),'查看更新方法与说明')
- assert.equal(await evaluate('document.body.innerText.includes("0.2.1-rc.5")'),false,'version details stay folded for ordinary users')
- await primaryContrast('[data-houdini-update-notes]','dark-update-notes')
- await screenshot('plugin-update-optional-narrow-dark')
+ await section('management');await click('[data-houdini-project-action=pluginManager]')
+ assert.deepEqual(await evaluate('fixture.opened.filter(row=>row.kind==="plugin")'),[{kind:'plugin',name:'dsh-houdini'}],'the menu delegates installation and updates to the official plugin page')
+ assert.equal(await evaluate('fixture.calls.filter(row=>row.method==="houdiniFrontend/pluginUpdates").length'),0,'no parallel release lookup runs in the scene UI')
  await call('Emulation.setDeviceMetricsOverride',{width:1080,height:720,deviceScaleFactor:1,mobile:false});await evaluate('fixture.dark(false)')
- await primaryContrast('[data-houdini-update-notes]','light-update-notes')
- await screenshot('plugin-update-optional-wide-light')
- await evaluate('fixturePluginUpdate("unknown");[...document.querySelectorAll("button")].find(e=>e.textContent==="重新检查").click()')
- await until('document.querySelector("[data-houdini-plugin-updates=unknown]")')
- assert.equal(await evaluate('document.querySelector("[data-houdini-update-notes]")===null'),true,'failed update lookup has no installation action')
- await screenshot('plugin-update-unavailable-network')
- await key('Escape','Escape',27);await until('!document.querySelector("[data-houdini-plugin-updates]")')
  await evaluate('fixture.preset("standard")');await until('!document.querySelector("[data-houdini-project-label]")&&!document.querySelector("[data-houdini-project-dialog]")')
  await screenshot('standard-mode-clean')
  await evaluate('fixture.preset("houdini")');await until('document.querySelector("[data-houdini-project-label]")')

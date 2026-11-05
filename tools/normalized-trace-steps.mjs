@@ -5,7 +5,7 @@ import {
   rawMethodNames,
   processOutcomeFor,
 } from '../skills/houdini-trace-analysis/scripts/evidence-helpers.mjs';
-import { toolResultCallId, uniqueToolResultEvents } from './trace-session-lib.mjs';
+import { toolResultCallId, uniqueToolResultEvents, expandArchivedExecution, EXECUTION_FACT_PROJECTION } from './trace-session-lib.mjs';
 import { executionResult, returnedExecutions, isHoudiniTool } from '../lib/dsh-adapter.js';
 import { mergeRequestStatus, isPendingRequestStatus } from '../lib/execution-history.js';
 
@@ -133,7 +133,8 @@ export function normalizeTraceSteps(events) {
     const args = parseToolArguments(call.arguments);
     const code = typeof args.code === 'string' ? args.code : '';
     const resultText = toolResultText(message);
-    const outcome = executionResult(event),canonical = outcome?.value;
+    const outcome = executionResult(event),retained = outcome?.value;
+    const canonical = expandArchivedExecution(retained);
     const isHoudini = isHoudiniTool(call.name) || call.name === 'job_output' && outcome?.producer === 'live-job';
     // Isolated operation=read returns the same retained report/images without
     // the run response's top-level ok. Keep its exact public wrapper; nested
@@ -195,7 +196,10 @@ export function normalizeTraceSteps(events) {
         details:execution.details??null})),
       recoveredExecution: envelope?.requestReceipt?.retrieved === true,
       executionReplay,
-      canonicalStatus: envelope ? nested ? 'retained_in_dispatch' : 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
+      canonicalStatus: retained?.details?.projection === EXECUTION_FACT_PROJECTION
+        ? canonical?.details_error ? 'referenced_artifact_unavailable' : 'referenced_artifact_expanded'
+        : envelope ? nested ? 'retained_in_dispatch' : 'retained_in_metadata' : parseJsonBlock(resultText, 'result-details')?.stored ? 'referenced_artifact_only' : 'legacy_model_text',
+      archiveError: canonical?.details_error,
       executionLocation: (call.name === 'houdini_resource' && args.kind === 'result')
         || (call.name === 'houdini_query' && args.result_ref) ? 'host_result_artifact' : null,
       rawUsage,

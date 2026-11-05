@@ -42,7 +42,12 @@ function createNodeDelivery(React, readHoudiniCanonical) {
         context: typeof node.context === "string" ? node.context : null,
         eventSeq: event.seq, index: index, callId: callId, execution: execution });
     });
-    return nodes.length ? { callName: state.callName, nodes: state.nodes.concat(nodes) } : state;
+    if (!nodes.length) return state;
+    var sequence = event.seq || 0, completed = state.completed || {};
+    if (Number.isFinite(completed[callId]) && completed[callId] >= sequence) return state;
+    return { callName: state.callName,
+      nodes: state.nodes.filter(function (node) { return node.callId !== callId; }).concat(nodes),
+      completed: Object.assign({}, completed, { [callId]: sequence }) };
   }
 
   // Native results and nested PTC dispatches share the root call's Context.

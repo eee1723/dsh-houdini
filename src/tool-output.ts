@@ -43,6 +43,40 @@ export function codePresentationInput(args: { code?: string; script?:string; exp
   return args.allow_raw === undefined && args.script === undefined && args.expected_sha256 === undefined ? args.code : args
 }
 
+export const EXECUTION_FACT_PROJECTION = 'dsh-houdini/execution-facts-v1'
+
+/** DSH history needs recovery and delivery facts, not another copy of every
+ * authored result. The immutable archive owns those complete payloads. */
+export function executionLogValue(value: ExecResult): JsonValue {
+  if (object(value.details)?.stored !== true) return value as unknown as JsonValue
+  const { result: _result, evidence: _evidence, stdout: _stdout, images: _images,
+    artifactCandidates: _artifactCandidates, verbs, ...facts } = value as any
+  const compactVerbs = Array.isArray(verbs) ? verbs.map((item: any) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item
+    const { args: _args, kwargs: _kwargs, result: _verbResult, summary: _summary, ...entry } = item
+    return { ...entry, ...((item.verb === 'present_nodes' || item.ok === false) && item.result !== undefined
+      ? { result: item.result } : {}) }
+  }) : undefined
+  const inventory = (rows: unknown, pointer: string) => Array.isArray(rows)
+    ? { count: rows.length, detail_pointer: pointer } : rows
+  const execution = object(value.execution), impact = object(execution?.impact)
+  const transaction = object(value.transaction)
+  return { ...facts, ...(compactVerbs ? { verbs: compactVerbs } : {}),
+    ...(execution ? { execution: { ...execution,
+      ...(impact ? { impact: impact.nodes !== undefined
+        ? { ...impact, nodes: inventory(impact.nodes, '/execution/impact/nodes') } : impact } : {}),
+      ...(execution.outputs !== undefined ? { outputs: inventory(execution.outputs, '/execution/outputs') } : {}),
+    } } : {}),
+    ...(transaction ? { transaction: transaction.nodes !== undefined
+      ? { ...transaction, nodes: inventory(transaction.nodes, '/transaction/nodes') } : transaction } : {}),
+    details: {
+      ...object(value.details), projection: EXECUTION_FACT_PROJECTION,
+      omitted: ['/result', '/evidence', '/stdout', '/images', '/artifactCandidates',
+        '/execution/impact/nodes', '/execution/outputs', '/transaction/nodes',
+        '/verbs/*/args', '/verbs/*/kwargs', '/verbs/*/result', '/verbs/*/summary'],
+    } } as unknown as JsonValue
+}
+
 export function execPresentationMeta(value: ExecResult): PresentationMeta {
   return {
     ok: value.ok,
@@ -51,7 +85,7 @@ export function execPresentationMeta(value: ExecResult): PresentationMeta {
       ? value.imageAttachments.filter(item => object(item)?.attachment).length : 0,
     ...(Array.isArray(value.checks) && value.checks.length ? { checksPending: true } : {}),
     ...(value.outcome ? { outcome: value.outcome } : {}),
-    canonical: value as unknown as JsonValue,
+    canonical: executionLogValue(value),
   }
 }
 
@@ -257,25 +291,22 @@ function renderFields(value: ExecResult): string[] {
       const { ledgerIndex: _ledgerIndex, verb: _verb, ...sourceSummary } = evidence ?? {}
       const sameSummary = summary !== undefined && evidence !== undefined
         && comparisonKey(summary) === comparisonKey(sourceSummary)
-      // An explicit Bridge summary or passed check supports focused output.
-      // Unknown/unclassified results stay inline even when Python succeeded.
       const parameterCatalog = object(summary)?.kind === 'parameter_catalog'
       const hasSelectedResult = !parameterCatalog && value.result !== undefined && verb.ok === true && verb.check_status === 'passed'
       const needsAttention = verb.ok === false || ['failed', 'warning', 'unverified'].includes(String(verb.check_status))
         || (typeof result === 'string' && result.startsWith('[dsh-houdini: JSON value omitted:'))
-      // A catalogue is discovery data, not a passed validation. With no
-      // selected output its full contents are the answer; with __result__ the
-      // caller's filtering wins and the typed catalogue stays in the archive.
       const summarizedResult = sameSummary && (!parameterCatalog
         || (verb.verb === 'list_parms' && verb.ok === true && verb.check_status === undefined
           && Array.isArray(result) && object(summary)?.parameter_count === result.length && value.result !== undefined))
+      const largeRoutineResult = verb.ok === true && (verb.check_status === undefined || verb.check_status === 'passed')
+        && !parameterCatalog && value.result !== undefined && JSON.stringify(result).length > 512
       return {
         ...entry, detail_pointer: `/verbs/${index}`,
         ...(summary !== undefined ? { summary: sameSummary
           ? { evidence_pointer: `/evidence/${evidenceIndex}`, detail_pointer: `/verbs/${index}/summary` }
           : project(summary, `/verbs/${index}/summary`) } : {}),
         ...(verb.verb !== 'verb_help' && result !== undefined
-          ? { result: !needsAttention && (summarizedResult || hasSelectedResult)
+          ? { result: !needsAttention && (summarizedResult || hasSelectedResult || largeRoutineResult)
             ? { detail_pointer: `/verbs/${index}/result` }
             : project(result, `/verbs/${index}/result`) } : {}),
       }
@@ -380,6 +411,15 @@ function utf8Tail(text:string,maxBytes:number):string {
   return chars.slice(start).join('')
 }
 
+function observationText(full: string, maxBytes: number): string {
+  if(Buffer.byteLength(full)<=maxBytes)return full
+  const marker='\n\n… [middle omitted to fit the native job output budget; use the original request/details references; omission is not evidence of absence] …\n\n'
+  const available=maxBytes-Buffer.byteLength(marker)
+  if(available<=0)return utf8Head(full,maxBytes)
+  const headBytes=Math.ceil(available*2/3)
+  return utf8Head(full,headBytes)+marker+utf8Tail(full,available-headBytes)
+}
+
 /** Preserve the renderer's prioritized head and recovery/detail tail. The
  * native finalizer keeps only a tail, so bound before returning through its
  * existing single-text contract; never maintain a second field interpreter. */
@@ -387,12 +427,7 @@ export function renderJobObservation(value: ExecResult, maxBytes: number): strin
   if(!Number.isSafeInteger(maxBytes)||maxBytes<0)throw Error('maxBytes must be a nonnegative safe integer')
   const full=(value.status?renderJobStatus(value as JobStatus):renderExec(value))
     .filter(block=>block.type==='text').map(block=>block.text).join('\n\n')
-  if(Buffer.byteLength(full)<=maxBytes)return full
-  const marker='\n\n… [middle omitted to fit the native job output budget; use the original request/details references; omission is not evidence of absence] …\n\n'
-  const available=maxBytes-Buffer.byteLength(marker)
-  if(available<=0)return utf8Head(full,maxBytes)
-  const headBytes=Math.ceil(available*2/3)
-  return utf8Head(full,headBytes)+marker+utf8Tail(full,available-headBytes)
+  return observationText(full,maxBytes)
 }
 
 export function renderJobHandle(value: JobHandle) {

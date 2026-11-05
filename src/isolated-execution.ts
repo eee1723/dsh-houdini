@@ -16,7 +16,7 @@ import {resolveVideoRuntime} from './video-runtime.js'
 import {localVideoEnvironment} from './video-process.js'
 import {visualCapability} from './image-output.js'
 import {HOUDINI_TOOLS} from './tool-catalog.js'
-import {executionStdout,renderExec} from './tool-output.js'
+import {executionLogValue,executionStdout,renderExec} from './tool-output.js'
 import {projectDirectoryPath} from './project-paths.js'
 
 const CHECKER=fileURLToPath(new URL('../tools/isolated-houdini-check.py',import.meta.url))
@@ -157,13 +157,16 @@ function reportView(report:any) {
     if(!value)return undefined
     return {...value,stdout:executionStdout(value),...(!value.details?{details_pointer:pointer}:{})}
   }
-  return {...report,worker:report.worker?{...report.worker,output:undefined}:undefined,
-    result:result?{...result,builder:execution(result.builder,'/result/builder'),
-      checks:result.checks?.map((check:any,index:number)=>({...check,
-        execution:execution(check.execution,`/result/checks/${index}/execution`)}))}:undefined}
+  const worker=report.worker?Object.fromEntries(Object.entries(report.worker).filter(([key])=>key!=='output')):undefined
+  const builder=execution(result?.builder,'/result/builder'),checks=result?.checks?.map((check:any,index:number)=>{
+    const projected=execution(check.execution,`/result/checks/${index}/execution`)
+    return {...check,...(projected?{execution:projected}:{})}
+  })
+  return {...report,...(worker?{worker}:{}),...(result?{result:{...result,
+    ...(builder?{builder}:{}),...(checks?{checks}:{})}}:{})}
 }
 
-/** Keep large input inventories in native canonical/report.json, not every model turn. */
+/** Keep large input inventories in the run report, not every model turn. */
 function inputStatusCounts(rows:any[]=[]):Record<string,number> {
   return rows.reduce((counts,row)=>{
     const status=String(row.status);counts[status]=(counts[status]??0)+1;return counts
@@ -180,17 +183,38 @@ export function isolatedPresentation(value:any) {
     report[field]={count:rows.length,preview:visible.slice(0,16),omitted:rows.length-Math.min(16,visible.length),
       ...(field==='input_observations'?{status_counts:inputStatusCounts(rows)}:{}),
       details:{path:value.report_path,pointer:'/'+field},
-      scope:'Presentation inventory summary only; complete original rows remain in the native result and report file.'}
+      scope:'Presentation inventory summary only; complete original rows remain in the run report.'}
   }
   const process=value.process&&value.process.exit_code===0&&!value.process.error
-    ?{...value.process,stdout:undefined,...(value.process.stdout?{stdout_location:'Native canonical /process/stdout; the recorded report is displayed once.'}:{})}
+    ?Object.fromEntries(Object.entries(value.process).filter(([key])=>key!=='stdout').concat(
+      value.process.stdout?[['stdout_location','Original tool result /process/stdout; the recorded report is displayed once.']]:[]))
     :value.process
   return {...value,report,...(process?{process}:{}),...(value.progress?{progress:reportView({result:value.progress}).result}:{})}
 }
 
+/** The live tool and isolated reports share one durable execution projection.
+ * Rendering still receives the full report; native and PTC callers keep their
+ * complete structured return value. Only the persisted browser/history copy is
+ * reduced, and only when the original execution has an immutable archive. */
+export function isolatedLogValue(value:any) {
+  if(!value.report)return value
+  const presented=isolatedPresentation(value)
+  const resultFacts=(result:any)=>{
+    if(!result)return result
+    return {...result,
+      ...(result.builder?{builder:executionLogValue(result.builder)}:{}),
+      ...(Array.isArray(result.checks)?{checks:result.checks.map((check:any)=>({...check,
+        ...(check.execution?{execution:executionLogValue(check.execution)}:{})}))}:{})}
+  }
+  const process=value.process?Object.fromEntries(Object.entries(value.process).filter(([key])=>key!=='stdout').concat(
+    value.process.stdout?[['stdout_location','Process stdout is not duplicated in session facts; use the run report and execution archives.']]:[])):undefined
+  return {...presented,report:{...presented.report,...(presented.report.result?{result:resultFacts(presented.report.result)}:{})},
+    ...(presented.progress?{progress:resultFacts(presented.progress)}:{}),...(process?{process}:{})}
+}
+
 /** Header, then execution envelopes through the live result renderer. Do not
  * re-serialize a complete execution/report inside a JSON-escaped text field.
- * Original objects remain in the one native canonical value and run files. */
+ * Original objects remain in the run report and immutable execution archives. */
 export function renderIsolatedResult(value:any):ContentBlock[] {
   const presented=isolatedPresentation(value)
   const blocks:ContentBlock[]=[],executions:{label:string;value:any}[]=[]
@@ -246,13 +270,18 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
   const value:any={kind:'isolated-houdini',run_directory:directory.local,report_path:reportPath,
     report,...(progress?{progress}:{}),scope:SCOPE}
   const attachments=hostService(ctx,'attachments'),images:any[]=[]
-  const checks=(report.result??progress)?.checks??[]
-  const candidates=checks.filter((row:any)=>row.status==='passed'&&row.artifact&&/\.(png|jpe?g|webp)$/i.test(row.artifact.file))
+  const result=report.result??progress,checks=result?.checks??[]
+  const candidates=Array.isArray(result?.visual_artifacts)?result.visual_artifacts:
+    checks.filter((row:any)=>row.status==='passed'&&row.artifact&&/\.(png|jpe?g|webp)$/i.test(row.artifact.file))
   if(attach&&candidates.length){
     const capability=await visualCapability(exec,ctx)
     let total=0
     for(const check of candidates){
       const artifact=check.artifact
+      if(check.status!=='passed'){
+        images.push({from:artifact?.file,error:check.error??'Image artifact was not retained',semantic_status:'unverified'})
+        continue
+      }
       try {
         if(capability.status!=='available')throw Error(capability.reason??'Image input unavailable')
         if(images.filter(row=>row.attachment).length>=attachments.imageLimits.maxImagesPerMessage)throw Error('Native image count limit reached')
@@ -383,7 +412,7 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
       timeout_seconds:{type:'number',description:`Worker time budget in (0, ${inputPolicy.maxTimeoutSeconds}] seconds; default ${inputPolicy.defaultTimeoutSeconds}. Validated before job admission.`},
       memory_mb:{type:'number',description:`Integer process-tree memory budget ${inputPolicy.minMemoryMb}..${inputPolicy.maxMemoryMb} MiB; default ${inputPolicy.defaultMemoryMb}. Not GPU memory; validated before job admission.`}},
-    output:{schema:{type:'json'},render:(_args,value)=>renderIsolatedResult(value),presentationMeta:(_args,value)=>({canonical:value})},
+    output:{schema:{type:'json'},render:(_args,value)=>renderIsolatedResult(value),presentationMeta:(_args,value)=>({canonical:isolatedLogValue(value)})},
     presentCall:args=>({card:'generic',title:args.operation==='read'?'读取独立执行结果':'独立 Houdini 执行',kind:args.operation==='read'?'read':'execute',rawInput:args}),
     presentResult:(_args,result)=>{
       const value=(result.meta as any)?.canonical,report=value?.report

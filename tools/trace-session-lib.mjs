@@ -132,6 +132,39 @@ export function sessionIdFromFile(file) {
   return path.basename(path.dirname(resolveSessionFile(file))).replace(/^session-/, '');
 }
 
+import {EXECUTION_FACT_PROJECTION} from '../lib/tool-output.js';
+export {EXECUTION_FACT_PROJECTION};
+const RESULT_POLICY = JSON.parse(fs.readFileSync(new URL('../houdini/result-detail-policy.json', import.meta.url), 'utf8'));
+const archiveCache = new Map();
+
+/** Expand only the new lightweight fact projection. Historical full canonical
+ * values and current live projections never cause filesystem reads. */
+export function expandArchivedExecution(value) {
+  const details = value?.details;
+  if (details?.projection !== EXECUTION_FACT_PROJECTION) return value;
+  if (details.stored !== true || details.format !== 'returned_bridge_envelope_json'
+      || !/^[0-9a-f]{64}$/.test(details.sha256 || '') || typeof details.path !== 'string'
+      || !Number.isSafeInteger(details.bytes) || details.bytes < 0 || details.bytes > RESULT_POLICY.maxArchiveBytes) {
+    return {...value, details_error: 'Invalid lightweight execution archive reference'};
+  }
+  const key = details.sha256 + ':' + path.resolve(details.path);
+  if (archiveCache.has(key)) return archiveCache.get(key);
+  let expanded = value;
+  try {
+    if (path.basename(details.path) !== details.sha256 + '.json'
+        && !/^check-[a-z0-9_-]{1,48}\.json$/.test(path.basename(details.path))
+        && path.basename(details.path) !== 'builder.json') throw new Error('Unexpected execution archive filename');
+    const bytes = fs.readFileSync(details.path);
+    if (bytes.length !== details.bytes || bytes.length > RESULT_POLICY.maxArchiveBytes
+        || createHash('sha256').update(bytes).digest('hex') !== details.sha256) throw new Error('Execution archive integrity mismatch');
+    expanded = {...JSON.parse(bytes.toString('utf8')), details};
+  } catch (error) {
+    expanded = {...value, details_error: String(error)};
+  }
+  archiveCache.set(key, expanded);
+  return expanded;
+}
+
 /** Provider-reported request accounting, separate from tools and scene effects.
  * Repeated cumulative usage for a request is replaced, never added twice.
  * Missing fields stay unknown. No inference about billing or retained messages.

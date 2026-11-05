@@ -1,6 +1,6 @@
 /** Incremental execution facts owned by DSH's session projection.
- * Complete results stay in DSH's log. Pure transitions return a small delta so
- * offline readers can collect original rows in their own one-shot Maps. */
+ * Complete payloads stay in their immutable archives; DSH history keeps only
+ * the facts needed by live consumers. Pure transitions return a small delta. */
 import {executionCall,executionResult} from './dsh-adapter.js'
 import {HOUDINI_SCENE_TOOLS} from './tool-catalog.js'
 import type {SessionEvent,ExecutionRow} from './execution-history.js'

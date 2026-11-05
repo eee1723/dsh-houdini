@@ -34,7 +34,6 @@ parser.add_argument('--npm',action='store_true',help='Install the frozen artifac
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--hfs',type=Path,help='Also verify the installed tarball with one owned real Houdini GUI')
 parser.add_argument('--legacy-components',action='store_true',help='Seed owned legacy entry/data fixtures before automatic component preparation (requires --hfs)')
-parser.add_argument('--plugin-updates',action='store_true',help='Exercise installed update API with the public feed; offline stays unknown')
 parser.add_argument('--expected-helper-id',help='Verify installed helper sources match an already validated GUI build')
 parser.add_argument('--timeout',type=int,default=600)
 args=parser.parse_args()
@@ -385,13 +384,6 @@ with log.open('wb') as output:
             assert time.monotonic()<deadline,'Installed Desktop integration never became available'
             time.sleep(.1)
         assert rpc('agentPresets/list',{})==facts['roster']
-        if args.plugin_updates:
-            updates=rpc('houdiniFrontend/pluginUpdates',{'input':{}},timeout=20)
-            host_version=facts['graph'].get('release',{}).get('version') if isinstance(facts['graph'],dict) else None
-            assert isinstance(host_version,str) and updates['currentVersion']==manifest['version'] and updates['hostVersion']==host_version,updates
-            assert updates['state'] in {'current','available','unavailable','unknown'},updates
-            report['pluginUpdates']=updates
-            print('PASS installed update API; public release lookup state: '+updates['state']+' (unknown does not mean no update)',flush=True)
         print('PASS packaged official Host modes, scoped tools and root client',flush=True)
         descriptor=json.loads((home/'dsh-houdini/desktop.json').read_text(encoding='utf-8'))
         assert Path(descriptor['pluginRoot']).samefile(installed)

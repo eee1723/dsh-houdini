@@ -46,7 +46,7 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 dsh-houdini@0.1.6
 ```
 
-[npm 包](https://www.npmjs.com/package/dsh-houdini)与[GitHub 正式包及校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.6)提供同一完整安装包，无须解压或运行脚本。仅填写 `dsh-houdini` 可安装 npm 的当前 latest 版本；指定本次安装版本使用上面的写法。包名分发不等于宿主自动更新，已有用户按[更新说明](docs/setup.md#connection--support连接与维护)操作；0.1.1～0.1.3 完成首次更新后才能使用新增的更新提醒。
+[npm 包](https://www.npmjs.com/package/dsh-houdini)与[GitHub 正式包及校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.6)提供同一完整安装包，无须解压或运行脚本。仅填写 `dsh-houdini` 可安装 npm 的当前 latest 版本；指定本次安装版本使用上面的写法。包名分发不等于宿主自动更新，已有用户按[更新说明](docs/setup.md#connection--support连接与维护)在原生插件管理中操作。
 
 若显示“未找到相关插件”，可按[安装说明](docs/setup.md#普通安装)切换到npm官方源，或使用GitHub完整包地址；新版本可能尚未同步到所选镜像。
 
@@ -61,7 +61,7 @@ dsh-houdini@0.1.6
 | 从 DSH Desktop 进入 | 新建或选择 **Houdini 模式** 的对话，在工程控件中绑定已连接窗口，或选择 Houdini 安装后新建场景、打开 HIP。 |
 | 从 Houdini 进入 | 使用 **DSH-Houdini → Open Workspace**，根据当前工程进入同一个 Desktop 中的对应 Houdini 对话。 |
 
-插件在真正新开 Houdini 前自动准备连接组件。已有窗口若尚未加载兼容组件，先在 Desktop 工程控件中选择 **安装 / 更新 Houdini 组件**，再保存并重开对应窗口。每段对话可以明确选择自己的工程；打开其他 HIP 默认使用新进程，保留已有窗口。
+插件启用或更新后会自动安装／更新连接组件，新建工程复用同一准备过程，通常不需要手动安装。已有窗口若仍加载旧组件，保存并重开对应窗口即可；准备失败时工程菜单会提供重试。每段对话可以明确选择自己的工程；打开其他 HIP 默认使用新进程，保留已有窗口。
 
 Houdini 相关控件随当前对话的 **Houdini 模式** 显示，其他模式继续使用 DSH 原有界面。多工程选择、工作区与工程接续见[工程使用说明](docs/multi-instance.md)。
 

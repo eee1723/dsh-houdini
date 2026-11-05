@@ -159,6 +159,9 @@ const declarations={...receipt,result:null,verbs:[receipt.verbs[0],{verb:'presen
 const multiple=projection.definition.update({state:empty},{event:fake('tool/result',{message:{source:{callId:'invalid'}},meta:{canonical:declarations}})})
 assert.equal(multiple.nodes.length,3,'each explicit declaration is retained even without a Python return')
 assert.equal(multiple.nodes[2].index,2,'Host and client share flattened verb-declaration coordinates')
+const repeatedEvent=fake('tool/result',{message:{source:{callId:'invalid'}},meta:{canonical:declarations}})
+const repeated=projection.definition.update({state:multiple},{event:repeatedEvent})
+assert.equal(repeated.nodes.length,multiple.nodes.length,'the same persisted result cannot duplicate cards during replay')
 const liveAssembler=assemble(events.slice(0,2))
 for(const event of events.slice(2)){liveAssembler.append({type:'event',event});liveAssembler.flush()}
 assert.equal(JSON.stringify(projection.forClosing(liveAssembler.snapshot(projection.view.target),owner)),JSON.stringify(cards),'live append and reopened history have the same facts')

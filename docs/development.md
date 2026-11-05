@@ -155,7 +155,7 @@ HIP网络路径改动用`dsh-launcher-preflight.test.py`与隔离H21/H22的`dsh-
 
 新建节点的multiparm初始化由Tab与build_module共用创建层；已有节点的严格设参仍预检现有字段。网络显示输出选择、SOP发布与OBJ可见性是不同职责，底层共用原生旗标操作。观察能力或预算不足返回unverified及范围，非法输入、实际计算失败和恢复失败保持各自错误，不把无法验证当成几何失败或扩大检查预算。
 
-独立执行的大结果在检查器中按整份envelope分配展示预算，完整原值只归档一次；Host不重新推断领域结论。`houdini_resource select`批读小字段，`pointer/offset`读取大字段，两者共享校验与解码。按已有原始回执比较展示体积及实际DSH原生/PTC消费，不以字符减少直接声称推理延迟或任务质量提升。
+独立执行的大结果在检查器中按整份envelope分配展示预算，完整原值只归档一次；Host不重新推断领域结论。builder和checks声明的run内图片按原回执收集并沿同一调用附件返回，不能只覆盖manifest check产物。`houdini_resource select`批读小字段，`pointer/offset`读取大字段，两者共享校验与解码。按已有原始回执比较展示体积及实际DSH原生/PTC消费，不以字符减少直接声称推理延迟或任务质量提升。
 
 验证与改动相称：先构建并运行直接受影响的回归。检查通过且没有新改动或未解问题时，不继续扩大测试。基线收口运行一次现有 Node 套件与文档门；日常无需每次全跑。
 
@@ -268,7 +268,7 @@ USD继承输出用[camera-framing](../tools/tests/dsh-camera-framing.test.py)在
 
 ## 隔离执行与开发工具
 
-文件序列沿[同源输入政策](../houdini/isolated-execution-policy.json)，[公共反例](../tools/tests/fixtures/isolated-file-sequences.json)由唯一Python解析器验证，覆盖步长、负帧、重复、缺失、范围与越界；Host回归消费规划结果，核对每帧原生读取政策和清单字节摘要，真实团队循环检查纯规划在原生job准入之前完成、worker消费展开文件、canonical保留完整执行报告及模型展示摘要。运行清单的读取采用报告预算，作者manifest仍使用独立小文档限额。
+文件序列沿[同源输入政策](../houdini/isolated-execution-policy.json)，[公共反例](../tools/tests/fixtures/isolated-file-sequences.json)由唯一Python解析器验证，覆盖步长、负帧、重复、缺失、范围与越界；Host回归消费规划结果，核对每帧原生读取政策和清单字节摘要，真实团队循环检查纯规划在原生job准入之前完成、worker消费展开文件、run报告与hash归档保留完整执行事实，会话canonical只保留轻量投影及模型展示摘要。运行清单的读取采用报告预算，作者manifest仍使用独立小文档限额。
 
 `houdini_isolated`是模型可调用的一次性独立计算入口，Host实现见[isolated-execution.ts](../src/isolated-execution.ts)，方法由[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)按需维护。Host消费当前DSH任务的文件权限与明确所选登记的静态安装事实，或显式HFS；登记断连不要求live健康。无登记的固定Bridge配置保留在线安装信息入口。复用下述隔离检查器执行builder、已保存HIP副本及加载后的受管准备代码，将实际结果、退出事实和图片交回同一调用；后台运行使用DSH既有job_output/job_kill，read只取原run报告与图片，不连接live。builder/check的原归档沿同一`houdini_resource`分页入口按hash读取；路径来自本对话原生/嵌套回执，不猜文件名、不另存副本，[详情回归](../tools/tests/result-details.test.mjs)覆盖跨目录、失败检查、进度、伪造嵌套字段与损坏文件。省略output_dir时按工作区共享角色分配唯一run，显式和历史路径保持。它不创建另一套团队、常驻worker或完成账本，同一live的作者/节点权限不变。
 
@@ -323,7 +323,7 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 ## 运行与发行
 
-标准交付为包含Houdini/媒体资源的`.tgz`，通过受支持官方Desktop的原生插件管理安装已公开的npm包名、本地绝对路径或tarball URL；公开入口见[安装说明](setup.md)，未完成事项见[H-01](handoff.md#h-01-标准插件发布与用户加载)。源码目录和历史独立运行包不作为标准发行。宿主原生UI新装默认停用，须启用后配置主模型、进入Houdini模式。普通用户新开Houdini前由`DesktopIntegration.installHelper`自动执行包内安装器并消费唯一结构回执；现场菜单的组件安装/更新复用同一路径，不要求用户解压找Install.cmd或配置Node。
+标准交付为包含Houdini/媒体资源的`.tgz`，通过受支持官方Desktop的原生插件管理安装已公开的npm包名、本地绝对路径或tarball URL；公开入口见[安装说明](setup.md)，未完成事项见[H-01](handoff.md#h-01-标准插件发布与用户加载)。源码目录和历史独立运行包不作为标准发行。宿主原生UI新装默认停用，须启用后配置主模型、进入Houdini模式。插件加载后由`DesktopIntegration.installHelper`在后台自动执行包内安装器并消费唯一结构回执；新建工程共享在途准备，运行中发现缺失自动补齐，失败重试复用同一路径，不要求用户解压找Install.cmd或配置Node。
 
 本端安装由[install.ps1](../installer/install.ps1)部署不可变helper并原子切换Package；[legacy-migration.ps1](../installer/legacy-migration.ps1)维护历史生成入口的唯一所有权识别、只读预览、原始字节/SHA256备份、停用和受变更保护的恢复，[uninstall.ps1](../installer/uninstall.ps1)复用同一边界解除登记。仅停用已确认的本插件入口，自定义或混合内容保留并报告；未知canonical冲突在新Houdini进程启动前停止。保留旧运行包、凭据、会话、HIP与其他插件，不自动合并或修复历史。已加载helper仍须保存重开，安装器不杀进程或替换进程内模块。
 

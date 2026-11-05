@@ -102,9 +102,8 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。
 文件按内容hash命名并校验，不跟随单文件symlink；目录必须留在当前workspace。单份上限32MiB。
 通用展示直接消费Bridge的outcome/checks/evidence/execution，不另推导控制、Polygon或接口结论。outcome区分批次是否完成、动词异常与验证结果，已捕获查询异常不改变合法fallback但必须可见。已归档结果的等价JSON子树使用引用，ledger省略可回读的参数；不同内容、诊断字段、状态与范围保持可见。verb_help默认返回简明调用资料，完整契约按需读取。保存失败显示完整返回；历史读取不会重放场景操作。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
-canonical是同一份完整工具返回，metadata供原生事件、UI、审计和状态投影，模型文本从它生成可读视图。
-Code Mode仍按Host协议返回完整canonical值；原生及嵌套事件共用读取规则，取消等无execution字段的回执也保留完整值。
-嵌套事件确实缺少完整值时须由result_ref读取，审计明确标缺口，不从展示文字猜状态。
+Code Mode当前调用按Host协议返回完整结构值，供后续编程消费。持久canonical则只保留恢复、事务、执行身份与节点交付所需的轻量事实；大型作者结果、证据、影响清单和成功动词负载留在唯一hash归档，原生及嵌套事件共用读取规则。只读或归档失败时保留完整正文与原值，不能假装已有归档，这一模式的内存风险单独验证；取消等无execution字段的回执不补造执行事实。
+离线Trace沿`EXECUTION_FACT_PROJECTION`展开归档并保留原details地址；嵌套事件或归档确实缺少完整值时须由result_ref读取，审计明确标缺口，不从展示文字猜状态。
 
 ## 动词目录
 

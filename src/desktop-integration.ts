@@ -120,6 +120,7 @@ export class DesktopIntegration {
   private server?:Server
   private lease?:Awaited<ReturnType<typeof acquireDesktopLease>>
   private preparation?:Promise<HelperInstallResult>
+  private componentSetup:{state:'preparing'|'ready'|'failed';message:string;details?:string}={state:'ready',message:''}
   private readonly components=new ComponentInstallation(this.lifetime.signal)
   private port=0
   constructor(private readonly ctx:Context,private readonly targets:ExecutorController,
@@ -164,6 +165,9 @@ export class DesktopIntegration {
         token:this.token,pluginRoot,executorRegistry:this.paths.registry,launchesRoot:this.paths.launches}),{mode:0o600,flag:'wx'})
       await fs.rename(temporary,this.paths.descriptor)
     }catch(error){await this.dispose();throw error}
+    // Enabling/updating the standard plugin also prepares its own Houdini
+    // helper. This changes only on-disk components, never a running scene.
+    void this.installHelper().catch(error=>{if(!this.lifetime.signal.aborted)this.ctx.logger.warn('Houdini component preparation: '+String(error))})
   }
   async dispose() {
     this.lifetime.abort(Error('Houdini Desktop plugin unloaded'))
@@ -323,7 +327,11 @@ export class DesktopIntegration {
         status=health.runtimeId===record.runtime_id&&health.sceneEpoch===record.scene_epoch?'online':'changed'
         contractVersion=health.executionContractVersion
         verbCatalogHash=health.verbCatalog?.hash
-        if(status==='online')componentUpdate=await this.components.observe(health,record.installation)
+        if(status==='online') {
+          componentUpdate=await this.components.observe(health,record.installation)
+          if(componentUpdate.state==='install'&&this.componentSetup.state==='ready')
+            void this.installHelper().catch(error=>{if(!this.lifetime.signal.aborted)this.ctx.logger.warn('Houdini component repair: '+String(error))})
+        }
         activeRequests=health.activeRequests??0;activeJobs=health.activeJobs??0
       }catch{status='unknown'}
       return {executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
@@ -338,8 +346,10 @@ export class DesktopIntegration {
     return observed
   }
   async listInstallations(){return this.installations()}
+  componentStatus(){return this.componentSetup}
   private installHelper():Promise<HelperInstallResult> {
     if(this.preparation)return this.preparation
+    this.componentSetup={state:'preparing',message:'正在自动安装或更新 Houdini 组件；不会重启已打开的工程。'}
     const pending=(async()=>{
       this.lifetime.signal.throwIfAborted()
       if(this.helperInstaller)return this.helperInstaller()
@@ -357,6 +367,13 @@ export class DesktopIntegration {
       return result
     })()
     this.preparation=pending
+    void pending.then(result=>{
+      this.components.invalidate()
+      this.componentSetup={state:'ready',message:result.message}
+    },error=>{
+      this.components.invalidate()
+      this.componentSetup={state:'failed',message:'自动准备未完成，可在工程菜单中重试。',details:String(error).slice(0,4000)}
+    })
     void pending.finally(()=>{if(this.preparation===pending)this.preparation=undefined}).catch(()=>{})
     return pending
   }
@@ -364,7 +381,7 @@ export class DesktopIntegration {
     const data=input as {sessionId?:string}
     if(!data||Object.keys(data).join(',')!=='sessionId'||typeof data.sessionId!=='string')throw Error('请选择 Houdini 模式的对话。')
     await this.houdiniSession(data.sessionId)
-    try{return await this.installHelper()}finally{this.components.invalidate()}
+    return this.installHelper()
   }
   intent(after:number,signal:AbortSignal){return this.intents.read(after,AbortSignal.any([signal,this.lifetime.signal]))}
   private async houdiniSession(sessionId:string) {

@@ -173,9 +173,10 @@ window.__ModuleLoader__.load({
       '.dsh-houdini-project-chip:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2)}.dsh-houdini-project-chip:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:2px}.dsh-houdini-chip-name{min-width:0;max-width:155px;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}' +
       '.dsh-houdini-chip-status{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding-left:7px;border-left:1px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary)}.dsh-houdini-project-chip>svg{flex:none}.dsh-houdini-state-icon{flex:none}' +
       '.dsh-houdini-project-chip[data-state="ready"] .dsh-houdini-chip-status{color:var(--dsw-alias-state-success-primary,#3da36b)}.dsh-houdini-project-chip[data-state="working"] .dsh-houdini-chip-status,[data-state="working"].dsh-houdini-project-mark{color:var(--dsw-alias-state-business-primary,#649be8)}.dsh-houdini-project-chip[data-state="occupied"] .dsh-houdini-chip-status,.dsh-houdini-project-chip[data-state="changed"] .dsh-houdini-chip-status{color:var(--dsw-alias-state-warn-primary,#c6974c)}' +
-      '.dsh-houdini-target-menu{width:320px;max-width:calc(100vw - 24px);padding:4px!important}.dsh-houdini-target-heading{display:grid;gap:4px;padding:10px 10px 9px}.dsh-houdini-target-heading strong{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}.dsh-houdini-target-heading>span,.dsh-houdini-target-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}' +
-      '.dsh-houdini-target-current{margin:0 0 4px}.dsh-houdini-target-current [role="menuitem"],.dsh-houdini-target-unavailable{min-height:48px}.dsh-houdini-target-unavailable{display:flex;align-items:center;gap:8px;padding:7px 10px;box-sizing:border-box}.dsh-houdini-target-section{border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-section>summary{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;min-height:36px;padding:7px 10px;list-style:none;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}.dsh-houdini-target-section>summary::-webkit-details-marker{display:none}.dsh-houdini-target-section>summary::after{content:"›";font-size:16px;line-height:12px}.dsh-houdini-target-section[open]>summary::after{transform:rotate(90deg)}.dsh-houdini-target-section>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-target-section>summary:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}.dsh-houdini-target-info{display:grid;gap:3px;margin:2px 10px 8px;font-size:11px;line-height:1.5}.dsh-houdini-target-info dt{color:var(--dsw-alias-label-tertiary)}.dsh-houdini-target-info dd{margin:0 0 5px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}' +
-      '.dsh-houdini-target-group{padding:8px 10px 3px;color:var(--dsw-alias-label-tertiary);font-size:10px}.dsh-houdini-target-choices{max-height:min(240px,40vh);overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-error{margin:0 10px 8px;color:var(--dsw-alias-label-secondary);font-size:11px}.dsh-houdini-target-error summary{cursor:pointer}.dsh-houdini-target-error pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:11px/1.5 Consolas,monospace}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}@media(pointer:coarse){.dsh-houdini-target-menu [role="menuitem"],.dsh-houdini-target-section>summary{min-height:44px}}' +
+      '.dsh-houdini-target-menu{width:368px;max-width:calc(100vw - 24px);padding:6px!important}.dsh-houdini-target-heading{display:grid;gap:3px;padding:8px 10px 10px}.dsh-houdini-target-heading strong{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary)}.dsh-houdini-target-heading>span,.dsh-houdini-target-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}' +
+      '.dsh-houdini-target-current{margin:0 2px 8px;padding:4px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1)}.dsh-houdini-target-current [role="menuitem"],.dsh-houdini-target-unavailable{min-height:48px}.dsh-houdini-target-unavailable{display:flex;align-items:center;gap:8px;padding:7px 10px;box-sizing:border-box}.dsh-houdini-target-path{padding:0 10px 7px;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5;overflow-wrap:anywhere}.dsh-houdini-component-notice{margin:4px 2px 8px;padding:9px 10px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);font-size:12px;line-height:1.6}.dsh-houdini-component-notice p{margin:3px 0 0;color:var(--dsw-alias-label-secondary)}.dsh-houdini-component-notice [role="menuitem"]{margin:7px 0 0;padding-left:0}' +
+      '.dsh-houdini-target-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:2px 2px 8px}.dsh-houdini-target-actions [role="menuitem"]{justify-content:center;min-height:38px;border:1px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-layer-1)}.dsh-houdini-target-actions [role="menuitem"]:last-child:nth-child(odd){grid-column:1/-1}.dsh-houdini-target-list-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px 4px;color:var(--dsw-alias-label-tertiary);font-size:11px}.dsh-houdini-refresh{padding:3px 6px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;cursor:pointer}.dsh-houdini-refresh:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.dsh-houdini-refresh:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-1px}.dsh-houdini-refresh:disabled{cursor:default;opacity:.55}' +
+      '.dsh-houdini-target-section{margin-top:4px;border-top:1px solid var(--dsw-alias-border-l1)}.dsh-houdini-target-section>summary{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;min-height:36px;padding:7px 10px;list-style:none;border-radius:var(--dsw-radius-sm);color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer}.dsh-houdini-target-section>summary::-webkit-details-marker{display:none}.dsh-houdini-target-section>summary::after{content:"›";font-size:16px;line-height:12px}.dsh-houdini-target-section[open]>summary::after{transform:rotate(90deg)}.dsh-houdini-target-section>summary:hover{background:var(--dsw-alias-interactive-bg-hover)}.dsh-houdini-target-section>summary:focus-visible{outline:2px solid var(--dsw-focus-ring-color);outline-offset:-2px}.dsh-houdini-target-choices{max-height:min(280px,42vh);overflow:auto}.dsh-houdini-target-list{overflow:visible}.dsh-houdini-target-list [role="menuitem"]{height:auto;min-height:48px;padding-top:7px;padding-bottom:7px}.dsh-houdini-target-row{display:grid;gap:3px;min-width:0;flex:1}.dsh-houdini-target-title{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis}.dsh-houdini-target-selected{margin-left:auto;color:var(--dsw-alias-state-business-primary)}.dsh-houdini-target-error{margin:0 10px 8px;color:var(--dsw-alias-label-secondary);font-size:11px}.dsh-houdini-target-error summary{cursor:pointer}.dsh-houdini-target-error pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:11px/1.5 Consolas,monospace}.dsh-houdini-target-message{margin:0;padding:8px 10px;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:normal;line-height:1.6}@media(pointer:coarse){.dsh-houdini-target-menu [role="menuitem"],.dsh-houdini-target-section>summary{min-height:44px}}' +
       '@media(max-width:540px){.dsh-houdini-project-chip{max-width:calc(100vw - 130px);gap:5px;padding:0 7px}.dsh-houdini-chip-name{max-width:105px}.dsh-houdini-chip-status{font-size:10px;padding-left:5px}}' +
       '.dsh-support-modal{width:min(720px,100%);max-height:100%;gap:16px}' +
       '.dsh-support-content{min-height:0;overflow:hidden;flex:1}' +
@@ -374,16 +375,14 @@ window.__ModuleLoader__.load({
       var statuses = props.useNativeStatus ? props.useNativeStatus() : null;
       var status = houdiniPresence(project, presence, props.sessionId, statuses), display = houdiniDisplayProject(project, presence), target = houdiniProjectTarget(display);
             return React.createElement(ui.Tooltip, { side: "bottom", align: "end", delayMs: 400, portal: true, maxWidth: 360, openOnClick: false,
-        label: (target ? houdiniProjectName(display) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail + (props.pluginUpdateAvailable ? "\n插件有更新，可在工程菜单中查看。" : "") },
+        label: (target ? houdiniProjectName(display) + (target.hip_path ? "\n" + target.hip_path : "") + "\n" : "") + status.label + " · " + status.detail },
         React.createElement("button", { type: "button", className: "dsh-houdini-project-chip", onClick: props.onProjectMenuClick,
           "aria-haspopup": "menu", "aria-expanded": !!props.projectMenuOpen,
-          "aria-label": "Houdini 工程：" + (target ? houdiniProjectName(display) + " · " : "") + status.label + (props.pluginUpdateAvailable ? "，插件有更新" : ""),
+          "aria-label": "Houdini 工程：" + (target ? houdiniProjectName(display) + " · " : "") + status.label,
           "data-state": status.state, "data-houdini-presence": status.status, "data-houdini-project-label": true },
           React.createElement(HoudiniProjectIcon),
           React.createElement("span", { className: "dsh-houdini-chip-name", "data-houdini-project-name": true }, target ? houdiniProjectName(display) : "Houdini"),
           React.createElement("span", { className: "dsh-houdini-chip-status" }, React.createElement(HoudiniTargetStateIcon, { state: status.state }), status.label),
-          props.pluginUpdateAvailable && React.createElement("span", { "aria-label": "插件有更新", "data-houdini-update-indicator": true,
-            style: { display: "inline-block", flex: "none", width: 5, height: 5, borderRadius: "50%", background: "var(--dsw-alias-state-warn-primary,#c6974c)" } }),
           React.createElement("svg", { width: 10, height: 10, viewBox: "0 0 12 12", fill: "none", stroke: "currentColor", strokeWidth: 1.3, "aria-hidden": true }, React.createElement("path", { d: "m3 4.5 3 3 3-3" }))));
     }
 
@@ -630,10 +629,9 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace) {
+    function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace, pluginNavigation) {
       var state = { available: false, visible: true, records: {}, observedAt: 0 }, listeners = new Set(), notice = null, serial = 0;
-      var refreshPresence = function () {}, dialog = null;
-      var updates = { busy: false, value: null }, updateRequest = null, updateAttempt = 0, updateGeneration = null, lastUpdateAttempt = 0, updateDialogRevision = 0, updatesOpen = false, disposed = false;
+      var refreshPresence = function () {}, dialog = null, disposed = false;
       var launchOwnership = createLaunchOwnership(connection);
       var nativeWindow = typeof window !== "undefined" && window.dshDesktop && typeof window.dshDesktop.deviceInfo === "function";
       var windowPin = createWindowPinUi(connection, function () { publish(Object.assign({}, state)); }, notify, { enabled: !!nativeWindow });
@@ -644,69 +642,6 @@ window.__ModuleLoader__.load({
       function usePresence() { return React.useSyncExternalStore(subscribe, snapshot); }
       function useNativeStatus() { return React.useSyncExternalStore(nativeSource.subscribe, nativeSource.getSnapshot); }
       function notify(text) { notice = { id: ++serial, text: text }; publish(Object.assign({}, state)); }
-      function hasPluginUpdate() {
-        var value = updates.value, update = value && value.state === "available" && value.update;
-        return !!(update && (update.urgency !== "optional" || update.version !== value.ignoredVersion));
-      }
-      async function checkPluginUpdates(refresh, ignoreVersion, readPreference) {
-        if (updateRequest) return;
-        var generation = connection.generation.getSnapshot();
-        if (!generation || typeof document !== "undefined" && document.visibilityState === "hidden") return;
-        var now = Date.now(), previous = updates.value;
-        if (!refresh && !ignoreVersion && !readPreference && updateGeneration === generation && previous && now < (previous.state === "unknown" || previous.checkError ?
-          lastUpdateAttempt + 60000 : Number(previous.checkedAt) + 12 * 60 * 60 * 1000)) return;
-        var controller = new AbortController(), attempt = ++updateAttempt;
-        updateRequest = controller; updateGeneration = generation; lastUpdateAttempt = now; updates = { busy: true, value: updates.value }; publish(Object.assign({}, state));
-        var timeout = setTimeout(function () { controller.abort(); }, 20000);
-        try {
-          var input = { refresh: !!refresh }; if (ignoreVersion) input.ignoreVersion = ignoreVersion;
-          var response = await connection.rpc.call("/api", "houdiniFrontend/pluginUpdates", { args: { input: input } }, controller.signal);
-          if (disposed || controller.signal.aborted || attempt !== updateAttempt || connection.generation.getSnapshot() !== generation) return;
-          if (!response.ok || !response.value || !["current", "available", "unavailable", "unknown"].includes(response.value.state)) throw new Error("update check unavailable");
-          if (ignoreVersion && response.value.ignoredVersion !== ignoreVersion) throw new Error("preference was not saved");
-          updates = { busy: false, value: response.value };
-          return true;
-        } catch (_error) {
-          if (!disposed && attempt === updateAttempt && connection.generation.getSnapshot() === generation) updates = ignoreVersion ?
-            { busy: false, value: previous, error: "未能保存这个选择。请重新检查后再试。" } : { busy: false, value:
-              previous && previous.state !== "unknown" ? Object.assign({}, previous, { checkError: "暂时无法刷新，以下为上次检查结果。", attemptedAt: now }) : {
-                state: "unknown", title: "暂时无法检查更新", message: "请稍后再试。当前工程的连接状态没有因此改变。", checkedAt: null } };
-        } finally {
-          clearTimeout(timeout); if (updateRequest === controller) updateRequest = null;
-          if (!disposed && attempt === updateAttempt && connection.generation.getSnapshot() === generation) {
-            updates = Object.assign({}, updates, { busy: false }); publish(Object.assign({}, state));
-          }
-        }
-      }
-      function showPluginUpdates() { updateDialogRevision++; updatesOpen = true; publish(Object.assign({}, state)); checkPluginUpdates(false, undefined, true); }
-      function PluginUpdateDialog() {
-        var intent = updateDialogRevision;
-        var value = updates.value, update = value && value.state === "available" && value.update;
-        var url = update && /^https:\/\/github\.com\/eee1723\/dsh-houdini\/releases\/tag\/[^?#]+$/.test(update.url || "") ? update.url :
-          value && ["unavailable", "unknown"].includes(value.state) && value.notesUrl === "https://github.com/eee1723/dsh-houdini/releases" ? value.notesUrl : null;
-        function close() { if (intent !== updateDialogRevision) return; updateDialogRevision++; updatesOpen = false; publish(Object.assign({}, state)); }
-        async function ignore() { if (await checkPluginUpdates(false, update.version)) close(); }
-        return React.createElement(ui.Modal, { open: true, onClose: close, title: "Houdini 插件更新", closeLabel: "关闭插件更新窗口",
-          footer: React.createElement(React.Fragment, null,
-            update && update.urgency === "optional" && value.canIgnore === true && React.createElement(Button, { variant: "ghost", disabled: updates.busy, onClick: ignore }, "忽略此版本"),
-            React.createElement(Button, { variant: "ghost", onClick: close }, update ? "稍后处理" : "关闭"),
-            React.createElement(Button, { disabled: updates.busy || !connection.generation.getSnapshot(), onClick: function () { checkPluginUpdates(true); } }, updates.busy ? "正在检查…" : "重新检查")) },
-          React.createElement("div", { "data-houdini-plugin-updates": value && value.state || "checking", style: { display: "grid", gap: 12, maxWidth: 480, lineHeight: 1.65 } },
-            updates.error && React.createElement("p", { role: "alert", style: { margin: 0 } }, updates.error),
-            value && value.checkError && React.createElement("p", { role: "status", "data-houdini-update-check-error": true, style: { margin: 0 } }, value.checkError,
-              Number.isFinite(value.checkedAt) && " 上次检查：" + new Date(value.checkedAt).toLocaleString()),
-            React.createElement("strong", { role: "status" }, updates.busy ? "正在检查插件更新…" : value && value.title || "暂时无法检查更新"),
-            value && React.createElement("p", { style: { margin: 0 } }, value.message),
-            update && update.summary && update.summary !== value.message && React.createElement("p", { style: { margin: 0 } }, update.summary),
-            url && React.createElement("a", { href: url, target: "_blank", rel: "noopener noreferrer", "data-houdini-update-notes": true,
-              className: "dsh-houdini-button", "data-variant": "primary", style: { width: "fit-content", textDecoration: "none" } }, update ? "查看更新方法与说明" : "查看支持范围与更新说明"),
-            value && (value.currentVersion || value.hostVersion || value.details || update) && React.createElement("details", null,
-              React.createElement("summary", null, "版本与检查详情"),
-              React.createElement("div", { style: { fontSize: 12, overflowWrap: "anywhere", whiteSpace: "pre-wrap" } },
-                value.currentVersion && "已安装插件：" + value.currentVersion + "\n",
-                value.hostVersion && "当前 DSH：" + value.hostVersion + "\n", update && "可用更新：" + update.version + "\n",
-                Number.isFinite(value.checkedAt) && "上次检查：" + new Date(value.checkedAt).toLocaleString() + "\n", value.details || ""))));
-      }
       function action(kind, sessionId, hip) {
         dialog = { action: kind === "reopen" ? "open" : kind, sessionId: sessionId, hip: hip || "", token: ++serial };
         publish(Object.assign({}, state));
@@ -784,7 +719,6 @@ window.__ModuleLoader__.load({
       }
       function Lifecycle() {
         usePresence();
-        React.useEffect(function () { checkPluginUpdates(false, undefined, true); }, []);
         React.useEffect(function () {
           if (!nativeWindow) return;
           windowPin.enter();
@@ -800,7 +734,6 @@ window.__ModuleLoader__.load({
           var stopped = false, pending = null, refreshResult = null;
           function refresh() {
             if (stopped) return Promise.resolve();
-            checkPluginUpdates(false);
             if (refreshResult) return refreshResult;
             var result = observe(); refreshResult = result;
             result.finally(function () { if (refreshResult === result) refreshResult = null; });
@@ -812,41 +745,34 @@ window.__ModuleLoader__.load({
             var controller = new AbortController(); pending = controller;
             var deadline = setTimeout(function () { controller.abort(); }, 8000);
             try {
-              if (!state.available) {
-                var capability = await connection.rpc.call("/api", "houdiniFrontend/capabilities", { args: {} }, controller.signal);
-                if (stopped || controller.signal.aborted || connection.generation.getSnapshot() !== generation) return;
-                if (!capability.ok || !capability.value || !capability.value.desktop) return;
-                publish(Object.assign({}, state, { available: true, visible: true }));
-              }
-              var response = await connection.rpc.call("/api", "houdiniFrontend/projectPresence", { args: {} }, controller.signal);
+              var readings = await Promise.all([
+                connection.rpc.call("/api", "houdiniFrontend/capabilities", { args: {} }, controller.signal),
+                connection.rpc.call("/api", "houdiniFrontend/projectPresence", { args: {} }, controller.signal),
+              ]), capability = readings[0], response = readings[1];
               if (stopped || controller.signal.aborted || connection.generation.getSnapshot() !== generation) return;
+              if (!capability.ok || !capability.value || !capability.value.desktop) return;
               if (!response.ok || !Array.isArray(response.value)) throw new Error("presence unavailable");
-              publish({ available: true, visible: true, observedAt: Date.now(), records: Object.fromEntries(response.value.map(function (record) { return [record.executorId, record]; })) });
-            } catch (_error) { if (!stopped && pending === controller && connection.generation.getSnapshot() === generation) publish(Object.assign({}, state, { observedAt: 0, records: {} })); }
+              publish({ available: true, visible: true, observedAt: Date.now(), componentSetup: capability.value.componentSetup || null,
+                records: Object.fromEntries(response.value.map(function (record) { return [record.executorId, record]; })) });
+            } catch (_error) { if (!stopped && pending === controller && connection.generation.getSnapshot() === generation)
+              publish(Object.assign({}, state, { observedAt: 0, records: Object.fromEntries(Object.entries(state.records).map(function (entry) {
+                return [entry[0], Object.assign({}, entry[1], { status: "unknown" })]; })) })); }
             finally { clearTimeout(deadline); if (pending === controller) pending = null; }
           }
           function changed() {
             if (pending) pending.abort(); pending = null; refreshResult = null;
-            if (updateGeneration !== connection.generation.getSnapshot()) {
-              if (updateRequest) updateRequest.abort(); updateRequest = null; updateAttempt++;
-              updates = { busy: false, value: connection.generation.getSnapshot() ? null : {
-                state: "unknown", title: "暂时无法检查更新", message: "DSH 连接恢复后，请重新检查。", checkedAt: null } };
-            }
-            checkPluginUpdates(false);
-            publish({ available: false, visible: document.visibilityState !== "hidden", observedAt: 0, records: {} }); refresh();
+            publish(Object.assign({}, state, { available: false, visible: document.visibilityState !== "hidden", observedAt: 0 })); refresh();
           }
           refreshPresence = refresh;
           var unsubscribe = connection.generation.subscribe(changed);
           document.addEventListener("visibilitychange", changed);
           var timer = setInterval(refresh, 5000); refresh();
           return function () { stopped = true; if (pending) pending.abort(); clearInterval(timer); unsubscribe();
-            if (updateRequest) updateRequest.abort(); updateRequest = null; updateAttempt++; updates = { busy: false, value: updates.value }; updatesOpen = false;
             document.removeEventListener("visibilitychange", changed); refreshPresence = function () {}; dialog = null; notice = null; };
         }, []);
         var current = notice;
         return React.createElement(React.Fragment, null,
           dialog && React.createElement(ProjectDialog, { key: dialog.token, request: dialog }),
-          updatesOpen && React.createElement(PluginUpdateDialog),
           current && React.createElement(ui.Toast, { key: current.id, text: current.text, onDone: function () { if (notice === current) { notice = null; publish(Object.assign({}, state)); } } }));
       }
       function decorate(Component) { return function (props) { return React.createElement(Component, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus })); }; }
@@ -911,12 +837,11 @@ window.__ModuleLoader__.load({
         // The same fresh desktop observation owns both membership and status.
         // A registry hint is never another list of supposedly open windows.
         var freshPresence = presence.available && presence.visible !== false && presence.observedAt && Date.now() - presence.observedAt <= 12000;
-        var rows = freshPresence ? Object.values(presence.records).filter(function (observed) {
-          return observed.status !== "offline" && Number.isFinite(observed.observedAt) && Date.now() - observed.observedAt <= 12000
-            && observed.candidate && observed.candidate.workbench === true && observed.candidate.state === "registered";
+        var rows = presence.available && presence.visible !== false ? Object.values(presence.records).filter(function (observed) {
+          return observed.status !== "offline" && observed.candidate && observed.candidate.workbench === true && observed.candidate.state === "registered";
         }).map(function (observed) { return observed.candidate; }) : [];
-        // Keep existing windows in place while this menu is open. New windows
-        // append; only live presence supplies their content and action inputs.
+        // Keep known rows during a transient refresh failure, but do not allow a
+        // stale snapshot to become a new selection. Fresh observations own order.
         if (!value.open) windowOrder.current = [];
         rows.forEach(function (candidate) { if (!windowOrder.current.includes(candidate.executor_id)) windowOrder.current.push(candidate.executor_id); });
         rows.sort(function (left, right) { return windowOrder.current.indexOf(left.executor_id) - windowOrder.current.indexOf(right.executor_id); });
@@ -935,7 +860,7 @@ window.__ModuleLoader__.load({
           if (candidate.houdini_version) details += "\nHoudini " + candidate.houdini_version;
           if (candidate.pid) details += "\n进程 " + candidate.pid;
           return React.createElement(ui.MenuItemButton, { key: candidate.executor_id,
-            disabled: !!switchingDisabled || candidate.state === "disconnected" || observed.state === "offline" || !candidate.hip_path,
+            disabled: !!switchingDisabled || !freshPresence || candidate.state === "disconnected" || observed.state === "offline" || !candidate.hip_path,
             icon: React.createElement(HoudiniTargetStateIcon, { state: observed.state }),
             onPointerDown: function () { pressedCandidate.current = candidate; },
             onSelect: function (event) {
@@ -954,55 +879,58 @@ window.__ModuleLoader__.load({
         var projectActions = [{ id: "open", label: "打开工程…", disabled: !presence.available || !!nativeRunning },
           { id: "new", label: "新建工程…", disabled: !presence.available || !!nativeRunning }];
         if (displayTarget && displayTarget.hip_path && displayTarget.hip_is_new === false) projectActions.push({ id: "reopen", label: "打开关联工程…", disabled: !presence.available || !!nativeRunning });
+        var setup = presence.componentSetup;
+        if (setup && setup.state === "failed") componentNotice = { label: "Houdini 组件准备未完成", detail: setup.message, action: "重试组件准备" };
+        else if (setup && setup.state === "preparing") componentNotice = { label: "正在准备 Houdini 组件", detail: setup.message, action: null };
+        else if (setup && setup.state === "ready" && componentNotice && componentNotice.state === "install")
+          componentNotice = { label: "正在补齐 Houdini 组件", detail: "已发现组件缺失，正在自动安装；不会重启当前工程。", action: null };
         var managementActions = [];
         if (target) managementActions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
-        if (!componentNotice || !componentNotice.action) managementActions.push({ id: "prepareBridge", label: "安装 / 更新 Houdini 组件", disabled: !presence.available || !!switchingDisabled });
-        if (!hasPluginUpdate()) managementActions.push({ id: "pluginUpdates", label: "插件更新…", disabled: !connection.generation.getSnapshot() });
+        if (setup && setup.state === "failed") managementActions.push({ id: "prepareBridge", label: "重试组件准备", disabled: !presence.available || !!switchingDisabled });
+        if (pluginNavigation && typeof pluginNavigation.openBundle === "function") managementActions.push({ id: "pluginManager", label: "插件安装与更新" });
         function actionItem(item) {
           return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
             onSelect: function () {
               if (item.id === "clear") { request("clear"); return; }
               if (item.id === "prepareBridge") { request("prepareBridge"); return; }
-              if (item.id === "pluginUpdates") { set(Object.assign({}, value, { open: false, busy: false })); showPluginUpdates(); return; }
+              if (item.id === "pluginManager") { set(Object.assign({}, value, { open: false, busy: false })); pluginNavigation.openBundle("dsh-houdini"); return; }
               ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
               set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId, item.id === "reopen" ? displayTarget.hip_path : "");
             } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));
         }
         var anchor = React.createElement(HoudiniProjectLabel, Object.assign({}, props, { usePresence: usePresence, useNativeStatus: useNativeStatus,
-            pluginUpdateAvailable: hasPluginUpdate(),
             projectMenuOpen: value.open, onProjectMenuClick: function () { if (value.open) { ticket.current++; if (pending.current) pending.current.abort(); set(Object.assign({}, value, { open: false, busy: false })); } else request("list"); } }));
         return React.createElement(ui.Menu, { open: value.open, portal: true, compact: true, align: "end", side: "bottom", anchor: anchor,
           listClassName: "dsh-houdini-target-menu", onClose: function () { ticket.current++; if (pending.current) pending.current.abort(); set(function (old) { return Object.assign({}, old, { open: false, busy: false }); }); },
           },
-          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" }, React.createElement("strong", null, "Houdini 工程")),
+          React.createElement("div", { className: "dsh-houdini-target-heading", role: "presentation" },
+            React.createElement("strong", null, "Houdini 工程"),
+            React.createElement("span", null, target ? "当前对话的工程与窗口" : "选择此对话要操作的场景")),
           target && React.createElement("div", { className: "dsh-houdini-target-current", "data-houdini-current-scene": true },
             selectedCandidate ? candidateItem(selectedCandidate, 0) : React.createElement("div", { className: "dsh-houdini-target-unavailable", title: status.detail },
               React.createElement(HoudiniTargetStateIcon, { state: status.state }), React.createElement("div", { className: "dsh-houdini-target-row", "data-houdini-selected-snapshot": true },
                 React.createElement("span", { className: "dsh-houdini-target-title" }, houdiniProjectName(display)),
-                React.createElement("span", { className: "dsh-houdini-target-meta" }, status.label)))),
-          componentNotice && React.createElement("div", { className: "dsh-houdini-target-choices", "data-houdini-component-update": componentRecord.componentUpdate && componentRecord.componentUpdate.state || "unknown" },
+                React.createElement("span", { className: "dsh-houdini-target-meta" }, status.label))),
+            displayTarget && displayTarget.hip_path && React.createElement("div", { className: "dsh-houdini-target-path", "data-houdini-project-info": "hip" }, displayTarget.hip_path)),
+          componentNotice && React.createElement("div", { className: "dsh-houdini-component-notice", "data-houdini-component-update": componentRecord && componentRecord.componentUpdate && componentRecord.componentUpdate.state || setup && setup.state || "unknown" },
             React.createElement("strong", null, componentNotice.label),
-            React.createElement("p", { className: "dsh-houdini-target-message" }, componentNotice.detail),
+            React.createElement("p", null, componentNotice.detail),
             componentNotice.action && React.createElement(ui.MenuItemButton, { disabled: !presence.available || !!switchingDisabled,
               onSelect: function () { request("prepareBridge"); } }, React.createElement("span", { "data-houdini-project-action": "prepareBridge" }, componentNotice.action))),
-          hasPluginUpdate() && actionItem({ id: "pluginUpdates", label: "插件有更新…", disabled: !connection.generation.getSnapshot() }),
-          React.createElement("details", { className: "dsh-houdini-target-section", open: !target, "data-houdini-menu-section": "project" },
-            React.createElement("summary", { "data-houdini-menu-toggle": "project" }, "工程"),
-            target && React.createElement("dl", { className: "dsh-houdini-target-info" },
-              displayTarget.hip_path && React.createElement(React.Fragment, null, React.createElement("dt", null, "工程文件"), React.createElement("dd", { "data-houdini-project-info": "hip" }, displayTarget.hip_path)),
-              row && row.cwd && React.createElement(React.Fragment, null, React.createElement("dt", null, "对话文件夹"), React.createElement("dd", { "data-houdini-project-info": "cwd" }, row.cwd)),
-              selectedCandidate && selectedCandidate.houdini_version && React.createElement(React.Fragment, null, React.createElement("dt", null, "Houdini"), React.createElement("dd", { "data-houdini-project-info": "version" }, selectedCandidate.houdini_version))),
-            projectActions.map(actionItem)),
-          React.createElement("details", { className: "dsh-houdini-target-section", "data-houdini-menu-section": "management" },
-            React.createElement("summary", { "data-houdini-menu-toggle": "management" }, "管理"), managementActions.map(actionItem)),
+          React.createElement("div", { className: "dsh-houdini-target-actions", "data-houdini-menu-section": "project" }, projectActions.map(actionItem)),
+          React.createElement("div", { className: "dsh-houdini-target-list-heading" },
+            React.createElement("span", null, value.busy && value.loaded ? "正在读取新工程…" : target ? "其他工程" : "可选工程"),
+            React.createElement("button", { type: "button", role: "menuitem", className: "dsh-houdini-refresh", disabled: !!value.busy,
+              "data-houdini-project-action": "refresh", title: "重新读取 Houdini 工程", onClick: function () { request("list"); } }, value.busy && value.loaded ? "刷新中" : "刷新")),
           React.createElement("div", { className: "dsh-houdini-target-choices" },
             value.message && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" }, value.message),
             value.details && React.createElement("details", { className: "dsh-houdini-target-error" }, React.createElement("summary", null, "查看原因"), React.createElement("pre", null, value.details)),
             value.loaded && !value.busy && !value.message && !target && !rows.length && React.createElement("p", { role: "status", className: "dsh-houdini-target-message" },
-              freshPresence ? "还没有可选工程。在目标 Houdini 中选择 DSH-Houdini → Open Workspace 后，会显示在这里。" : "暂时无法确认工程列表，连接恢复后会自动更新。"),
+              freshPresence ? "还没有可选工程。在目标 Houdini 中选择 DSH-Houdini → Open Workspace 后，会显示在这里。" : "工程状态正在重新确认，连接恢复后会自动更新。"),
             nativeRunning && React.createElement("p", { className: "dsh-houdini-target-message" }, "对话工作中，完成后可以切换窗口或取消绑定。"),
-            otherCandidates.length > 0 && React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "可切换的 Houdini 窗口" },
-              React.createElement("div", { className: "dsh-houdini-target-group", role: "presentation" }, target ? "其他工程" : "可选工程"), otherCandidates.map(candidateItem))));
+            otherCandidates.length > 0 && React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "可切换的 Houdini 窗口" }, otherCandidates.map(candidateItem))),
+          managementActions.length > 0 && React.createElement("details", { className: "dsh-houdini-target-section", "data-houdini-menu-section": "management" },
+            React.createElement("summary", { "data-houdini-menu-toggle": "management" }, "组件与插件"), managementActions.map(actionItem)));
       }
       function Label(props) {
         var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
@@ -1027,7 +955,7 @@ window.__ModuleLoader__.load({
       function HeaderPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && !row.blank ? React.createElement(Pin, props) : null; }
       function BlankPin(props) { var row = props.useSessions(function (value) { return value.byId[props.sessionId]; }); return row && row.blank ? React.createElement(Pin, props) : null; }
       return { Mark: decorate(HoudiniProjectMark), Detail: decorate(HoudiniProjectDetail), Label: Label, Blank: Blank, Pin: HeaderPin, BlankPin: BlankPin, Lifecycle: Lifecycle,
-        dispose: function () { disposed = true; if (updateRequest) updateRequest.abort(); windowPin.dispose(); launchOwnership.dispose(); } };
+        dispose: function () { disposed = true; windowPin.dispose(); launchOwnership.dispose(); } };
     }
 
 
@@ -1104,7 +1032,12 @@ function nodeDeliveryRows(value) {
         context: typeof node.context === "string" ? node.context : null,
         eventSeq: event.seq, index: index, callId: callId, execution: execution });
     });
-    return nodes.length ? { callName: state.callName, nodes: state.nodes.concat(nodes) } : state;
+    if (!nodes.length) return state;
+    var sequence = event.seq || 0, completed = state.completed || {};
+    if (Number.isFinite(completed[callId]) && completed[callId] >= sequence) return state;
+    return { callName: state.callName,
+      nodes: state.nodes.filter(function (node) { return node.callId !== callId; }).concat(nodes),
+      completed: Object.assign({}, completed, { [callId]: sequence }) };
   }
 
   // Native results and nested PTC dispatches share the root call's Context.
@@ -1839,7 +1772,7 @@ function nodeDeliveryRows(value) {
         }); });
       });
       if (typeof ctx.inject === "function") ctx.inject(["connection", "uiSession", "sessions", "uiWorkspace"], function (scope) {
-        var desktop = createHoudiniDesktopUi(scope.get("connection"), scope.get("uiSession"), scope.get("sessions"), scope.get("uiWorkspace"));
+        var desktop = createHoudiniDesktopUi(scope.get("connection"), scope.get("uiSession"), scope.get("sessions"), scope.get("uiWorkspace"), scope.get("pluginNavigation"));
         scope.effect(function () { return desktop.dispose; });
         [["conversation.input.left", "houdini-initial-project", desktop.Blank],
           ["conversation.input.left", "houdini-initial-window-pin", desktop.BlankPin],

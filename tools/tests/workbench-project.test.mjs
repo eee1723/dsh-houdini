@@ -142,7 +142,6 @@ const boundedUi=uiContext.createHoudiniDesktopUi({
   rpc:{call:async(_channel,method,_payload,signal)=>{
     if(method==='houdiniFrontend/capabilities')return {ok:true,value:{desktop:true}}
     if(method==='houdiniFrontend/windowPin')return {ok:true,value:{pinned:false}}
-    if(method==='houdiniFrontend/pluginUpdates')return {ok:true,value:{state:'current',title:'当前版本可以继续使用',message:'没有适用更新。'}}
     pollCount++
     if(stalled)return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}))
     return {ok:true,value:[{executorId:view.executorId,runtimeId:'8'.repeat(32),status:'online',sceneEpoch:view.sceneEpoch,observedAt:Date.now()}]}

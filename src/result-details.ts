@@ -1,19 +1,16 @@
 /** Immutable copies of returned envelopes, readable without another HOM call. */
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
-import {readFileSync} from 'node:fs'
 import path from 'node:path'
 import type { ExecResult } from './bridge.js'
 import {executionCall,executionResult,isHoudiniTool,returnedExecutions} from './dsh-adapter.js'
 import type {SessionEvent} from './execution-history.js'
 import {RESULT_DIRECTORY} from './project-paths.js'
+import {DETAIL_THRESHOLD,RESULT_DETAIL_POLICY} from './result-policy.js'
+export {DETAIL_THRESHOLD}
 
 const DIRECTORY = RESULT_DIRECTORY
-const policy=JSON.parse(readFileSync(new URL('../houdini/result-detail-policy.json',import.meta.url),'utf8'))
-if(policy.schemaVersion!==1||['maxArchiveBytes','detailThresholdChars','loadWarningPreviewBytes'].some(key=>
-  !Number.isSafeInteger(policy[key])||policy[key]<=0)||policy.loadWarningPreviewBytes<128)throw Error('Unsupported result detail policy')
-const MAX_BYTES:number = policy.maxArchiveBytes
-export const DETAIL_THRESHOLD:number = policy.detailThresholdChars
+const MAX_BYTES:number = RESULT_DETAIL_POLICY.maxArchiveBytes
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
 
 /** A session move changes cwd, not the location of its original returned artifacts. */
@@ -87,7 +84,7 @@ export async function retainResult<T extends ExecResult>(value: T, workspace: st
     // Retention failure must never convert a successful scene mutation into a
     // failed operation that invites a duplicate submission. Keep full rendering.
     return { ...value, details: { stored: false, error: String(error),
-      fallback: 'original presentation and canonical metadata retained; do not repeat the scene operation to retry archival' } }
+      fallback: 'complete original presentation retained inline; do not repeat the scene operation to retry archival' } }
   }
 }
 

@@ -63,6 +63,31 @@ assert.deepEqual(exec.presentResult(execArgs, { content: text, isError: false, m
   title: '执行操作 · 成功',
   content: text,
 });
+const largeValue={...execValue,result:{payload:'x'.repeat(50000)},evidence:[{verb:'present_nodes',large:'y'.repeat(20000)}],
+  details:{stored:true,sha256:'a'.repeat(64),path:'E:/fixture/a.json',bytes:70000,format:'returned_bridge_envelope_json'},
+  execution:{runtime_id:'b'.repeat(32),sequence:7,observed_at:7},requestReceipt:{request_ref:'original-request',status:'done'},
+  verbs:[{verb:'tab_create',ok:true,args:['large source'],result:{path:'/obj/a',payload:'z'.repeat(1000)}},
+    {verb:'present_nodes',ok:true,result:{kind:'houdini/node-delivery-v1',nodes:[{id:'c'.repeat(32)}]}},
+    {verb:'set_parms',ok:false,error:'actual failure',result:{restored:false}}]};
+const largeMeta=exec.output.presentationMeta(execArgs,largeValue)
+assert.equal(largeMeta.canonical.result,undefined,'authored bulk stays only in the immutable archive')
+assert.equal(largeMeta.canonical.evidence,undefined)
+assert.equal(largeMeta.canonical.verbs[0].result,undefined)
+assert.deepEqual(largeMeta.canonical.verbs[1].result,largeValue.verbs[1].result,'node delivery remains available to the browser')
+assert.deepEqual(largeMeta.canonical.verbs[2].result,{restored:false},'failure facts stay inline')
+assert.deepEqual(largeMeta.canonical.execution,largeValue.execution)
+assert.equal(largeMeta.canonical.details.projection,'dsh-houdini/execution-facts-v1')
+assert.deepEqual(largeValue.details,{stored:true,sha256:'a'.repeat(64),path:'E:/fixture/a.json',bytes:70000,format:'returned_bridge_envelope_json'},
+  'metadata projection never mutates the complete returned envelope')
+assert(JSON.stringify(largeMeta.canonical).length<5000)
+const compactStored=exec.output.render({},largeValue).filter(block=>block.type==='text').map(block=>block.text).join('\n')
+assert(compactStored.includes('"result":{"detail_pointer":"/verbs/0/result"}'),'routine successful verb payloads use their original archive pointer')
+assert(compactStored.includes('"restored":false'),'failure details never disappear behind compact presentation')
+const failureMeta=exec.output.presentationMeta({}, {ok:false,error:'actual failure',details:largeValue.details,
+  transaction:{status:'rolled_back'},verbs:[{verb:'present_nodes',ok:true}]})
+assert.deepEqual(JSON.parse(JSON.stringify(failureMeta)),failureMeta,'missing optional fields must not become lossy undefined properties')
+assert.equal('nodes' in failureMeta.canonical.transaction,false)
+assert.equal('result' in failureMeta.canonical.verbs[0],false)
 const pendingChecks = {...execValue, checks: [{verb: 'set_parms', status: 'failed'}]};
 const pendingMeta = exec.output.presentationMeta(execArgs, pendingChecks);
 assert.match(exec.presentResult(execArgs, {content: text, isError: false, meta: pendingMeta}).title, /检查需要关注/);

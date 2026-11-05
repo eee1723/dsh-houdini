@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {executionLogValue} from '../../lib/tool-output.js';
 import {
   normalizeTraceSteps,
   parseToolArguments,
@@ -78,6 +83,35 @@ assert.deepEqual(first.verbs, [{
 assert.deepEqual(first.mutatingRawMethods, ['setInput', 'setInput']);
 assert.deepEqual(first.rollback, { attempted: true, succeeded: true });
 assert.equal(first.advisory, 'prefer the verb');
+
+// Lightweight session facts expand from the same immutable archive used by
+// houdini_resource; a missing archive remains an explicit audit gap.
+const archiveRoot=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-trace-archive-'));
+try {
+  const full={ok:true,stdout:'original diagnostic',stderr:'',result:{payload:'complete author result'},
+    evidence:[{verb:'set_parms',ok:true,large:'full evidence'}],
+    verbs:[{verb:'set_parms',ok:true,args:['/obj/a','tx',2],result:{value:2},summary:{kind:'parameter_catalog'},ms:1}],
+    execution:{runtime_id:'a'.repeat(32),sequence:9,observed_at:9},requestReceipt:{request_ref:'archive-request',status:'done'},
+    transaction:{status:'committed',nodes:[]}};
+  const bytes=Buffer.from(JSON.stringify(full)),sha256=createHash('sha256').update(bytes).digest('hex');
+  const archive=path.join(archiveRoot,sha256+'.json');fs.writeFileSync(archive,bytes);
+  const details={stored:true,sha256,path:archive,bytes:bytes.length,format:'returned_bridge_envelope_json'};
+  const compact=executionLogValue({...full,details});
+  assert.equal(compact.result,undefined);assert.equal(compact.verbs[0].result,undefined);
+  const archivedResult=result(4,'archived','bounded display');archivedResult.data.meta={canonical:compact};
+  const expanded=normalizeTraceSteps([call(3,'archived','houdini_exec',{code:'set_parms(a)'}),archivedResult]).steps[0];
+  assert.equal(expanded.canonicalStatus,'referenced_artifact_expanded');
+  assert.deepEqual(expanded.canonical.result,full.result);
+  assert.deepEqual(expanded.canonical.evidence,full.evidence);
+  assert.equal(expanded.canonical.details.projection,'dsh-houdini/execution-facts-v1');
+  assert.equal(expanded.verbs[0].result.value,2);
+  assert.equal(expanded.verbs[0].args,'["/obj/a","tx",2]');
+  const missing={...compact,details:{...compact.details,path:path.join(archiveRoot,'missing',sha256+'.json')}};
+  const missingResult=result(6,'missing-archive','bounded display');missingResult.data.meta={canonical:missing};
+  const unavailable=normalizeTraceSteps([call(5,'missing-archive','houdini_exec',{}),missingResult]).steps[0];
+  assert.equal(unavailable.canonicalStatus,'referenced_artifact_unavailable');
+  assert.match(unavailable.archiveError,/ENOENT/);
+} finally {fs.rmSync(archiveRoot,{recursive:true,force:true});}
 
 // Native display truncation and PTC log text must resolve through the same producer decoder.
 const actualJob={ok:true,stdout:'original HOM diagnostic',stderr:'',status:'done',jobId:'a'.repeat(12),

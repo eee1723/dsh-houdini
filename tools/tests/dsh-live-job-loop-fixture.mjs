@@ -7,6 +7,7 @@ import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 import {fixturePresentation} from './fixture-presentation.mjs'
 import {executionHistory} from '../../lib/execution-history.js'
+import {expandArchivedExecution} from '../trace-session-lib.mjs'
 
 export const inject=['loader','llm','sessions','agents','sessionController','jobs','attachments']
 const provider='live-job-fixture',model='scripted-local'
@@ -19,13 +20,18 @@ const call=(id,name,args)=>[{type:'block-start',index:0,blockType:'tool-call'},
 export function apply(ctx){
   const config=JSON.parse(fs.readFileSync(process.env.DSH_LIVE_JOB_FIXTURE,'utf8'))
   const {directory,phase}=config,output=path.join(directory,phase+'-result.json')
+  const questions=ctx.get('userQuestions')
+  if(questions)questions.ask=async({questions:requested})=>{
+    const question=requested[0],choice=question.options[0]
+    return {answers:[{id:question.id,selected:[choice.label]}]}
+  }
   const checks=[],requests=[],handles={},values={}
   let stage=0,failure,sessionId,complete
   const done=new Promise(resolve=>{complete=resolve})
   const report=value=>{fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2));fs.renameSync(output+'.tmp',output)}
   const events=()=>ctx.sessions.get(sessionId)?.snapshotEvents()??[]
   const text=message=>(message?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
-  const native=id=>events().findLast(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical
+  const native=id=>expandArchivedExecution(events().findLast(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical)
   const nested=name=>events().findLast(e=>e.type==='tool/ptc-dispatch'&&e.data?.name===name)
   const nestedValue=event=>{
     assert(event?.data?.meta&&Object.hasOwn(event.data.meta,'canonical'),
@@ -33,7 +39,7 @@ export function apply(ctx){
     assert(!(event.data.content??[]).some(block=>{
       try{return JSON.parse(block.text).kind==='dsh-houdini/execution-v1'}catch{return false}
     }),'current PTC logs must not duplicate canonical data in a plugin wrapper')
-    return event.data.meta.canonical
+    return expandArchivedExecution(event.data.meta.canonical)
   }
   const emitted=id=>events().findLast(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)
   const parseResult=content=>{
@@ -180,17 +186,16 @@ __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()
         }
         if(stage===7){
           const read=native('running-lookup');assert.equal(read.status,'running');assert.match(read.advisory,/cannot be interrupted|Running HOM/i)
-          release('running');stage++;yield*finish('The same running HOM job is still responsible for its actual result.');return
+          release('running');stage++;yield*dispatch('running-output','run_code',{code:'return await tools.job_output('+JSON.stringify({job_id:handles.running.job_id})+');',description:'Collect the same completed running HOM job through nested native jobs'},'houdini_job_submit');return
         }
-        if(stage===8){notice(options,'running');checks.push('running HOM cancellation remains stopping until actual completion and still delivers its completed notice');stage++;yield*dispatch('running-output','run_code',{code:'return await tools.job_output('+JSON.stringify({job_id:handles.running.job_id})+');',description:'Collect the same completed running HOM job through nested native jobs'},'houdini_job_submit');return}
-        if(stage===9){
+        if(stage===8){
           const output=nested('job_output');assert(output&&!output.data.isError,JSON.stringify(output))
           const original=nestedValue(output)
           const value=checkValue('running',parseResult(original?.text??(output.data.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')))
           assert(original?.text.length>70000,'the PTC durable generic result stays complete before presentation retention')
           assert.equal(value.result.payload,'LIVE_BULK_HEAD:'+'x'.repeat(70000)+':LIVE_BULK_TAIL')
           checks.push('nested job_output preserves its complete generic value and the same original execution facts')
-          fs.writeFileSync(path.join(directory,'pause-pump'),'paused');stage++;yield*dispatch('queued-submit','houdini_job_submit',{code:code('queued',false)},'job_kill');return
+          stage=10;yield*dispatch('queued-submit','houdini_job_submit',{code:code('queued',false)},'job_kill');return
         }
         if(stage===10){captureHandle('queued',native('queued-submit'),'queued-submit');stage++;yield*dispatch('queued-kill','job_kill',{job_id:handles.queued.job_id},'job_output');return}
         if(stage===11){

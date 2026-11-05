@@ -7,6 +7,7 @@ import {HoudiniBridge} from '../../lib/bridge.js'
 import {HoudiniFrontend} from '../../lib/frontend-host.js'
 import {processStarted} from '../../lib/desktop-process.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH} from '../../lib/generated-verb-contract.js'
+import {componentUpdate} from '../../lib/component-installation.js'
 
 const home=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-desktop-integration-'))
 const previous=process.env.DSH_HOME
@@ -17,9 +18,17 @@ const targets={registry:path.join(home,'dsh-houdini/executors'),openWorkspace:as
   return {workspaceId:'native-workspace',sessionId:input.requestId,executorId:input.executorId}
 }}
 const ctx={logger:{warn:error=>{throw Error(error)}}}
-const service=new DesktopIntegration(ctx,targets,async()=>[])
+let preparations=0
+const service=new DesktopIntegration(ctx,targets,async()=>[],undefined,undefined,async()=>{
+  preparations++
+  return {ok:true,helperId:'a'.repeat(16),helperRoot:home,requiresRestart:true,
+    migration:{reportPath:null,disabledCount:0,reviewCount:0},message:'组件已自动准备'}
+})
 try {
   await service.start()
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(preparations,1,'enabling the plugin prepares its own helper once without another user action: '+JSON.stringify(service.componentStatus())+' installer='+typeof service.helperInstaller)
+  assert.deepEqual(service.componentStatus(),{state:'ready',message:'组件已自动准备'})
   const descriptor=JSON.parse(await fs.readFile(path.join(home,'dsh-houdini/desktop.json'),'utf8'))
   const base=`http://127.0.0.1:${descriptor.port}`
   assert.equal(descriptor.executorRegistry,targets.registry)
@@ -87,28 +96,40 @@ try {
   if(previous===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=previous
 }
 
+const failureWarnings=[],failedHome=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-desktop-failed-setup-'))
+process.env.DSH_HOME=failedHome
+const failedTargets={...targets,registry:path.join(failedHome,'dsh-houdini/executors')}
+const failedSetup=new DesktopIntegration({logger:{warn:message=>failureWarnings.push(message)}},failedTargets,async()=>[],undefined,undefined,async()=>{throw Error('owned setup failure')})
+try {
+  await failedSetup.start()
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(failedSetup.componentStatus().state,'failed')
+  assert.match(failedSetup.componentStatus().details,/owned setup failure/)
+  assert.equal(failureWarnings.length,1,'automatic preparation reports a real failure without taking down the Host')
+} finally {
+  await failedSetup.dispose()
+  if(previous===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=previous
+}
+
 const intents=new DesktopIntents(),selection={workspaceId:'w',sessionId:'s',executorId:'e',source:'menu'}
-let ignoredVersion='',settingsRevision=4,preferencesWritable=true
-const preferences=[]
-const availableUpdate={state:'available',title:'有可选更新',message:'可以继续使用当前版本。',update:{version:'0.1.4',urgency:'optional'}}
-const preferenceStatus={...availableUpdate}
-const preferenceHost={ctx:{get:name=>name==='settings'?{
-  get writable(){return preferencesWritable},describe:()=>[{ns:'houdini-frontend',revision:settingsRevision}],
-  update:async(ns,patch,revision)=>{assert.equal(ns,'houdini-frontend');assert.equal(revision,settingsRevision);preferences.push(patch);ignoredVersion=patch.ignoredPluginVersion;settingsRevision++},
-}:null},updates:{read:async()=>preferenceStatus},config:{ignoredPluginVersion:{get:()=>ignoredVersion}}}
-const preferenceCall=input=>HoudiniFrontend.prototype.pluginUpdates.call(preferenceHost,input,new AbortController().signal)
-assert.equal((await preferenceCall({})).canIgnore,true)
-assert.equal((await preferenceCall({ignoreVersion:'0.1.4'})).ignoredVersion,'0.1.4')
-assert.deepEqual(preferences,[{ignoredPluginVersion:'0.1.4'}],'dismissal uses the native settings namespace, not browser-origin storage')
-assert.equal((await HoudiniFrontend.prototype.pluginUpdates.call({...preferenceHost}, {},new AbortController().signal)).ignoredVersion,'0.1.4',
-  'a replacement service reads the same saved profile preference')
-preferenceStatus.update={...preferenceStatus.update,urgency:'required'}
-assert.equal((await preferenceCall({})).canIgnore,false)
-await assert.rejects(preferenceCall({ignoreVersion:'0.1.4'}),/信息已变化/)
-preferenceStatus.update={...preferenceStatus.update,urgency:'optional'}
-preferencesWritable=false;assert.equal((await preferenceCall({})).canIgnore,false)
-await assert.rejects(preferenceCall({ignoreVersion:'0.1.4'}),/无法保存/)
-assert.equal(preferences.length,1)
+const current='a'.repeat(16),old='b'.repeat(16)
+assert.equal(componentUpdate({helper:{id:old,version:'0.1.3'}},current,false).state,'install')
+assert.equal(componentUpdate({helper:{id:old,version:'0.1.3'}},current,true).state,'restart')
+assert.equal(componentUpdate({helper:{id:current,version:'0.1.4'}},current,true).state,'current')
+const loadedButRemoved=componentUpdate({helper:{id:current,version:'0.1.4'}},current,false)
+assert.equal(loadedButRemoved.loaded,'current')
+assert.equal(loadedButRemoved.installation,'missing')
+assert.equal(loadedButRemoved.state,'install','current memory does not prove a future launch can load the component')
+const loadedButUnknown=componentUpdate({helper:{id:current}},current,null)
+assert.equal(loadedButUnknown.loaded,'current');assert.equal(loadedButUnknown.installation,'unknown')
+assert.equal(loadedButUnknown.state,'unknown','unreadable installation facts cannot certify a current install')
+const anotherRoot=componentUpdate({helper:{id:current}},current,false,false)
+assert.equal(anotherRoot.loaded,'current');assert.equal(anotherRoot.installation,'other_installation')
+assert.equal(anotherRoot.state,'unknown','do not prescribe repair of another installation')
+assert.equal(componentUpdate({},current,true).state,'unknown','an old helper without loaded identity does not prove that reopening alone will work')
+assert.equal(componentUpdate({helper:{id:old,version:'0.1.3'}},current,null).state,'unknown')
+assert.equal(componentUpdate({helper:{id:old,version:'0.1.3'}},current,true,false).state,'unknown',
+  'an updated Package in another installation cannot promise that reopening this window loads it')
 const sequence=intents.publish(selection)
 const stop=new AbortController()
 let delivered=false

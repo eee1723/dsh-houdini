@@ -79,14 +79,8 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 第三方插件更新入口
 
-受支持的 rc 系列宿主插件页只为按需官方插件提供更新；运行中的 `installBundle` 对已安装的第三方包拒绝 `already-installed`。关闭 Desktop 后，官方 CLI 的 `plugin --profile desktop add <spec>` 可以替换已安装依赖，因此当前选择复用这条公开维护入口，操作方法见[安装说明](setup.md#connection--support连接与维护)。官方 alpha.2 的 `listVersions/updateBundle` 仅覆盖 registry 包名依赖，GitHub tgz、path/link/git 安装不进入版本查询，详情页或手动刷新触发检查；不将预览分支能力写成 rc 系列现役合同。[官方界面合同](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-alpha.2/packages/client/ui-plugin-manager/README.md#updating-a-registry-bundle)。
+Node侧插件的安装、启停、卸载、升级与失败恢复只使用Desktop原生插件管理。Houdini工程菜单通过公开的`pluginNavigation.openBundle('dsh-houdini')`打开同一页面，不查询第二套Release目录，不维护更新缓存、忽略版本状态或自制安装弹窗。原生页面与官方CLI支持的安装来源和升级方式见[安装说明](setup.md#connection--support连接与维护)；当前rc对第三方插件的一键更新限制如实保留，不用插件网络查询伪装成更新能力。
 
-分发与宿主更新分开维护：npm与GitHub已提供同一完整发行包，用户经官方管理器将安装来源迁移为包名依赖；这不改变当前精确兼容范围，也不证明rc已有原生更新按钮。待官方更新能力进入rc并完成真实更新、失败恢复及其他模式保持验证后，再接入其公开合同、移除对应GitHub只读查询。Houdini内已加载helper仍按真实身份判断是否需要保存重开，不以Desktop热更新成功替代现场加载事实。
+这个边界省去版本筛选、发布提示和恢复逻辑的平行实现，也让安装错误、来源选择及profile回滚由实际写入方负责。公开导航不可用时用户仍从原生「插件」页进入；宿主以后提供更完整更新能力时直接在该页面消费，不恢复插件内更新器。Houdini helper在插件加载后自动安装／更新，运行中发现缺失自动补齐，只有准备失败需要重试；实际加载版本与重开要求仍由插件判断，因为Desktop不知道进程内Python模块身份。
 
-[更新查询](../src/plugin-updates.ts)只读本仓库正式 Release 的 `release-manifest.json`，要求对应完整包已经公开、支持当前宿主与平台；不选择 Draft、预发布或历史私有工作台包。使用 DSH 公开版本/兼容检查，按明确受影响范围优先推荐适用修复，再比较版本。发布摘要与修复范围维护在[发行提示](../release-update.json)，[发布构建器](../tools/build-release.py)与客户端使用同一校验函数；必要修复必须有有效范围，不能由联网失败、版本更大或字段错误推断。可选更新的忽略目标通过 DSH 原生 settings 单字段持久化，只在保存成功后隐藏；只读设置不显示假操作，必要修复不沿用可选忽略。已有重要建议在临时断网后保留并标明旧结果。正常状态保持安静；首次进入模式及返回前台低频检查，Host 成功结果缓存十二小时、失败一分钟，不在现场轮询里发外网请求。
-
-[组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。安装事实与加载事实分别返回：当前进程内容正确但Package缺失时提示安装修复，不报告整条链已就绪；磁盘未知或来自其他安装位置保持未知。只有同一安装位置、预期Package已准备好且已加载身份不同才提示重开。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[更新检查](../tools/tests/plugin-updates.test.mjs)、[工程菜单](../tools/tests/executor-picker.test.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。
-
-仅在 GitHub API 明确返回 403 且额度剩余为零时，改读同仓库公开的 `releases/latest` 正式发行跳转，再核对同 tag 清单和安装包 HEAD。此路径只确认一个正式发行，不冒充完整版本查询；取得可用候选时标明其他信息未读全，未取得适用版本仍为未知，并提供真实说明入口。临时受限不能清除已有更重要的修复建议。不从缺少预发布标志的 Atom 订阅推断正式发行。[GitHub 官方入口](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases)。
-
-插件内组合卸载、下载与恢复会在自身被卸载后丢失执行入口，还需要复制宿主的失败恢复和配置管理；修改核心则增加每次宿主升级的补丁成本。当前选择只读的窄提示补足 GitHub 分发发现，安装与数据管理仍由宿主负责。通用的一键更新、宿主升级前插件影响提示和无法加载后的恢复入口应由宿主提供；插件在导入前被拒绝时不能自行显示提示。公开合同交付并验证覆盖当前分发后，移除对应只读查询，转用原生界面，不保留第二套插件更新器。
+[组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。安装事实与加载事实分别返回：当前进程内容正确但Package缺失时提示安装修复，不报告整条链已就绪；磁盘未知或来自其他安装位置保持未知。只有同一安装位置、预期Package已准备好且已加载身份不同才提示重开。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[工程菜单](../tools/tests/executor-picker.test.mjs)、[真实页面](../tools/tests/dsh-client-navigation.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。

@@ -113,7 +113,10 @@ export function apply(ctx){
     const file=value.report_path??value.report?.details?.path??value.details?.path
     assert(file&&path.resolve(file)===path.join(runDirectory,'report.json'),'authoritative report path must identify this run')
     const raw=JSON.parse(fs.readFileSync(file,'utf8'));runs[name]={path:file,ok:raw.ok,finished:raw.finished,worker:raw.worker,runtime:raw.result?.runtime,builder:raw.result?.builder}
-    assert.deepEqual(value.report,raw,'native and nested tool consumers retain the exact report; summary is presentation only')
+    assert.equal(value.report.ok,raw.ok,'lightweight session facts retain the actual run outcome')
+    assert.equal(value.report.error,raw.error,'lightweight session facts retain the original failure')
+    if(value.report.result?.builder)assert(value.report.result.builder.details?.stored||value.report.result.builder.details_pointer,
+      'a returned builder links its original execution instead of duplicating it')
     return raw
   }
   const returnedImage=(value,name)=>{
@@ -215,11 +218,11 @@ export function apply(ctx){
           assert.equal(selection.items[2].status,'missing')
           checks.push('native batched resource selection returns exact archived fields without another Houdini execution')
           assert.equal(raw.inputs.length,481,'real worker consumes the script plus every declared sequence frame')
-          assert.equal(value.report.inputs.length,481,'native canonical retains complete input provenance')
+          assert.equal(value.report.inputs.count,481,'durable canonical carries a compact input inventory; the run report retains all original rows')
           const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-native')
           const visible=JSON.parse(delivered.content.find(b=>b.type==='text').text)
           assert.equal(visible.report.inputs.count,481,'the next model request receives a compact inventory')
-          checks.push('two bounded 240-frame sequences reach the actual worker; native canonical keeps 481 inputs while the model receives a compact inventory')
+          checks.push('two bounded 240-frame sequences reach the actual worker; full provenance stays in the run report while session/model projections stay compact')
           assert.equal(raw.result.builder.result.marker,'ISOLATED_TEAM_BUILT');assert(raw.result.checks.every(c=>c.status==='passed'))
           nativeImage=returnedImage(value,'native');await observeImages(options,'native-return')
           checks.push('native production tool built, cooked and Karma-rendered a new independent HIP')
@@ -329,7 +332,9 @@ export function apply(ctx){
           // file-policy annotation. Compare actual model-facing JSON facts,
           // not the whitespace used by native versus nested presentation.
           const modelValue=JSON.parse(visible.split(/\n(?=File sandbox\b)/)[0])
-          assert.deepEqual(modelValue,value,'the next real model request receives the complete original PTC value')
+          assert.equal(modelValue.run_directory,value.run_directory)
+          assert.equal(modelValue.report.inputs.length,2,'the active PTC structured value retains this HIP+setup input pair for subsequent programming')
+          assert.equal(value.report.inputs.count??value.report.inputs.length,2,'durable canonical keeps only this run\'s compact input inventory')
           assert.equal(modelValue.run_directory,setupRun)
           assert.equal(modelValue.report.result.runtime.runtime_id,raw.result.runtime.runtime_id)
           assert.equal(modelValue.report.result.builder.result.width,2,'the next real model request receives the source setup measurement')

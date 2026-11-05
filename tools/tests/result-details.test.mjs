@@ -5,6 +5,7 @@ import path from 'node:path';
 import {retainResult,readResultDetail} from '../../lib/result-details.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 import {normalizeTraceSteps} from '../normalized-trace-steps.mjs';
+import {expandArchivedExecution} from '../trace-session-lib.mjs';
 import {readResource} from '../../lib/tool-query.js';
 import {HoudiniToolRuntime} from '../../lib/tool-runtime.js';
 import {LIVE_JOB_KIND,LIVE_JOB_RESULT} from '../../lib/dsh-adapter.js';
@@ -56,7 +57,9 @@ try {
   assert.ok(compact.length<original.length*0.25,[compact.length,original.length]);
   assert.ok(compact.includes('useful diagnostic') && compact.includes('result-details'));
   const meta=exec.output.presentationMeta({},value);
-  assert.deepEqual(meta.canonical.verbs,raw.verbs,'durable audit retains full args/results outside model text');
+  assert.deepEqual(expandArchivedExecution(meta.canonical).verbs,raw.verbs,'durable audit expands full args/results from the same archive');
+  assert.equal(meta.canonical.result,undefined,'the persistent browser projection does not duplicate the authored bulk');
+  assert(meta.canonical.verbs[0].result===undefined);
   assert.equal(JSON.stringify(raw),before,'projection and retention do not mutate the original envelope');
   const selected=await query.execute({kind:'result',ref:value.details.sha256,
     select:['/ok','/result/payload','/not-present','/stdout'],limit:500},context);

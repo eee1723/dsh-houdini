@@ -38,7 +38,7 @@ def worker(config):
     (root / 'reported-image.png').write_bytes(b'\x89PNG\r\n\x1a\n'
         + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0))
         + png_chunk(b'IDAT', zlib.compress(pixels)) + png_chunk(b'IEND', b''))
-    hou.hipFile.setName(str(root / 'owned-fixture.hip'))
+    hou.hipFile.save(str(root / 'owned-fixture.hip'))
     server = bridge.start(0)
     bridge._pump_active = True
     calls = []
@@ -61,6 +61,10 @@ def worker(config):
             calls.append({'method': self.command, 'path': self.path,
                           'code': body.get('code'), 'request_ref': body.get('request_ref'),
                           'owner_session': body.get('owner_session')})
+            if self.path == '/jobs' and '__livejobs_queued' in body.get('code', ''):
+                # Prior claims are complete. Pause only subsequent HOM dispatch;
+                # admission and cancellation remain observable before any cook.
+                (root / 'pause-pump').touch()
             connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=40)
             try:
                 connection.request(self.command, self.path, raw or None,
@@ -88,6 +92,12 @@ def worker(config):
 
     relay = ThreadingHTTPServer(('127.0.0.1', 0), Relay)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
+    from dsh_executor_registry import activate
+    from dsh_scene_recovery import facts
+    activate(root / 'executor-registry', bridge._EXECUTOR_ID, installation=str(ROOT),
+             version=hou.applicationVersionString(), port=relay.server_port,
+             runtime_id=bridge._RUNTIME_ID, hip=str(root / 'owned-fixture.hip'), workbench=True,
+             scene={**facts(), 'workspace_path': str(root)})
     (root / 'ready.json').write_text(json.dumps({'executorId': bridge._EXECUTOR_ID,
         'runtimeId': bridge._RUNTIME_ID, 'houdiniVersion': hou.applicationVersionString(), 'port': relay.server_port,
         'contract': {'version': bridge._EXECUTION_CONTRACT_VERSION, 'hash': bridge._VERB_CATALOG_HASH}}))
@@ -155,6 +165,7 @@ def main():
         {'insert': [{'id': 'live-job-fixture',
                      'name': (ROOT / 'tools/tests/dsh-live-job-loop-fixture.mjs').as_uri()}]}]), encoding='utf8')
     env['DSH_LIVE_JOB_FIXTURE'] = str(config_path)
+    env['DSH_HOUDINI_EXECUTOR_REGISTRY'] = str(directory / 'executor-registry')
     with (directory / 'bridge.log').open('wb') as blog:
         bridge = subprocess.Popen([str(hython), str(Path(__file__).resolve()), '--worker', str(config_path)],
             cwd=launch_directory(hython), env=env, stdout=blog, stderr=subprocess.STDOUT,

@@ -99,6 +99,17 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     rejects(lambda:runner.artifact_target(root,{'id':'out','file':'nested/file.bgeo'}))
     assert target.read_bytes()==b'original'
 
+    preview=root/'checks'/'preview.png';preview.parent.mkdir();preview.write_bytes(b'png fixture')
+    candidates=[{'path':str(preview),'role':'visual-check','source':'render_view'},
+                {'path':str(root/'outside.png'),'role':'diagnostic','source':'render_frame'}]
+    rows=runner.visual_artifacts(root,[{'artifactCandidates':candidates}],
+        [{'id':'render','status':'passed','artifact':{'file':'checks/preview.png','bytes':preview.stat().st_size,'sha256':runner.digest(preview)}}])
+    assert len(rows)==2, 'deduplicated builder image and explicit check artifact, plus one unavailable path'
+    assert rows[0]['artifact']=={'file':'checks/preview.png','bytes':preview.stat().st_size,'sha256':runner.digest(preview)}
+    assert rows[0]['role']=='visual-check' and rows[0]['source']=='render_view'
+    assert rows[1]['status']=='failed' and rows[1]['artifact']['file'].endswith('outside.png')
+    assert rows[1]['error'], 'image transport failure stays separate from execution success'
+
     # A manifest can live with scripts while explicitly naming the project
     # input root. File names still cannot traverse outside that root.
     manifest_dir=root/'scripts';manifest_dir.mkdir()

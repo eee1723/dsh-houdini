@@ -12,7 +12,6 @@ import {DesktopIntegration} from './desktop-integration.js'
 import type {ExecutorController} from './executor-controller.js'
 import {VIDEO_DEFAULTS,configureVideo} from './video-configuration.js'
 import {DesktopWindowController} from './desktop-window.js'
-import {PluginUpdates} from './plugin-updates.js'
 
 export const name='dsh-houdini-frontend-host'
 
@@ -26,7 +25,6 @@ export interface Config {
   videoCredentialRef: Volatile<string>
   videoConcurrency: Volatile<number>
   videoRequestsPerSecond: Volatile<number>
-  ignoredPluginVersion: Volatile<string>
 }
 
 export const Config = Schema.object({
@@ -39,16 +37,13 @@ export const Config = Schema.object({
   videoCredentialRef: Schema.string().default('').volatile(),
   videoConcurrency: Schema.number().default(VIDEO_DEFAULTS.concurrency).volatile(),
   videoRequestsPerSecond: Schema.number().default(VIDEO_DEFAULTS.requestsPerSecond).volatile(),
-  ignoredPluginVersion: Schema.string().default('').volatile(),
 })
 
 export class HoudiniFrontend extends TypertRemoteService {
   private readonly window = new DesktopWindowController()
   private readonly windowReady:Promise<void>
-  private readonly updates:PluginUpdates
   constructor(ctx:Context, private readonly config:Config) {
     super(ctx,'houdiniFrontend')
-    this.updates=new PluginUpdates()
     this.windowReady=this.window.start()
     void this.windowReady.catch(error=>ctx.logger.warn('Desktop window restore: '+String(error)))
     ctx.effect(()=>()=>this.window.dispose())
@@ -96,27 +91,9 @@ export class HoudiniFrontend extends TypertRemoteService {
 
   @Remote
   capabilities() {
-    return {sharedExecutors:Boolean(this.ctx.get('houdiniTargets')),nodeDeliveries:true,desktop:Boolean(this.ctx.get('houdiniDesktop'))}
-  }
-
-  @Remote
-  async pluginUpdates(input:unknown,signal:AbortSignal) {
-    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!['refresh','ignoreVersion'].includes(key))
-      ||'ignoreVersion' in input&&typeof input.ignoreVersion!=='string')throw Error('请重新打开插件更新。')
-    const request=input as {refresh?:boolean;ignoreVersion?:string}
-    const status=await this.updates.read('refresh' in request?{refresh:request.refresh}:{},signal)
-    const settings=this.ctx.get('settings') as any
-    const descriptor=settings?.describe({redactSecrets:true}).find((row:any)=>row.ns==='houdini-frontend')
-    const writable=Boolean(descriptor&&settings?.writable!==false&&descriptor.writable!==false)
-    if(request.ignoreVersion!==undefined) {
-      if(status.state!=='available'||status.update?.urgency!=='optional'||status.update.version!==request.ignoreVersion)
-        throw Error('更新信息已变化，请重新检查后再决定是否忽略。')
-      if(!writable)throw Error('暂时无法保存这个选择，请稍后再试。')
-      signal.throwIfAborted()
-      await settings.update('houdini-frontend',{ignoredPluginVersion:request.ignoreVersion},descriptor.revision)
-    }
-    return {...status,ignoredVersion:this.config.ignoredPluginVersion.get(),
-      canIgnore:writable&&status.state==='available'&&status.update?.urgency==='optional'}
+    const desktop=this.ctx.get('houdiniDesktop')
+    return {sharedExecutors:Boolean(this.ctx.get('houdiniTargets')),nodeDeliveries:true,desktop:Boolean(desktop),
+      componentSetup:desktop?.componentStatus()??{state:'preparing',message:'正在准备 Houdini 接入服务。'}}
   }
 
   @Remote

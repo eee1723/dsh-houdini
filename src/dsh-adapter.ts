@@ -92,8 +92,8 @@ function installHoudiniJobOutput(ctx:Context):void {
   })
 }
 
-/** Keep Houdini job originals in native/PTC metadata while rendering a bounded
- * domain summary. DSH remains the sole durable session and job owner. */
+/** Keep Houdini recovery facts in native/PTC metadata while rendering a bounded
+ * domain summary. Complete returned payloads live in their immutable archives. */
 export function installHoudiniExecutionLog(ctx:Context):void {
   installHoudiniJobOutput(ctx)
   ctx.on('tools/post-execute',async(exec,result,next)=>{
