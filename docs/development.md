@@ -96,6 +96,8 @@ npm首次发布由维护者通过`npm login --registry=https://registry.npmjs.or
 
 npm分发回访仍使用上述现有入口：分发检查传`--remote-only --npm`，从`--artifact`内读取精确包名和版本，在原生插件页安装、启用、停用、重新启用及卸载；[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)传`--npm --artifact <冻结tgz>`核对registry依赖记录、同包manifest/文件、模式隔离与完整媒体资源。按需沿`--hfs`核对真实Houdini加载。验证使用自有profile，不修改用户现有安装；同包只换分发渠道时不重复整套HOM回归。
 
+包名及精确版本仅在所选registry已公开时作为可用入口；裸包名的latest还须核对`engines.dsh`，不能用GitHub同版可下载、源码版本或切换registry代替上游公开。URL／文件安装保留原来源，不因npm公开自动成为registry安装。原生更新资格、同名添加与来源迁移合同统一见[DSH适配](dsh-update-compatibility.md#第三方插件更新入口)。
+
 中国大陆镜像采用[npmmirror的只读同步服务](https://npmmirror.com/)。npm正式版本可下载后，通过[本包同步页](https://npmmirror.com/sync/dsh-houdini)发起同步，核对任务结果、镜像的精确版本与dist-tag，再下载镜像tgz与同一冻结包比较摘要。镜像任务提交或网页旧缓存不代表版本已可安装；以目标registry实际查询及下载为准。原生分发检查可加`--registry https://registry.npmmirror.com/`，仅在自有profile配置该源、清空回退，并核对实际消费者读到的配置，避免自动选源掩盖未同步问题。同步延迟时仍提供npm官方源和GitHub直链，不修改用户全局registry或另发一份包。
 
 [Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。浏览器连接和原故障的现场复现分别判断；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
@@ -143,6 +145,8 @@ npm run outputs:prune -- --apply --cache-days 90
 ### 受影响能力的验证
 
 标准宿主验证：先 npm run build 和 npm run docs:check，运行 [官方包边界](../tools/tests/official-host-package.test.mjs)、[本机接入反例](../tools/tests/desktop-integration.test.mjs)、[菜单线程/认证](../tools/tests/dsh-desktop-client.test.py)、[本端安装](../tools/tests/dsh-install-runtime.test.py)，再用 [真实官方组合](../tools/tests/dsh-host-smoke.test.py)及其 --browser-module 参数核对原生模式、页面所选任务、插件启停与意图消费。
+
+插件更新使用[原生分发检查](../tools/tests/dsh-distribution-ui.test.py)及[页面操作](../tools/tests/desktop-install-ui-probe.mjs)：先以自身包名的registry来源安装旧版并明确停用，在原生详情实际检查版本、展开兼容候选、点击更新及确认，再核对版本、实际来源、启用状态和原有模式／会话保持。失败恢复使用semver严格高于当前已装版本的失败夹具，分别核对失败、恢复版本及状态，不能把更新前的版本拒绝算作回滚。直接RPC调用`listVersions`／`updateBundle`只算API机制验证；即使同一轮的正常更新走过真实按钮，API失败恢复反例仍须单独标识，不合称完整UI恢复。URL与文件来源分别核对无版本区／无更新按钮、重复包名添加被拒；新URL换包单列安装检查，不套用原生更新恢复保证。裸包名添加按latest检查，不自动寻找兼容版。来源迁移另验证原生管理器写入后的真实registry依赖及页面资格。回环registry只证明机制；正式npm、显式镜像及用户profile的验收分别报告。这些入口变化不机械触发HOM重跑。
 
 启动接续使用[票据回归](../tools/tests/desktop-launch-recovery.test.mjs)核对两代宿主、真实票据、原生选择事件、提交前停止/提交后完成、无producer的明确继续、并发回执、身份暂不可用与安全清理；[OS边界](../tools/tests/desktop-process.test.mjs)核对Windows出生事实、进程退出、数据根别名互斥与崩溃释放；[Python交付](../tools/tests/dsh-connection-operation.test.py)核对真实HTTP断响应、凭据轮换后重新准入及原payload投递，不能只直接向Node POST来代替生产消费者。原生窗口[生命周期入口](../tools/tests/dsh-desktop-window.test.py)的--lifetime-hfs必须以同一进程出生事实、Bridge和原会话选中验证退出/重开，绑定实际包摘要；独立资料须覆盖首次Documents工作区并核对系统协议处理器，不把临时DSH_HOME等同于机器级设置隔离。
 
@@ -338,12 +342,12 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 后续正式发布默认依次完成下列流程，详细命令与渠道检查复用[构建与生成](#构建与生成)，不另建发布账本。已有明确版本与渠道的发布指令即按该范围推进；账号登录及平台要求的二次验证由维护者完成。
 
-1. **先完成用户指引。** 冻结前同步版本、兼容声明、README、安装/更新说明及发行摘要。npm包页正文来自打包时的README，安装指引须提前准确。发行说明中的包名和完整tgz地址使用各自独立的Markdown fenced代码块，语言标记为`text`，保留GitHub一键复制按钮；写清镜像未同步时的官方源与GitHub备用入口。
+1. **先完成用户指引。** 冻结前同步版本、兼容声明、README、安装/更新说明及发行摘要。npm包页正文来自打包时的README，安装指引须提前准确，并按渠道实际可用性提供入口；包名尚未公开时不把切源写成解决办法。发行说明中的包名和完整tgz地址使用各自独立的Markdown fenced代码块，语言标记为`text`，保留GitHub一键复制按钮；写清各渠道适用条件与可用的完整地址。
 2. **固定一个完整包。** 从明确源码提交构建标准tgz，记录工作树状态、完整资源/许可/来源及校验清单。GitHub与npm使用同一冻结包；内容变化升版本，既有包与标签不覆盖。媒体范围沿现役分发合同，不为上架另打缺资源的包。
 3. **按改动验证最终产物。** 完成构建、文档门和受影响回归，用官方Desktop的CLI、原生插件页面及H21/H22实际加载验证最终包。按[受影响能力](#受影响能力的验证)选择执行内核和领域检查，不为纯文档或重复渠道验证机械重跑整套HOM/模型评测；用户live、真实账号和自然任务质量保持各自验证边界。
 4. **发布并查实公开状态。** npm先预演，再按授权发布；GitHub公开对应源码、标签、同包附件和校验文件。命令成功、处理中提示、占位版本或Draft均不算公开完成；核对真实版本、兼容声明、dist-tag及可下载文件。重新下载GitHub与npm的包，比较SHA256/SHA512与冻结包。
 5. **完成大陆镜像同步。** npm版本实际公开后触发npmmirror同步，等待精确版本和目标dist-tag就绪，再下载镜像包核对同一摘要。排队或网页缓存不是完成证据；尚未就绪时如实报告该渠道待完成，不把官方源可用扩大为镜像可用。
-6. **核对各实际安装入口与页面。** 回访正式GitHub HTTPS、npm官方源和大陆镜像的包名安装、启停和卸载。镜像验证显式选择该registry并关闭其他源回退，确认消费方实际读到的源，避免自动选源掩盖失败。检查公开发行页的复制按钮、链接及npm包页安装说明；只按已经验证的宿主合同描述更新方式，不把包名分发写成一键更新或Houdini热重载。
+6. **核对各实际安装入口与页面。** 回访正式GitHub HTTPS、npm官方源和大陆镜像的包名安装、启停和卸载。镜像验证显式选择该registry并关闭其他源回退，确认消费方实际读到的源，避免自动选源掩盖失败。按实际来源核对原生版本区、更新按钮及同名添加行为；API更新成功不代替按钮路径或URL／文件来源迁移。检查公开发行页的复制按钮、链接及npm包页安装说明；不把渠道可用扩大为其他渠道已公开，也不把Node插件更新写成Houdini热重载。
 7. **收尾同源记录。** 源码、标签、发行清单与公开说明对应；证据由输出管理器保存，未完成动作只进handoff。对用户报告实际可用渠道、版本、验证范围和遗留项；仓库README修改不能冒充已刷新冻结npm包的正文。
 
 完整签名与平台发布机制按实际渠道执行，不以旧私有运行包协议代替官方插件安装合同。

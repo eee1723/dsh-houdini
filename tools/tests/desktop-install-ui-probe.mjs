@@ -47,6 +47,23 @@ async function rpc(method,args={}){
  return evaluate(`(async()=>{const r=await fetch('/api/'+${JSON.stringify(method)},{method:'POST',headers:{'content-type':'application/json'},credentials:'include',body:JSON.stringify({type:'client-request',rpcId:'fixture-'+crypto.randomUUID(),method:${JSON.stringify(method)},payload:{args:${JSON.stringify(args)}}})});const b=await r.json();if(!b.result?.ok)throw Error(JSON.stringify(b.result?.error||b));return b.result.value})()`)
 }
 async function bundle(){return (await rpc('pluginManager/listBundles')).find(row=>row.name==='dsh-houdini')}
+async function directSourceUpdateEligibility(installed,label){
+ assert.equal(installed.updatable,false,'A tarball dependency must not inherit registry update eligibility')
+ const before=await bundle()
+ await plugins()
+ await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native tarball package details')
+ await until('document.querySelector("[data-plugin-detail=dsh-houdini]")','Native direct-source detail page')
+ assert.equal(await evaluate('!!document.querySelector("[data-plugin-versions]")'),false)
+ const listing=await rpc('pluginManager/listVersions',{name:'dsh-houdini'})
+ assert.equal(listing.status,'refused');assert.equal(listing.problem,'not-updatable')
+ const duplicate=await rpc('pluginManager/inspect',{spec:'dsh-houdini'})
+ assert.equal(duplicate.status,'refused');assert.equal(duplicate.problem,'already-installed')
+ const unchanged=await bundle()
+ assert.deepEqual([unchanged.version,unchanged.source,unchanged.enabled],[before.version,before.source,before.enabled])
+ report.directSourceUpdate={source:installed.source,updatable:false,nativeVersionSectionAbsent:true,
+  listingRefusal:listing.problem,duplicatePackageNameRefusal:duplicate.problem}
+ await shot(label+'-no-registry-update');await plugins()
+}
 async function nativeHistory(sessionId){
  const projection=await rpc('session/projections',{request:{sessionId}})
  assert(projection&&Number.isSafeInteger(projection.asOfSeq),'Native current projection must supply its exact event cut')
@@ -171,16 +188,28 @@ try{
   const previous=await bundle()
   assert.equal(previous.version,config.updateFromVersion);assert.equal(previous.enabled,false)
   assert(previous.source.startsWith('dsh-houdini@'),'the previous official CLI must seed a registry dependency')
+  assert.equal(previous.updatable,true,'An incompatible old registry bundle must remain eligible for a compatible update')
   report.previousOfficialCli={version:previous.version,enabled:previous.enabled,source:previous.source}
   await plugins()
   const listing=await rpc('pluginManager/listVersions',{name:'dsh-houdini',options:{registry:config.updateRegistry}})
   assert.equal(listing.status,'listed',JSON.stringify(listing))
   assert(listing.versions.some(row=>row.version===config.expectedVersion&&!row.incompatible))
-  const update=await rpc('pluginManager/updateBundle',{name:'dsh-houdini',version:config.expectedVersion,
-   options:{registry:config.updateRegistry,requestId:'owned-native-update'}})
-  assert.equal(update.step,'install',JSON.stringify(update));assert(!['failed','cancelled'].includes(update.result.application),JSON.stringify(update))
+  await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native old registry package details')
+  await until('document.querySelector("[data-plugin-versions]")','Native registry versions section')
+  const updateButton=`[...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify('更新到 '+config.expectedVersion)}||e.textContent.trim()===${JSON.stringify('Update to '+config.expectedVersion)})`
+  await until(updateButton,'Native compatible update button')
+  await shot('registry-compatible-update-button')
+  const updateCallsBefore=report.uiMethods['pluginManager/updateBundle']||0
+  await click(updateButton,'Native update to compatible release')
+  await until('document.querySelector("[data-plugin-update=confirm]")','Native update confirmation')
+  await click(button('/^(更新|Update)$/',`[...document.querySelectorAll('[role=dialog]')].at(-1)`),'Native confirm compatible update')
+  await until('document.querySelector("[data-plugin-update=done]")','Native update result')
   await until(async()=>{const current=await bundle();return current.version===config.expectedVersion&&!current.enabled},'native registry update preserves the disabled selection')
-  await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native updated package details')
+  assert((report.uiMethods['pluginManager/updateBundle']||0)>updateCallsBefore,'The actual Native button must submit the update')
+  const update={via:'native-update-button',from:previous.version,to:config.expectedVersion,
+   outcome:await evaluate('document.querySelector("[data-plugin-update=done]").innerText'),disabledSelectionPreserved:true}
+  await shot('registry-native-update-result')
+  await click(`document.querySelector('[role=dialog] button[aria-label="关闭"], [role=dialog] button[aria-label="Close"]')`,'Native completed update close')
   await until(`document.querySelector('[data-plugin-detail="dsh-houdini"]')?.textContent.includes(${JSON.stringify(config.expectedVersion)})`,'actual native details display the candidate version')
   await shot('registry-updated-disabled-details');await plugins()
   await click(enableSwitch(),'Native enable after host/plugin upgrade')
@@ -196,11 +225,13 @@ try{
   await until(switchState(true),'native restored switch reflects enabled state')
   await preservedRoster(before,true);await shot('registry-failed-fixture-restored')
   report.nativeRegistryUpdate={update,failedFixture:failed,targetVersion:config.expectedVersion,restoredEnabled:true}
+  report.updatedByNativeUi=true
   report.updatedByNativeApi=true
  }else{
   assert(!(await bundle()),'Fixture must begin without the product installed')
   report.initialNativeProfileWithoutPlugin=true
-  await install(config.remoteOnly?config.remoteInstallSpec:config.artifact,config.npmSpec?'npmPackage':config.remoteOnly?'remoteTarball':'localTarball',true)
+  const installed=await install(config.remoteOnly?config.remoteInstallSpec:config.artifact,config.npmSpec?'npmPackage':config.remoteOnly?'remoteTarball':'localTarball',true)
+  if(!config.npmSpec)await directSourceUpdateEligibility(installed,config.remoteOnly?'remoteTarball':'localTarball')
   report.installedByNativeUi=true
  }
  if(!config.remoteOnly){

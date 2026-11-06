@@ -37,7 +37,7 @@ parser.add_argument('--artifact',required=True,type=Path)
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--unpacked-app',type=Path,help='Unmodified official app extracted for development-carrier UI checks; excludes packaged protocol/update qualification')
 parser.add_argument('--electron-carrier',type=Path,help='Official Electron copy with default_app.asar and no app.asar; requires --unpacked-app')
-parser.add_argument('--update-from',type=Path,help='Actual public 0.1.6 tgz seeded disabled by the previous official CLI, then updated through the native registry API')
+parser.add_argument('--update-from',type=Path,help='Actual public 0.1.6 tgz seeded disabled by the previous official CLI, then updated through the real native update button')
 parser.add_argument('--previous-desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--expected-sha256')
 parser.add_argument('--remote-only',action='store_true',help='Directly validate the owned HTTP/UI lifecycle after a fixture-only change')
@@ -356,7 +356,8 @@ server=http.server.ThreadingHTTPServer(('127.0.0.1',0),FixtureServer)
 base='http://127.0.0.1:'+str(server.server_port);asr_endpoint=base+'/asr/audio/transcriptions'
 registry_files={};registry_document={};broken_version=None
 if previous_artifact:
-    broken_version=package['version'].split('-')[0]+'-rc.999999-fixture'
+    major,minor,patch=package['version'].split('-')[0].split('.')
+    broken_version=f'{major}.{minor}.{int(patch)+1}-rc.999999-fixture'
     broken=fixture/'owned-broken-update-fixture.tgz'
     broken_manifest={'name':'dsh-houdini','version':broken_version,'private':True,'type':'module',
         'main':'lib/broken.js','exports':{'.':'./lib/broken.js'},'engines':package['engines'],
@@ -437,7 +438,9 @@ try:
         report['ui'][mode]['normalExitCode']=process.returncode
         print('PASS Native '+mode+' UI stage',flush=True)
     report['nativeElectronWindowTested']=True;report['installedByNativeUi']=not bool(previous_artifact)
-    report['updatedByNativeApi']=bool(previous_artifact)
+    report['updatedByNativeApi']=any(stage.get('updatedByNativeApi') is True for stage in report['ui'].values())
+    report['updatedByNativeUi']=any(stage.get('updatedByNativeUi') is True for stage in report['ui'].values())
+    if previous_artifact:assert report['updatedByNativeUi'],'The consumer did not observe the real Native update button path'
     assert server_facts['asrRequests']==0 and not server_facts['errors'],server_facts
     if not previous_artifact and not args.local_only and not args.remote_url and not args.npm:assert server_facts['tarballGets']>0,server_facts
     assert server_facts['sentinelAbsentFromModel'],server_facts
@@ -445,7 +448,7 @@ try:
     assert protocol_hash()==baseline and {file:digest(file) for file in immutable}==immutable
     report.update(ok=True,normalExitCode=process.returncode,loopback=server_facts,desktopInstallationAndProtocolUnchanged=True)
     remote_label='npm package' if args.npm else 'HTTPS tarball' if args.remote_url else 'HTTP tarball'
-    print(('PASS Native registry update from actual disabled 0.1.6 and failed-fixture restoration' if previous_artifact else 'PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
+    print(('PASS Native update button from actual disabled registry 0.1.6 and API failed-fixture restoration' if previous_artifact else 'PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
         'PASS Native UI local tgz + real tutorial Agent/credentials + '+remote_label+' distribution/lifecycle')+': '+str(fixture),flush=True)
 except BaseException as error:
     report['error']=repr(error);raise

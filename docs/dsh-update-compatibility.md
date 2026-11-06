@@ -75,7 +75,7 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 0.2.2 接口边界
 
-[官方0.2.2-rc.1](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1)的合同由当前候选直接消费，不保留旧disposer/新handle或旧工具mode的猜测分支；旧用户沿原插件发行版使用。实际资格范围由兼容清单维护，剩余验收只进[交接](handoff.md#h-06-官方dsh共存与插件边界)。
+[官方0.2.2-rc.1](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1)的合同由当前插件直接消费，不保留旧disposer/新handle或旧工具mode的猜测分支；旧用户沿原插件发行版使用。实际资格范围由兼容清单维护，剩余验收只进[交接](handoff.md#h-06-官方dsh共存与插件边界)。
 
 | 官方合同 | 插件消费与验证 |
 |---|---|
@@ -97,8 +97,12 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 第三方插件更新入口
 
-Node侧插件的安装、启停、卸载、升级与失败恢复只使用Desktop原生插件管理。Houdini工程菜单通过公开的`pluginNavigation.openBundle('dsh-houdini')`打开同一页面，不查询第二套Release目录，不维护更新缓存、忽略版本状态或自制安装弹窗。原生页面与官方CLI支持的安装来源和升级方式见[安装说明](setup.md#connection--support连接与维护)；当前rc对第三方插件的一键更新限制如实保留，不用插件网络查询伪装成更新能力。
+Node侧插件的安装、启停、卸载、升级与失败恢复只使用Desktop原生插件管理。Houdini工程菜单通过公开的`pluginNavigation.openBundle('dsh-houdini')`打开同一页面。DSH 0.2.2-rc.1的registry原生更新要求：当前profile中可管理的第三方包、有效semver版本，以及按自身包名记录的registry来源；Host由这些事实产生`updatable`，客户端只为符合条件的包显示版本区。GitHub tgz URL、本地文件和源码链接不取得这一资格，`homepage`／`repository`也不是更新来源。安装页再次添加已有包名会拒绝；新的tgz URL可能走普通安装路径，不能据此承诺`updateBundle`的旧版恢复保证。npm发布不会自动转换已有依赖来源。
 
-这个边界省去版本筛选、发布提示和恢复逻辑的平行实现，也让安装错误、来源选择及profile回滚由实际写入方负责。公开导航不可用时仍从原生「插件」页进入，不恢复插件内更新器。Houdini helper在插件加载或明确新建／打开时准备；运行观察只读，缺失或失败通过已有修复入口处理。实际加载版本与重开要求由插件判断，因为Desktop不知道进程内Python模块身份。
+registry中的精确版本、dist-tag和宿主兼容声明必须实际公开可查；裸包名查询latest不能证明它支持当前DSH。URL／文件来源可通过官方管理流程明确替换；迁移为registry来源后须核对真实依赖来源、版本、启用状态与页面资格。安装与更新入口见[安装说明](setup.md#connection--support连接与维护)，未完成的具体组合只进[交接](handoff.md#h-01-标准插件发布与用户加载)。
+
+官方版本区和管理器已经覆盖包名安装的版本选择、更新及恢复，插件只需导航到该入口，并准确交付可获取版本。自制更新器会重复版本筛选和恢复逻辑，不能改变宿主记录的URL来源；为本次来源差异修改核心也增加共享profile影响与维护成本。采用公开管理流程是当前最小充分方案；只有确认官方流程不能满足必要的来源迁移时，才比较窄上游改进，并以官方合同补齐作为临时适配的退出条件，不恢复插件内Release查询、更新缓存或自制安装弹窗。
+
+原生更新验收须实际打开详情、检查版本、点击更新和确认，并核对结果、来源和启用状态；直接调用`listVersions`／`updateBundle`只能证明API机制，不能证明按钮可达。URL／文件来源无版本区、重复包名的添加拒绝、新URL换包和来源迁移须分别观察，方法见[开发维护](development.md#受影响能力的验证)。公开导航不可用时仍从原生「插件」页进入。Houdini helper在插件加载或明确新建／打开时准备；运行观察只读，缺失或失败通过已有修复入口处理。实际加载版本与重开要求由插件判断，因为Desktop不知道进程内Python模块身份。
 
 [组件观察](../src/component-installation.ts)异步复用安装器只读预览与既有 Package，不新建活动版本指针、不复制内容身份算法；文件检查不阻塞现场 health。Python 的 `loaded_helper()` 在模块首次加载捕获不可变目录与包版本，health/登记传递同源快照，磁盘更新不能改变运行中身份。安装事实与加载事实分别返回：当前进程内容正确但Package缺失时提示安装修复，不报告整条链已就绪；磁盘未知或来自其他安装位置保持未知。只有同一安装位置、预期Package已准备好且已加载身份不同才提示重开。执行准入与界面共同使用[合同判定](../src/component-compatibility.ts)，构建身份差异本身不扩大执行门槛。反例入口为[工程菜单](../tools/tests/executor-picker.test.mjs)、[真实页面](../tools/tests/dsh-client-navigation.mjs)及[加载身份](../tools/tests/dsh-deployment.test.py)。
