@@ -514,6 +514,9 @@ try:
         if mode in ['migration-cli','migration-after']:
             report['migrationCli']=migrate_owned_profile()
             if mode=='migration-cli':continue
+            # The same owned userData retains the former renderer's endpoint.
+            # Require this launch to publish its own port before observing it.
+            (user_data/'DevToolsActivePort').unlink(missing_ok=True)
         log=stage/'desktop.log';output=log.open('wb')
         process=subprocess.Popen([str(carrier),*([str(unpacked)] if unpacked else []),
             '--inspect-brk=127.0.0.1:0' if unpacked else '--inspect=127.0.0.1:0',
@@ -538,7 +541,9 @@ try:
         report['ui'][mode]=json.loads((stage/'ui-result.json').read_text(encoding='utf-8'))
         if mode in ['local','update','migration-after']:
             installed=(profile/'node_modules/dsh-houdini').resolve(strict=True)
-            assert installed.is_relative_to(fixture) and not installed.is_relative_to(ROOT)
+            # --output-dir may live under the repository's managed tools/out.
+            # The resolved package must still belong to this fresh fixture.
+            assert installed.is_relative_to(fixture)
             hashes={}
             with tarfile.open(copied,'r:gz') as archive:
                 for relative in ['client.js','lib/frontend-host.js','lib/video-configuration.js']:

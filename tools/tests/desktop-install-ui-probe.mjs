@@ -82,7 +82,7 @@ async function migrationState(check=false){
   const history=await until(async()=>{const page=await nativeHistory(sessionId);return JSON.stringify(page.records).includes(text)&&page.records.some(row=>row.event.type==='turn/end')?page:null},'owned Native conversation actually settled before migration')
   assert.equal(history.hasMore,false)
   const projection=await rpc('session/projections',{request:{sessionId}})
-  const throughSeq=history.records.at(-1)?.seq
+  const throughSeq=history.records.at(-1)?.event.seq
   assert(Number.isSafeInteger(throughSeq),'The preservation baseline needs the exact last original event')
   const state={sessionId,records:history.records,throughSeq,modelSelection:projection.values.modelSelection,
    modes:(await rpc('agentPresets/list')).presets.map(row=>({id:row.id,isDefault:row.isDefault})),
