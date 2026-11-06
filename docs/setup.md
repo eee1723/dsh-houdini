@@ -12,6 +12,8 @@ https://github.com/eee1723/dsh-houdini/releases/download/v0.1.8/dsh-houdini-0.1.
 
 使用[npm 包名](https://www.npmjs.com/package/dsh-houdini)时，先确认所选安装源已经公开所需版本及其`engines.dsh`兼容范围，再填写`dsh-houdini@<版本>`。仅填写`dsh-houdini`会查询该源的latest，不会自动寻找兼容当前宿主的版本。GitHub地址安装与npm包名安装分别保留各自的来源，安装同一份内容也不会自动转换来源。
 
+刚发布时请填写精确版本，例如`dsh-houdini@0.1.8`。宿主包管理器的新版本年龄策略可能让裸包名实际选择较旧版本，即使预检卡片已经显示新版；以安装后的实际版本和兼容结果为准。精确版本选择及后续原生更新由宿主管理，不需要为此放宽旧包兼容范围或修改全局安装策略。
+
 如果镜像缺少npm官方已公开的版本，可在对话框右侧「安装源」切换npm官方源`https://registry.npmjs.org/`。官方源尚未公开该版本时，换源不能解决；使用已公开的GitHub完整地址或下载同一个包后本地安装。具体未完成的渠道见[发行交接](handoff.md#h-01-标准插件发布与用户加载)。
 
 GitHub发布页同时提供SHA256校验文件。仓库首页、历史独立工作台包和GitHub自动生成的Source code ZIP不适用于这条标准插件安装路径；源码push、tag或Draft本身不等于包已公开可用。

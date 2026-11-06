@@ -107,6 +107,33 @@ async function migrationState(check=false){
   originalRecordsUnchanged:true,modelCatalogUnchanged:true,originalModesUnchanged:true}
  return state
 }
+async function directMigrationLatest(before){
+ const migrated=await bundle()
+ assert.equal(migrated.source,'dsh-houdini@'+config.expectedVersion)
+ assert.equal(migrated.version,config.expectedVersion);assert.equal(migrated.enabled,false);assert.equal(migrated.updatable,true)
+ await migrationState(true)
+ report.migrationRegistrySource={version:migrated.version,source:migrated.source,enabled:migrated.enabled,updatable:migrated.updatable}
+ const updatesBefore=report.uiMethods['pluginManager/updateBundle']??0
+ await plugins()
+ await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native migrated current-release details')
+ await until('document.querySelector("[data-plugin-versions]")','Native migrated registry Versions section')
+ await until('/已是最新版本|Up to date/.test(document.querySelector("[data-plugin-versions]")?.innerText||"")','Native registry Versions actually reports up to date')
+ const listing=await rpc('pluginManager/listVersions',{name:'dsh-houdini',options:{registry:config.expectedRegistry}})
+ assert.equal(listing.status,'listed');assert.equal(listing.installed,config.expectedVersion);assert.equal(listing.versions.length,0)
+ assert.equal(new URL(listing.registry).href,new URL(config.expectedRegistry).href)
+ assert.equal(report.uiMethods['pluginManager/updateBundle']??0,updatesBefore,'Direct CLI upgrade must not be counted as a Native button update')
+ report.nativeVersionsUiLatest=true
+ report.nativeVersionsObservation={text:await evaluate('document.querySelector("[data-plugin-versions]").innerText'),registry:listing.registry,installed:listing.installed,newerVersions:listing.versions.length}
+ report.migratedByOfficialCli=true;report.updatedByNativeUi=false;report.updatedByNativeApi=false
+ await shot('migration-direct-native-up-to-date')
+ await plugins();await click(enableSwitch(),'Native enable after direct CLI migration and upgrade')
+ await until(async()=>(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'&&!row.broken),'Directly migrated package actually supplies Houdini')
+ await until(switchState(true),'Directly migrated switch reflects explicit enablement')
+ await preservedRoster(before,true);await migrationState(true)
+ const current=await bundle()
+ report.migrationFinalSource={version:current.version,source:current.source,enabled:current.enabled,updatable:current.updatable}
+ report.otherModesAndDefaultPreserved=true
+}
 async function plugins(){await click(button('/^(插件|Plugins)$/'),'Native Plugins navigation')}
 async function install(spec,label,enable){
  await plugins()
@@ -185,6 +212,15 @@ function wire(text,outgoing){
    writeProgress()
   }
  }catch{}
+ if(outgoing&&text.includes('pluginManager/updateBundle'))try{
+  const message=JSON.parse(text)
+  if(message.method==='pluginManager/updateBundle'){
+   const args=message.payload?.args
+   report.updateActions??=[]
+   report.updateActions.push({name:args?.name,version:args?.version,registry:args?.options?.registry??null})
+   writeProgress()
+  }
+ }catch{}
 }
 function writeProgress(){fs.writeFile(path.join(path.dirname(config.output),'ui-progress.json'),JSON.stringify(report,null,2)).catch(()=>{})}
 try{
@@ -227,6 +263,8 @@ try{
   await directSourceUpdateEligibility(source,'migration-original-'+config.migrationSource)
   await migrationState()
   report.migrationOriginalSource={version:source.version,source:source.source,enabled:source.enabled,updatable:source.updatable}
+ }else if(config.migrationPhase==='after'&&config.migrationDirect){
+  await directMigrationLatest(before)
  }else{
  if(config.migrationPhase==='after'){
   const migrated=await bundle()
@@ -251,14 +289,21 @@ try{
   await until(updateButton,'Native compatible update button')
   await shot('registry-compatible-update-button')
   const updateCallsBefore=report.uiMethods['pluginManager/updateBundle']||0
+  const updateActionsBefore=report.updateActions?.length??0
   await click(updateButton,'Native update to compatible release')
   await until('document.querySelector("[data-plugin-update=confirm]")','Native update confirmation')
   await click(button('/^(更新|Update)$/',`[...document.querySelectorAll('[role=dialog]')].at(-1)`),'Native confirm compatible update')
   await until('document.querySelector("[data-plugin-update=done]")','Native update result')
   await until(async()=>{const current=await bundle();return current.version===config.expectedVersion&&!current.enabled},'native registry update preserves the disabled selection')
   assert((report.uiMethods['pluginManager/updateBundle']||0)>updateCallsBefore,'The actual Native button must submit the update')
+  const observedRequest=report.updateActions?.slice(updateActionsBefore).find(row=>row.name==='dsh-houdini'&&row.version===config.expectedVersion)
+  if(config.expectedRegistry){
+   assert(observedRequest,'The actual Native update request was not observed')
+   assert.equal(new URL(observedRequest.registry).href,new URL(config.expectedRegistry).href,'The Native button selected a different registry')
+  }
   const update={via:'native-update-button',from:previous.version,to:config.expectedVersion,
-   outcome:await evaluate('document.querySelector("[data-plugin-update=done]").innerText'),disabledSelectionPreserved:true}
+   outcome:await evaluate('document.querySelector("[data-plugin-update=done]").innerText'),disabledSelectionPreserved:true,
+   ...(observedRequest?{observedRequest}:{})}
   await shot('registry-native-update-result')
   await click(`document.querySelector('[role=dialog] button[aria-label="关闭"], [role=dialog] button[aria-label="Close"]')`,'Native completed update close')
   await until(`document.querySelector('[data-plugin-detail="dsh-houdini"]')?.textContent.includes(${JSON.stringify(config.expectedVersion)})`,'actual native details display the candidate version')

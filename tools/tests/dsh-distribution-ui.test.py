@@ -43,13 +43,15 @@ parser.add_argument('--previous-desktop-root',type=Path,default=Path('D:/dshdesk
 parser.add_argument('--migration-from',type=Path,help='Frozen compatible package seeded from a URL/file, migrated by the current official CLI at the same version, then updated by the native button to --artifact')
 parser.add_argument('--migration-source',type=str.lower,choices=['url','file'],help='Original dependency source for --migration-from')
 parser.add_argument('--migration-url',help='Actual HTTPS source tarball for a public-registry migration; absent with the owned loopback registry uses its exact frozen bytes')
-parser.add_argument('--migration-cli-only',action='store_true',help='Probe same-version URL/file to registry migration with the official CLI, without starting a GUI or claiming session/UI validation')
+parser.add_argument('--migration-cli-only',action='store_true',help='Probe URL/file to registry migration with the official CLI, without starting a GUI or claiming session/UI validation')
+parser.add_argument('--migration-direct',action='store_true',help='Migrate and upgrade directly to --artifact with the official CLI, then read the actual native Versions UI as up to date; does not claim a button update')
 parser.add_argument('--output-dir',type=Path,help='New evidence subdirectory allocated by the output manager; otherwise use a fresh temporary directory')
 parser.add_argument('--expected-sha256')
 parser.add_argument('--remote-only',action='store_true',help='Directly validate the owned HTTP/UI lifecycle after a fixture-only change')
 parser.add_argument('--local-only',action='store_true',help='Verify the actual local Native UI/Agent/credential path after a UI-only change')
 parser.add_argument('--remote-url',help='Install this actual HTTPS tarball URL through the native remote UI stage')
 parser.add_argument('--npm',action='store_true',help='Install the frozen artifact name@version through the native package-name UI')
+parser.add_argument('--npm-unversioned',action='store_true',help='With --npm, type the bare package name while still requiring the frozen artifact version and bytes')
 parser.add_argument('--registry',help='Use only this registry in the owned profile (requires --npm)')
 parser.add_argument('--timeout',type=int,default=240)
 args=parser.parse_args()
@@ -61,10 +63,12 @@ if args.migration_from:
         parser.error('--migration-from requires --migration-source url|file and its dedicated migration stages')
     if args.registry and args.migration_source=='url' and not args.migration_url:
         parser.error('A public-registry URL migration requires the actual --migration-url; no loopback source may stand in for public HTTPS')
-elif args.migration_source or args.migration_url or args.migration_cli_only:
+elif args.migration_source or args.migration_url or args.migration_cli_only or args.migration_direct:
     parser.error('Migration options require --migration-from')
 if args.npm and (not args.remote_only or args.remote_url):
     parser.error('--npm requires --remote-only and cannot use --remote-url')
+if args.npm_unversioned and not args.npm:
+    parser.error('--npm-unversioned requires --npm')
 if args.registry:
     registry_source=urllib.parse.urlsplit(args.registry)
     if not (args.npm or args.migration_from) or registry_source.scheme!='https' or not registry_source.hostname:
@@ -81,13 +85,13 @@ if args.remote_url:
 artifact=args.artifact.resolve(strict=True)
 with tarfile.open(artifact,'r:gz') as archive:
     package=json.load(archive.extractfile('package/package.json'))
-npm_spec=package['name']+'@'+package['version'] if args.npm else None
+npm_spec=(package['name'] if args.npm_unversioned else package['name']+'@'+package['version']) if args.npm else None
 previous_artifact=args.update_from.resolve(strict=True) if args.update_from else None
 migration_artifact=args.migration_from.resolve(strict=True) if args.migration_from else None
 if migration_artifact:
     with tarfile.open(migration_artifact,'r:gz') as archive:migration_package=json.load(archive.extractfile('package/package.json'))
     assert migration_package['name']==package['name']=='dsh-houdini'
-    if not args.migration_cli_only:
+    if not args.migration_cli_only or args.migration_direct:
         def stable_version(value):
             assert re.fullmatch(r'\d+\.\d+\.\d+',value),'Use genuine stable frozen releases for the migration/update path'
             return tuple(map(int,value.split('.')))
@@ -366,32 +370,35 @@ def migrate_owned_profile():
     source=manifest['dependencies']['dsh-houdini']
     assert installed['version']==migration_package['version']
     assert source.startswith('file:') if args.migration_source=='file' else source==migration_source_spec
-    def frozen_files():
+    def frozen_files(archive_path):
         hashes={}
-        with tarfile.open(migration_artifact,'r:gz') as archive:
+        with tarfile.open(archive_path,'r:gz') as archive:
             for relative in ['package.json','client.js','lib/frontend-host.js','houdini/python3.11libs/dsh_bridge.py']:
                 expected=hashlib.sha256(archive.extractfile('package/'+relative).read()).hexdigest()
                 assert digest(profile/'node_modules/dsh-houdini'/relative)==expected,'Source migration did not retain the exact frozen release file: '+relative
                 hashes[relative]=expected
         return hashes
-    original_files=frozen_files()
+    original_files=frozen_files(migration_artifact)
     before_selection=manifest.get('dsh',{}).get('profile',{}).get('bundles',[])
     before_others={name:value for name,value in manifest['dependencies'].items() if name!='dsh-houdini'}
     preserved={str(file.relative_to(profile)):digest(file) for file in [profile/'cordis.patch.yml',profile/'.npmrc']}
-    spec='dsh-houdini@'+migration_package['version']
+    target_version=package['version'] if args.migration_direct else migration_package['version']
+    spec='dsh-houdini@'+target_version
     migrated=official_cli(['add',spec,'--save-exact','--registry',migration_registry,'--store-dir',Path(env['PNPM_HOME'])/'store'])
     (stage/'migration-official-cli.log').write_bytes(migrated.stdout+migrated.stderr)
     after=json.loads((profile/'package.json').read_text(encoding='utf-8'))
     actual=json.loads((profile/'node_modules/dsh-houdini/package.json').read_text(encoding='utf-8'))
-    assert after['dependencies']['dsh-houdini']==migration_package['version'],'The official CLI did not write an exact registry dependency'
-    assert actual['version']==migration_package['version'],'Source migration must preserve the installed release version'
+    assert after['dependencies']['dsh-houdini']==target_version,'The official CLI did not write an exact registry dependency'
+    assert actual['version']==target_version,'The official CLI installed another release version'
     assert after.get('dsh',{}).get('profile',{}).get('bundles',[])==before_selection,'CLI source migration changed bundle selections'
     assert {name:value for name,value in after['dependencies'].items() if name!='dsh-houdini'}==before_others
     assert all(digest(profile/relative)==expected for relative,expected in preserved.items()),'CLI migration rewrote owned settings or registry configuration'
-    assert frozen_files()==original_files
+    installed_files=frozen_files(artifact if args.migration_direct else migration_artifact)
+    if not args.migration_direct:assert installed_files==original_files
     return {'via':'official-desktop-cli','runtime':'0.2.2-rc.1','from':source,'to':spec,'version':actual['version'],
+        'fromVersion':migration_package['version'],'toVersion':target_version,'directUpgrade':args.migration_direct,
         'registry':migration_registry,'selectionPreserved':True,'otherDependenciesPreserved':True,'settingsSha256':preserved,
-        'frozenPackageFilesSha256':original_files,
+        'originalFrozenPackageFilesSha256':original_files,'installedFrozenPackageFilesSha256':installed_files,
         'guiSessionPreservationTested':not args.migration_cli_only}
 
 
@@ -493,7 +500,7 @@ if migration_artifact:
     report.update(cliPluginInstallUsed=True,migrationSource=args.migration_source,migrationSourceSpec=migration_source_spec,
         migrationArtifactSha256=digest(migration_artifact),migrationRegistry=migration_registry,
         remoteDistribution='explicit public registry source migration and update' if args.registry else 'owned loopback registry source migration mechanism; no public publication claim',
-        cliOnly=args.migration_cli_only)
+        cliOnly=args.migration_cli_only,migrationDirect=args.migration_direct)
 print('Owned Native distribution UI evidence:',fixture,flush=True)
 try:
     baseline=protocol_hash();report['protocolSha256Before']=baseline
@@ -531,6 +538,7 @@ try:
         if previous_artifact:settings.update(updateFromVersion=previous_package['version'],updateRegistry=base,brokenVersion=broken_version)
         if migration_artifact:settings.update(migrationPhase='before' if mode=='migration-before' else 'after',
             migrationVersion=migration_package['version'],migrationSource=args.migration_source,migrationSourceSpec=migration_source_spec,
+            migrationDirect=args.migration_direct,
             migrationState=str(fixture/'migration-browser-state.json'),migrationWorkspace=str(fixture/'documents'),
             expectedRegistry=migration_registry,**({'updateFromVersion':migration_package['version'],'updateRegistry':migration_registry} if mode=='migration-after' else {}))
         config=stage/'probe-input.json';config.write_text(json.dumps(settings),encoding='utf-8')
@@ -560,9 +568,15 @@ try:
     report['nativeElectronWindowTested']=not args.migration_cli_only;report['installedByNativeUi']=not bool(previous_artifact or migration_artifact)
     report['updatedByNativeApi']=any(stage.get('updatedByNativeApi') is True for stage in report['ui'].values())
     report['updatedByNativeUi']=any(stage.get('updatedByNativeUi') is True for stage in report['ui'].values())
+    if migration_artifact:
+        report['migratedByOfficialCli']='migrationCli' in report
+        report['nativeVersionsUiLatest']=any(stage.get('nativeVersionsUiLatest') is True for stage in report['ui'].values())
     if previous_artifact:assert report['updatedByNativeUi'],'The consumer did not observe the real Native update button path'
     if migration_artifact and not args.migration_cli_only:
-        assert report['updatedByNativeUi'] and report['ui']['migration-after'].get('migrationStatePreserved') is True
+        assert report['ui']['migration-after'].get('migrationStatePreserved') is True
+        if args.migration_direct:
+            assert not report['updatedByNativeUi'] and report['ui']['migration-after'].get('nativeVersionsUiLatest') is True
+        else:assert report['updatedByNativeUi']
     assert server_facts['asrRequests']==0 and not server_facts['errors'],server_facts
     if not (previous_artifact or migration_artifact) and not args.local_only and not args.remote_url and not args.npm:assert server_facts['tarballGets']>0,server_facts
     assert server_facts['sentinelAbsentFromModel'],server_facts
@@ -570,7 +584,7 @@ try:
     assert protocol_hash()==baseline and {file:digest(file) for file in immutable}==immutable
     report.update(ok=True,normalExitCode=process.returncode if process else None,loopback=server_facts,desktopInstallationAndProtocolUnchanged=True)
     remote_label='npm package' if args.npm else 'HTTPS tarball' if args.remote_url else 'HTTP tarball'
-    print(('PASS official CLI same-version source migration only; GUI/session/update not tested' if args.migration_cli_only else 'PASS Native source eligibility, official CLI migration and real update button with original session/settings preserved' if migration_artifact else 'PASS Native update button from actual disabled registry 0.1.6 and API failed-fixture restoration' if previous_artifact else 'PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
+    print(('PASS official CLI source migration only; GUI/session/button not tested' if args.migration_cli_only else 'PASS public CLI direct upgrade and actual Native Versions up-to-date UI; no button update claimed' if migration_artifact and args.migration_direct and args.registry else 'PASS CLI direct upgrade and actual Native Versions up-to-date UI; no public/button claim' if migration_artifact and args.migration_direct else 'PASS Native source eligibility, official CLI migration and real update button with original session/settings preserved' if migration_artifact else 'PASS Native update button from actual disabled registry 0.1.6 and API failed-fixture restoration' if previous_artifact else 'PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
         'PASS Native UI local tgz + real tutorial Agent/credentials + '+remote_label+' distribution/lifecycle')+': '+str(fixture),flush=True)
 except BaseException as error:
     report['error']=repr(error);raise
