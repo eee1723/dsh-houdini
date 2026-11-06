@@ -92,6 +92,8 @@ npm run docs:check
 
 npm首次发布由维护者通过`npm login --registry=https://registry.npmjs.org`完成官方账号授权，并满足npm要求的发布二次验证。对已经验证的同一个tgz先运行`npm publish <完整tgz路径> --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org`，再去掉`--dry-run`正式发布；不把密码、验证码或token写入仓库。已发布的name/version不可覆盖，发布前先核对`npm view dsh-houdini@<版本> dist.integrity`；若该版本已存在，核对完整性而不重发。发布后读取官方registry的版本、兼容声明和`dist.integrity`，与冻结包的SHA512完整性一致，再核对实际下载的SHA256及原生包名安装。GitHub Actions可信发布可在包建立后作为独立的维护者配置接入；源码CI和候选构建不隐式发布。
 
+回执为`202 Accepted`而公开registry尚无该版本时，按[官方版本生命周期接口](https://api-docs.npmjs.com/)用维护者身份读取精确版本的`/-/package/<包名>/version/<版本>/status`，不把CLI成功退出当作公开完成。`validating`表示平台仍在验证，继续观察而不重复上传。只有实际暂存清单列出对应版本时，才用支持`npm stage`的隔离CLI核对暂存包及摘要，并由维护者完成平台要求的批准／二次验证；空暂存清单不证明验证完成。凭据仅由官方配置和鉴权库消费，不打印token或完整配置，不修改用户全局npm安装。
+
 正式地址的原生安装界面回访使用[分发检查](../tools/tests/dsh-distribution-ui.test.py)的`--remote-only --remote-url <正式tgz的HTTPS地址>`，同时提供本地冻结包与`--expected-sha256`核对安装内容。报告明确区分正式HTTPS来源和自有回环HTTP夹具，两种结果分别保留。
 
 npm分发回访仍使用上述现有入口：分发检查传`--remote-only --npm`，从`--artifact`内读取精确包名和版本，在原生插件页安装、启用、停用、重新启用及卸载；[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)传`--npm --artifact <冻结tgz>`核对registry依赖记录、同包manifest/文件、模式隔离与完整媒体资源。按需沿`--hfs`核对真实Houdini加载。验证使用自有profile，不修改用户现有安装；同包只换分发渠道时不重复整套HOM回归。

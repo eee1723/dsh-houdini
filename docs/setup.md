@@ -1,13 +1,13 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.7** 精确支持 **DSH 0.2.2-rc.1**；DSH 0.2.1-rc.3 / 0.2.1-rc.5用户须精确选择旧版0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.8** 精确支持 **DSH 0.2.2-rc.1**；DSH 0.2.1-rc.3 / 0.2.1-rc.5用户须精确选择旧版0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
 
 ## 普通安装
 
-标准发行单元是包含Houdini和媒体资源的完整插件包。在Desktop原生「插件 → 添加插件」中填写下方[GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.7)完整地址即可安装，普通用户无需npm账号或另装Node：
+标准发行单元是包含Houdini和媒体资源的完整插件包。在Desktop原生「插件 → 添加插件」中填写下方[GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.8)完整地址即可安装，普通用户无需npm账号或另装Node：
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.7/dsh-houdini-0.1.7.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.8/dsh-houdini-0.1.8.tgz
 ```
 
 使用[npm 包名](https://www.npmjs.com/package/dsh-houdini)时，先确认所选安装源已经公开所需版本及其`engines.dsh`兼容范围，再填写`dsh-houdini@<版本>`。仅填写`dsh-houdini`会查询该源的latest，不会自动寻找兼容当前宿主的版本。GitHub地址安装与npm包名安装分别保留各自的来源，安装同一份内容也不会自动转换来源。
@@ -72,7 +72,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Rollb
 
 ## Connection & Support（连接与维护）
 
-Houdini 工程菜单的「插件安装与更新」直接打开 Desktop 原生插件管理。安装来源、升级、启停、卸载与失败恢复都在同一页面处理，不另设更新查询或弹窗，也不会自动关闭任务或重启应用。
+插件的安装、升级、启停、卸载与失败恢复统一从Desktop原生「插件」页进入。Houdini工程菜单只负责当前现场的选择、工程操作和连接／组件维护，不再提供重复的插件更新入口。组件准备失败重试、安装修复及保存后重开提示仍按当前窗口的实际状态显示。
 
 Houdini 组件提示按当前窗口实际加载与安装情况显示：后台自动准备期间会说明进度，失败或缺失时提供重试或修复，完整失败原因可按需展开；「保存后重开此 Houdini」只在同一安装位置的新组件已经准备好时出现。连接正常但有组件更新时可以继续当前工作。不同安装位置、无法确认的旧组件和连接中断不承诺重开即可解决。
 

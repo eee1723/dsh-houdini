@@ -629,7 +629,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace, pluginNavigation) {
+    function createHoudiniDesktopUi(connection, uiSession, sessions, uiWorkspace) {
       var state = { available: false, visible: true, records: {}, observedAt: 0 }, listeners = new Set(), notice = null, serial = 0;
       var refreshPresence = function () {}, dialog = null, disposed = false;
       var launchOwnership = createLaunchOwnership(connection);
@@ -885,13 +885,11 @@ window.__ModuleLoader__.load({
         var managementActions = [];
         if (target) managementActions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
         if (setup && setup.state === "failed") managementActions.push({ id: "prepareBridge", label: "重试组件准备", disabled: !presence.available || !!switchingDisabled });
-        if (pluginNavigation && typeof pluginNavigation.openBundle === "function") managementActions.push({ id: "pluginManager", label: "插件安装与更新" });
         function actionItem(item) {
           return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
             onSelect: function () {
               if (item.id === "clear") { request("clear"); return; }
               if (item.id === "prepareBridge") { request("prepareBridge"); return; }
-              if (item.id === "pluginManager") { set(Object.assign({}, value, { open: false, busy: false })); pluginNavigation.openBundle("dsh-houdini"); return; }
               ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
               set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId, item.id === "reopen" ? displayTarget.hip_path : "");
             } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));
@@ -930,7 +928,7 @@ window.__ModuleLoader__.load({
             nativeRunning && React.createElement("p", { className: "dsh-houdini-target-message" }, "对话工作中，完成后可以切换窗口或取消绑定。"),
             otherCandidates.length > 0 && React.createElement("div", { className: "dsh-houdini-target-list", "aria-label": "可切换的 Houdini 窗口" }, otherCandidates.map(candidateItem))),
           managementActions.length > 0 && React.createElement("details", { className: "dsh-houdini-target-section", "data-houdini-menu-section": "management" },
-            React.createElement("summary", { "data-houdini-menu-toggle": "management" }, "组件与插件"), managementActions.map(actionItem)));
+            React.createElement("summary", { "data-houdini-menu-toggle": "management" }, "连接与组件"), managementActions.map(actionItem)));
       }
       function Label(props) {
         var row = props.useSessions(function (value) { return value.byId[props.sessionId]; });
@@ -1789,7 +1787,7 @@ function recordedJobExecution(event) {
         }); });
       });
       if (typeof ctx.inject === "function") ctx.inject(["connection", "uiSession", "sessions", "uiWorkspace"], function (scope) {
-        var desktop = createHoudiniDesktopUi(scope.get("connection"), scope.get("uiSession"), scope.get("sessions"), scope.get("uiWorkspace"), scope.get("pluginNavigation"));
+        var desktop = createHoudiniDesktopUi(scope.get("connection"), scope.get("uiSession"), scope.get("sessions"), scope.get("uiWorkspace"));
         scope.effect(function () { return desktop.dispose; });
         [["conversation.input.left", "houdini-initial-project", desktop.Blank],
           ["conversation.input.left", "houdini-initial-window-pin", desktop.BlankPin],

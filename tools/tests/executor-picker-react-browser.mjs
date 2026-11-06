@@ -130,7 +130,7 @@ async function evaluate(expression){const value=await call('Runtime.evaluate',{e
 async function until(expression){for(let n=0;n<150;n++){if(await evaluate('Boolean('+expression+')'))return;await sleep(100)}throw Error('Not settled: '+expression)}
 async function click(selector){const box=await evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing '+${JSON.stringify(selector)});if(!e.getClientRects().length)throw Error('Hidden '+${JSON.stringify(selector)});e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);await call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...box});await call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...box});await sleep(120)}
 async function section(name){const selector='[data-houdini-menu-section="'+name+'"]';if(!await evaluate('document.querySelector('+JSON.stringify(selector)+').open'))await click('[data-houdini-menu-toggle="'+name+'"]');await until('document.querySelector('+JSON.stringify(selector)+').open')}
-async function projectAction(name){if(['clear','prepareBridge','pluginManager'].includes(name))await section('management');await click('[data-houdini-project-action="'+name+'"]')}
+async function projectAction(name){if(['clear','prepareBridge'].includes(name))await section('management');await click('[data-houdini-project-action="'+name+'"]')}
 async function key(key,code,virtual){await call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode:virtual,...(key==='Enter'?{text:'\r'}:key===' '?{text:' '}:{} )});await call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:virtual});await sleep(80)}
 async function screenshot(name){const shot=await call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,name+'.png'),Buffer.from(shot.data,'base64'))}
 const primaryColors={}
@@ -302,9 +302,8 @@ try{
  assert.equal(await evaluate('fixture.calls.find(row=>row.method==="houdiniFrontend/prepareBridge")?.input.sessionId'),'chat-a','first setup remains scoped to the selected Houdini session')
  await screenshot('bridge-setup-in-menu')
  await evaluate('document.querySelectorAll(".dsh-houdini-toast button").forEach(button=>button.click())')
- await section('management');await click('[data-houdini-project-action=pluginManager]')
- assert.deepEqual(await evaluate('fixture.opened.filter(row=>row.kind==="plugin")'),[{kind:'plugin',name:'dsh-houdini'}],'the menu delegates installation and updates to the official plugin page')
- assert.equal(await evaluate('fixture.calls.filter(row=>row.method==="houdiniFrontend/pluginUpdates").length'),0,'no parallel release lookup runs in the scene UI')
+ assert.equal(await evaluate('!!document.querySelector("[data-houdini-project-action=pluginManager]")'),false,'scene controls do not duplicate global plugin management')
+ assert.equal(await evaluate('fixture.calls.filter(row=>row.method==="houdiniFrontend/pluginUpdates").length'),0,'no release lookup runs in the scene UI')
  await call('Emulation.setDeviceMetricsOverride',{width:1080,height:720,deviceScaleFactor:1,mobile:false});await evaluate('fixture.dark(false)')
  await evaluate('fixture.preset("standard")');await until('!document.querySelector("[data-houdini-project-label]")&&!document.querySelector("[data-houdini-project-dialog]")')
  await screenshot('standard-mode-clean')

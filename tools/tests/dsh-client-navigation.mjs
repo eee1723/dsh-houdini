@@ -59,12 +59,8 @@ try {
  await screenshot('official-houdini-blank')
  await click('[data-houdini-project-label]');await until('document.querySelector("[data-houdini-project-action=new]")')
  await screenshot('official-houdini-target-menu')
- await click('[data-houdini-menu-toggle=management]')
- await click('[data-houdini-project-action=pluginManager]')
- // A source-linked development plugin has no installed-bundle card; the public
- // navigation still opens the official manager. Packaged installation is verified separately.
- await until('document.body.innerText.includes("安装、启用和配置插件")')
- await screenshot('official-native-plugin-manager')
+ assert.equal(await evaluate('!!document.querySelector("[data-houdini-project-action=pluginManager]")'),false,'scene controls leave global plugin management to the native entry')
+ await click('[data-houdini-project-label]');await until('!document.querySelector(".dsh-houdini-target-menu")')
  await selectSession(config.secondSession)
  await click('[data-houdini-project-label]');await until('document.querySelector("[data-houdini-project-action=new]")')
  await click('[data-houdini-project-action=new]');await until('document.querySelector("[data-houdini-project-dialog]")')

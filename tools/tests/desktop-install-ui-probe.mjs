@@ -72,6 +72,41 @@ async function nativeHistory(sessionId){
  if(failed)throw Error('Actual Native tool failed: '+JSON.stringify(failed.event.data))
  return history
 }
+async function migrationState(check=false){
+ if(!check){
+  const created=await rpc('session/create',{request:{sessionId:crypto.randomUUID(),cwd:config.migrationWorkspace,agentPreset:'standard'}})
+  const sessionId=created.sessionId
+  const selected=await rpc('session/selectModel',{request:{sessionId,provider:'owned-distribution-chat',model:'scripted-chat'}})
+  const text='Owned source migration: preserve this native conversation, model selection and original result across CLI replacement and update.'
+  await rpc('session/prompt',{request:{sessionId,requestId:crypto.randomUUID(),mode:'queue',content:[{type:'text',text}]}})
+  const history=await until(async()=>{const page=await nativeHistory(sessionId);return JSON.stringify(page.records).includes(text)&&page.records.some(row=>row.event.type==='turn/end')?page:null},'owned Native conversation actually settled before migration')
+  assert.equal(history.hasMore,false)
+  const projection=await rpc('session/projections',{request:{sessionId}})
+  const throughSeq=history.records.at(-1)?.seq
+  assert(Number.isSafeInteger(throughSeq),'The preservation baseline needs the exact last original event')
+  const state={sessionId,records:history.records,throughSeq,modelSelection:projection.values.modelSelection,
+   modes:(await rpc('agentPresets/list')).presets.map(row=>({id:row.id,isDefault:row.isDefault})),
+   modelCatalog:await rpc('session/modelCatalog')}
+  assert.deepEqual(state.modelSelection.lastUsed,selected.selected)
+  assert.deepEqual(state.modelSelection.next,selected.selected)
+  await fs.writeFile(config.migrationState,JSON.stringify(state,null,2))
+  report.migrationStateCreated={sessionId,throughSeq:state.throughSeq,modelSelection:state.modelSelection,settledNativeHistory:true}
+  return state
+ }
+ const state=JSON.parse(await fs.readFile(config.migrationState,'utf8'))
+ const page=await rpc('session/page',{request:{address:{kind:'session',sessionId:state.sessionId},throughSeq:state.throughSeq,maxMessages:100}})
+ assert.deepEqual(page.records,state.records,'Source migration/update changed the original native conversation records')
+ const projection=await rpc('session/projections',{request:{sessionId:state.sessionId}})
+ assert.deepEqual(projection.values.modelSelection,state.modelSelection,'Source migration/update changed the recorded model selection')
+ assert.equal(projection.values.agentPreset,'standard')
+ assert.deepEqual(await rpc('session/modelCatalog'),state.modelCatalog,'Owned model settings did not survive source migration/update')
+ const roster=await rpc('agentPresets/list')
+ for(const mode of state.modes)assert(roster.presets.some(row=>row.id===mode.id&&row.isDefault===mode.isDefault),'Existing Native mode changed: '+mode.id)
+ report.migrationStatePreserved=true
+ report.migrationStateObservation={sessionId:state.sessionId,throughSeq:state.throughSeq,modelSelection:projection.values.modelSelection,
+  originalRecordsUnchanged:true,modelCatalogUnchanged:true,originalModesUnchanged:true}
+ return state
+}
 async function plugins(){await click(button('/^(插件|Plugins)$/'),'Native Plugins navigation')}
 async function install(spec,label,enable){
  await plugins()
@@ -184,6 +219,22 @@ try{
   report.registry=registries
  }
  const before=await rpc('agentPresets/list');assert(before.presets.some(row=>row.id==='standard'&&row.isDefault));assert(!before.presets.some(row=>row.id==='houdini'))
+ if(config.migrationPhase==='before'){
+  const source=await bundle()
+  assert.equal(source.version,config.migrationVersion);assert.equal(source.enabled,false)
+  if(config.migrationSource==='file')assert(source.source.startsWith('file:'))
+  else assert.equal(source.source,config.migrationSourceSpec)
+  await directSourceUpdateEligibility(source,'migration-original-'+config.migrationSource)
+  await migrationState()
+  report.migrationOriginalSource={version:source.version,source:source.source,enabled:source.enabled,updatable:source.updatable}
+ }else{
+ if(config.migrationPhase==='after'){
+  const migrated=await bundle()
+  assert.equal(migrated.source,'dsh-houdini@'+config.migrationVersion)
+  assert.equal(migrated.version,config.migrationVersion);assert.equal(migrated.enabled,false);assert.equal(migrated.updatable,true)
+  await migrationState(true)
+  report.migrationRegistrySource={version:migrated.version,source:migrated.source,enabled:migrated.enabled,updatable:migrated.updatable}
+ }
  if(config.updateFromVersion){
   const previous=await bundle()
   assert.equal(previous.version,config.updateFromVersion);assert.equal(previous.enabled,false)
@@ -216,7 +267,9 @@ try{
   await until(async()=>(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'&&!row.broken),'updated candidate actually enabled')
   await until(switchState(true),'native updated switch reflects enabled state')
   await preservedRoster(before,true);await shot('registry-updated-candidate')
-  const failed=await rpc('pluginManager/updateBundle',{name:'dsh-houdini',version:config.brokenVersion,
+  let failed
+  if(config.brokenVersion){
+  failed=await rpc('pluginManager/updateBundle',{name:'dsh-houdini',version:config.brokenVersion,
    options:{registry:config.updateRegistry,requestId:'owned-failed-update-fixture'}})
   assert.equal(failed.result.application,'failed',JSON.stringify(failed));assert(failed.restore,JSON.stringify(failed))
   assert(!['failed','cancelled'].includes(failed.restore.application),JSON.stringify(failed))
@@ -224,9 +277,17 @@ try{
   await until(async()=>(await rpc('agentPresets/list')).presets.some(row=>row.id==='houdini'&&!row.broken),'restored candidate actually supplies Houdini')
   await until(switchState(true),'native restored switch reflects enabled state')
   await preservedRoster(before,true);await shot('registry-failed-fixture-restored')
-  report.nativeRegistryUpdate={update,failedFixture:failed,targetVersion:config.expectedVersion,restoredEnabled:true}
-  report.updatedByNativeUi=true
   report.updatedByNativeApi=true
+  }
+  report.nativeRegistryUpdate={update,targetVersion:config.expectedVersion,...(failed?{failedFixture:failed,restoredEnabled:true}:{})}
+  report.updatedByNativeUi=true
+  if(config.migrationPhase==='after'){
+   const current=await bundle()
+   assert.equal(current.source,'dsh-houdini@'+config.expectedVersion)
+   assert.equal(current.updatable,true)
+   await migrationState(true)
+   report.migrationFinalSource={version:current.version,source:current.source,enabled:current.enabled,updatable:current.updatable}
+  }
  }else{
   assert(!(await bundle()),'Fixture must begin without the product installed')
   report.initialNativeProfileWithoutPlugin=true
@@ -343,8 +404,9 @@ try{
   assert(!report.secretReturned&&!report.secretWrongChannel&&!report.secretInConsole,'secret crossed an unexpected Native channel')
   assert((report.uiMethods['credentials/set']||0)>=1&&(report.uiMethods['session/prompt']||0)===0,'direct configuration and credential presence must not invoke an Agent')
  }
- assert((report.uiMethods[config.updateFromVersion?'pluginManager/updateBundle':'pluginManager/installBundle']||0)>=(config.updateFromVersion?2:1)
+ assert((report.uiMethods[config.updateFromVersion?'pluginManager/updateBundle':'pluginManager/installBundle']||0)>=(config.updateFromVersion?(config.brokenVersion?2:1):1)
   &&(report.uiMethods['pluginManager/setBundleEnabled']||0)>=1)
+ }
  report.ok=true
  const quit=await main.call('Runtime.evaluate',{expression:`(()=>{if(process.pid!==${config.expectedPid})throw Error('Foreign Native carrier');const e=process.getBuiltinModule('module').createRequire(${JSON.stringify(config.appPackage)})('electron');setTimeout(()=>e.app.quit(),100);return true})()`,returnByValue:true})
  assert.equal(quit.result.value,true);report.normalOwnedQuitRequested=true

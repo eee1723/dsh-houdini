@@ -10,7 +10,7 @@ const executor='a'.repeat(32),runtime='b'.repeat(32),epoch='c'.repeat(32),regist
 const first={executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:'e'.repeat(32),registration_id:registration,
   hip_path:'C:/work/ship.hip',hip_is_new:false,houdini_version:'22.0.368',workspace_path:'C:/work',state:'registered',same_workspace:true,pid:9876,workbench:true}
 const second={...first,executor_id:'f'.repeat(32),hip_path:'D:/other/rocks.hip',same_workspace:false,pid:4321}
-let task='task-a',generation={id:1},project=null,preset='houdini',hidden=false,failPresence=false,presenceReply=null
+let task='task-a',generation={id:1},project=null,preset='houdini',hidden=false,failPresence=false,presenceReply=null,componentSetup=null
 const native=new Map(),requests=[],projectionRefreshes=[],intervals=[],visibility=new Set(),generationListeners=new Set()
 const componentHooks=new Map();let currentHooks=null,cursor=0,queued=[]
 const React={
@@ -48,18 +48,18 @@ assert.equal(context.houdiniDisplayProject(unsaved,{...fresh,observedAt:Date.now
 const pendingReview={...unsaved,needsReview:true}
 assert.equal(context.houdiniDisplayProject(pendingReview,fresh),pendingReview)
 let observations=[observed(first),observed(second)]
-const openedBundles=[]
 const connection={generation:{getSnapshot:()=>generation,subscribe:fn=>{generationListeners.add(fn);return()=>generationListeners.delete(fn)}},rpc:{call:async(_channel,method,payload,signal)=>{
  requests.push({method,payload,signal})
- if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true}}
+ if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true,componentSetup}}
  if(method==='houdiniFrontend/windowPin')return{ok:true,value:{pinned:false}}
  if(method==='houdiniFrontend/projectPresence'){if(presenceReply)return presenceReply();if(failPresence)throw Error('connection lost');return{ok:true,value:observations}}
+ if(method==='houdiniFrontend/prepareBridge'){componentSetup=null;return{ok:true,value:{message:'Houdini 组件已准备'}}}
  if(method==='houdiniTargets/select')return{ok:true,value:{status:'selected',sessionId:task,selectedTarget:first}}
  if(method==='houdiniTargets/clear')return{ok:true,value:{selectedTarget:null}}
  throw Error('unexpected RPC '+method)
 }}}
 const ui=context.createHoudiniDesktopUi(connection,{sessionStatus:{getSnapshot:()=>native,subscribe:()=>()=>{}},adapter:{current:{getSnapshot:()=>({key:task}),subscribe:()=>()=>{}}}},
- {refreshProjections:async id=>projectionRefreshes.push(id)},undefined,{openBundle:name=>openedBundles.push(name)})
+ {refreshProjections:async id=>projectionRefreshes.push(id)})
 const props=()=>({sessionId:task,useSessions:select=>select({byId:{[task]:{id:task,cwd:'C:/work',blank:false,projectionValues:{agentPreset:preset}}},projectionsBySession:{[task]:{values:{houdiniExecutorIdentity:project}}}})})
 function render(component,parameters=props()){
  if(!componentHooks.has(component))componentHooks.set(component,[])
@@ -216,15 +216,37 @@ let finishClosed;presenceReply=()=>new Promise(resolve=>finishClosed=resolve)
 chip(tree).props.onClick();await settle();tree=render(menu);chip(tree).props.onClick()
 finishClosed({ok:true,value:[observed(first)]});await settle();tree=render(menu)
 assert.equal(Boolean(by(tree,n=>n.props.role==='menu')),false,'a slow refresh cannot reopen a dismissed menu')
-// The plugin contributes navigation only; DSH owns installation, update and recovery.
+// The scene menu owns target selection and loaded component maintenance.
+// Plugin publication and management remain in the native Plugins page.
 presenceReply=null
 assert.equal(requests.filter(r=>r.method==='houdiniFrontend/pluginUpdates').length,0,'scene observations never query a second release service')
 chip(render(menu)).props.onClick();await settle()
-const managerAction=by(render(menu),n=>n.props.role==='menuitem'&&by(n,c=>c.props['data-houdini-project-action']==='pluginManager'))
-assert(managerAction)
-managerAction.props.onClick();await settle()
-assert.deepEqual(openedBundles,['dsh-houdini'])
-assert.equal(by(render(menu),n=>n.props.role==='menu'),undefined,'native plugin management opens without a parallel update dialog')
+tree=render(menu)
+assert(!by(tree,n=>n.props['data-houdini-project-action']==='pluginManager'),'the scene menu does not duplicate native plugin management')
+assert(!/检查更新|插件安装与更新|组件与插件/.test(text(tree)))
+assert(!by(tree,n=>n.props['data-houdini-menu-section']==='management'),'a healthy unbound scene has no empty maintenance section')
+const prepareCalls=()=>requests.filter(r=>r.method==='houdiniFrontend/prepareBridge')
+assert.equal(prepareCalls().length,0,'observing scenes does not reinstall components')
+componentSetup={state:'failed',message:'自动准备未完成，可重试。',details:'owned installation failure'}
+intervals.at(-1)();await settle();tree=render(menu)
+assert.match(text(tree),/重试组件准备/)
+assert.match(text(tree),/连接与组件/)
+const prepareAction=()=>by(tree,n=>n.props.role==='menuitem'&&by(n,c=>c.props['data-houdini-project-action']==='prepareBridge'))
+assert(prepareAction(),'automatic setup failures retain an explicit component repair action')
+prepareAction().props.onClick();await settle();tree=render(menu)
+assert.equal(prepareCalls().length,1)
+assert.deepEqual({...prepareCalls()[0].payload.args.input},{sessionId:'task-b'},'component repair remains scoped to the current conversation')
+assert.match(text(tree),/Houdini 组件已准备/)
+project={target:first,executorId:executor,runtimeId:runtime,sceneEpoch:epoch,hipPath:first.hip_path,hipIsNew:false}
+observations=[{...observed(first),componentUpdate:{state:'restart'}}]
+intervals.at(-1)();await settle();tree=render(menu)
+assert.match(text(tree),/更新待生效.*保存工程.*重新打开这个 Houdini 窗口/,'installed helper updates retain the save and reopen instruction')
+assert(!prepareAction(),'an installed helper waiting for restart does not offer another install')
+observations=[{...observed(first),componentUpdate:{state:'install'}}]
+intervals.at(-1)();await settle();tree=render(menu)
+assert(prepareAction(),'a missing or outdated installed component retains its repair action')
+assert.equal(prepareCalls().length,1,'component state observations alone never submit another repair')
+project=null
 generation=undefined;generationListeners.forEach(fn=>fn());tree=render(menu);assert.equal(chip(tree).props['data-state'],'unbound')
 preset='standard';assert.equal(ui.Label(props()),null,'other presets do not mount the Houdini selector')
 assert(!source.includes('dangerouslySetInnerHTML'))
