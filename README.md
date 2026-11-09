@@ -1,5 +1,7 @@
 # dsh-houdini
 
+**简体中文** | [English](README.en.md)
+
 <img src="assets/dsh-houdini.png" alt="DSH-Houdini Logo" width="160">
 
 **用自然语言构建、检查和维护可编辑的 Houdini 工程。**

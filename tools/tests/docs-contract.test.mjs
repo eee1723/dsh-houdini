@@ -106,7 +106,7 @@ const index = read('docs/README.md')
 for (const file of docs) {
   if (file.name !== 'README.md') assert.ok(index.includes(`](${file.name})`), `unindexed document ${file.name}`)
 }
-const currentDocFiles = ['README.md', 'AGENTS.md', ...docs.map(d => 'docs/' + d.name)]
+const currentDocFiles = ['README.md', 'README.en.md', 'AGENTS.md', ...docs.map(d => 'docs/' + d.name)]
 function markdownFiles(directory) {
   return fs.readdirSync(path.join(root, directory), { withFileTypes: true }).flatMap(entry => {
     const relative = `${directory}/${entry.name}`
