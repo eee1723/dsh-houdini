@@ -15,11 +15,11 @@ for stream in (sys.stdout, sys.stderr):
     stream.reconfigure(encoding='utf-8', errors='backslashreplace')
 
 ROOT = Path(__file__).resolve().parents[1]
-PURE = ["dsh-test-environment", "dsh-code-analysis", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-worker-limits", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-desktop-client", "dsh-connection-operation", "dsh-launcher-preflight", "dsh-native-hooks", "dsh-frontend-lifetime", "dsh-managed-preview-paths", "dsh-network-layout", "dsh-connection-diagnostics", "dsh-support-report", "video-runtime-package"]
+PURE = ["dsh-test-environment", "dsh-code-analysis", "dsh-request-registry", "dsh-executor-discovery", "dsh-isolated-manifest", "dsh-worker-limits", "dsh-hda-report", "dsh-bgeo-fingerprint", "dsh-install-runtime", "dsh-runtime-compat", "dsh-deployment", "dsh-desktop-client", "dsh-connection-operation", "dsh-launcher-preflight", "dsh-native-hooks", "dsh-frontend-lifetime", "dsh-managed-preview-paths", "dsh-network-layout", "dsh-connection-diagnostics", "dsh-support-report", "houdini-help", "video-runtime-package"]
 HOUDINI = [
            "dsh-bridge-raw-gate", "dsh-execution-runtime", "dsh-bridge-transport", "dsh-request-recovery", "dsh-node-ownership", "dsh-bridge-caught-failure", "dsh-tab-create-failure",
            "dsh-object-parenting", "dsh-layout-flow", "dsh-network-boxes", "dsh-network-notes", "dsh-delete-editor-items", "dsh-handoff-layout", "dsh-scene-network-render-contract", "dsh-multiparm-restoration", "dsh-output-checkpoint", "dsh-viewport-screenshot", "dsh-preview-backend", "dsh-render-color-management", "dsh-render-service-box", "dsh-karma-defaults", "dsh-curve-paths", "dsh-cop-contracts",
-           "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts", "dsh-repeated-layout", "dsh-scoped-observation", "dsh-snapshot-worker", "dsh-shared-continuity", "dsh-parameter-patch"]
+           "dsh-hda-public-contract", "dsh-output-publication", "dsh-hda-lifecycle", "dsh-authoring-contract", "dsh-tutorial-contracts", "dsh-repeated-layout", "dsh-scoped-observation", "dsh-scene-context", "dsh-frame-diff", "dsh-snapshot-worker", "dsh-shared-continuity", "dsh-expression-diagnostics", "dsh-parameter-patch", "dsh-isolated-houdini"]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--hython", action="append", type=Path, default=[])
 parser.add_argument('--suite', action='append', choices=sorted(set(PURE + HOUDINI)))

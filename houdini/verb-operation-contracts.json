@@ -724,6 +724,10 @@
           "evaluations": {
             "type": "object"
           },
+          "readback_timing": {
+            "type": "string",
+            "enum": ["after_batch_writes", "after_each_write"]
+          },
           "effect_status": {
             "type": "string"
           },
@@ -742,7 +746,7 @@
         {
           "title": "Use exact parameter names and explicit expressions",
           "code": "__result__ = set_parms('/obj/example_geo/box1', {\n    'sizex': 2.0,\n    'sizey': {'expression': 'ch(\"sizex\") * 0.5', 'language': 'hscript'},\n})",
-          "read_result": "Read set/evaluations. A parameter write does not itself certify downstream geometry; cook or verify that output when needed.",
+          "read_result": "Read set/evaluations and readback_timing. The strict batch reads values after all its writes. Check the intended output separately when downstream geometry matters.",
           "tool": "houdini_exec"
         },
         {
@@ -755,7 +759,7 @@
       "notes": [
         "Parameter names and menu set_value come from node_info/list_parms/read_parms. Numeric tuple literals use full components; tuple expressions use individual component names.",
         "Toggle button/icon strips accept an exact integer bitmask: 0 clears all, combine declared set_value bits for multiple choices. A token selects only that entry's bit, not an incremental toggle. Writing a conditional parameter does not automatically enable its controlling mode or prove an output effect.",
-        "strict defaults to True. strict=False allows explicit partial diagnostic success and returns failed; it is not required for ordinary editing. Restoration covers parameter values/expressions/keys, not external callback effects.",
+        "strict defaults to True. Normal value and expression readback follows all writes in the batch. Patch hashes describe the source patch operation. strict=False allows explicit partial success and reads after each write. Restoration covers parameter values/expressions/keys, not external callback effects.",
         "Complete source synchronization uses the same atomic preflight as literal patches. Stale source rejects the entire batch before writing; equal source is a no-op. The source file remains managed by ordinary file tools."
       ]
     },
@@ -1451,6 +1455,54 @@
       }],
       "notes": ["Read-only, SOP-local, no scene nodes or viewport changes. No local curvature, connector contact, obstacle, smooth-curve or final swept Polygon mesh certification. Radius is constant per selected curve. Loop endpoints must be exactly equal; near-equal endpoints are not inferred as a seam."]
     },
+    "geo_frame_diff": {
+      "summary": "Compare sampled numeric SOP point attributes against one baseline frame without moving the playbar.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "node": {"type": "string", "description": "Existing SOP node path."},
+          "frame_a": {"type": "number", "description": "Finite baseline frame."},
+          "frame_b": {
+            "anyOf": [
+              {"type": "number"},
+              {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "number"}}
+            ],
+            "description": "A target frame or an ordered series against the same baseline."
+          },
+          "attrib": {"type": "string", "default": "P"},
+          "sample": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 4096},
+          "tolerance": {"type": "number", "minimum": 0, "default": 0.000001}
+        },
+        "required": ["node", "frame_a", "frame_b"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "node": {"type": "string"},
+          "frame_a": {"type": "number"},
+          "frame_b": {"type": "number"},
+          "comparable": {"type": "boolean"},
+          "mode": {"const": "baseline_series"},
+          "status": {"enum": ["observed", "partial"]},
+          "comparisons": {"type": "object", "description": "Counts of compared, not_comparable, and error target frames."},
+          "results": {"type": "array", "items": {"type": "object", "description": "One ordered row per requested frame with status and measurements or a reason."}}
+        },
+        "required": ["node", "frame_a"]
+      },
+      "examples": [
+        {
+          "title": "Compare requested frames with one reference frame",
+          "code": "__result__ = geo_frame_diff('/obj/example_geo/OUT', 1, [12, 24, 48])",
+          "read_result": "Use comparisons and the status of every result. A comparable row contains mean_delta, max_delta and sampled_points. An incomparable or failed row is not a measured zero.",
+          "tool": "houdini_inspect"
+        }
+      ],
+      "notes": [
+        "Numeric attributes are compared by point number. Equal point/primitive counts do not verify stable identity or matching primitive topology.",
+        "A scalar frame_b preserves the original pair shape. In a series the baseline is captured once, failed targets stay in order, and a missing baseline refuses the query.",
+        "The result describes the sampled attribute data. It does not judge animation or appearance."
+      ]
+    },
     "geo_piece_stats": {
       "summary": "Observe connected-piece geometry or bounded Polygon surface integrity without modifying the source network.",
       "input_schema": {
@@ -2068,6 +2120,138 @@
         "过程观察、显示故障和A/B诊断保留managed，写入visual_check；明确要给用户保留的成图才选择delivery，进入$HIP/dsh-artifacts/renders/<HIPNAME>，核对artifact.actual_path与精确hip_path后再present。目录不证明已验收或已交付，不自动移动历史图片。"
       ]
     },
+    "render_frame": {
+      "summary": "Render one frame through an explicit ROP and verify fresh nonempty output files and renderer errors. The result reports file evidence; it has no top-level ok field and does not certify visual semantics.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rop": {
+            "type": "string",
+            "description": "Existing executable ROP path. Within the same exec a live hou.RopNode is also accepted; an ordinary LOP is not a ROP."
+          },
+          "picture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional output path; null preserves the ROP current output. $F variables are resolved by the native output path logic."
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Finite frame to render; null uses the current frame and restores it afterward."
+          },
+          "timeout": {
+            "type": "number",
+            "default": 110,
+            "description": "Positive file-wait budget in seconds. Native render() itself can take longer; use a DSH job for long rendering."
+          },
+          "framing": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional USD Render ROP framing preflight with target and coverage. Ordinary renders preserve their existing camera and crop semantics."
+          }
+        },
+        "required": [
+          "rop"
+        ],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "frame": {
+            "type": "number"
+          },
+          "file_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preexisting": {
+            "type": "boolean"
+          },
+          "fresh": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "output",
+          "frame",
+          "file_bytes",
+          "preexisting",
+          "fresh",
+          "errors",
+          "ms"
+        ],
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "Check a render without assuming an ok field",
+          "code": "rendered = render_frame('/out/mantra1', picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/material/check.png', frame=1)\n__result__ = rendered",
+          "read_result": "Do not test rendered['ok']: render_frame returns no ok key. Require fresh is True and errors == [], then inspect output/file_bytes and the actual image. Multi-product USD renders use outputs; output can be null.",
+          "tool": "houdini_exec"
+        }
+      ],
+      "notes": [
+        "A fresh file proves output freshness only. Renderer dependency failures such as Unable to load texture belong in errors and cannot be treated as a successful visual check. Visual semantics remain unverified until the image is inspected.",
+        "Delegate/checkpoint products and visual quality are separate from raster file freshness. Do not turn a passed file check into a material or scene-quality claim."
+      ]
+    },
     "scene_save": {
       "summary": "Save the current named HIP and report actual filesystem and dirty-state facts.",
       "input_schema": {
@@ -2677,7 +2861,13 @@
                     },
                     "text": {
                       "type": "string",
-                      "maxLength": 4096
+                      "maxLength": 4096,
+                      "description": "Required for a new note; omit to preserve the text of an existing note."
+                    },
+                    "text_size": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Font height in network units. Zero uses the native graph default. Omit to preserve the current size. Does not resize the note rectangle."
                     },
                     "position": {
                       "type": "array",
@@ -2705,9 +2895,9 @@
                     }
                   },
                   "required": [
-                    "name",
-                    "text"
+                    "name"
                   ],
+                  "minProperties": 2,
                   "additionalProperties": false
                 }
               },
@@ -2757,7 +2947,11 @@
           "notes": {
             "type": "array",
             "items": {
-              "type": "object"
+              "type": "object",
+              "properties": {
+                "text_size": {"type": "number", "description": "Actual stored native font height."},
+                "effective_text_size": {"type": ["number", "null"], "description": "Current graph font height when observable; null when the default cannot be read."}
+              }
             }
           },
           "scene_writes": {
@@ -2784,6 +2978,12 @@
           "tool": "houdini_exec",
           "code": "__result__ = network_notes(\"/obj/example\", [{\"name\":\"start_here\", \"text\":\"Start from ARRAY. Replace PATH or SOURCE to change the inputs.\"}])",
           "read_result": "Read actual text, position, size and provenance. Inspect placement when visual clarity matters; notes do not prove functional correctness."
+        },
+        {
+          "title": "Change font size without rewriting note text",
+          "tool": "houdini_exec",
+          "code": "__result__ = network_notes(\"/obj/example\", [{\"name\":\"start_here\", \"text_size\":0.3}])",
+          "read_result": "Check text_size and effective_text_size. Font height is separate from the rectangle size."
         },
         {
           "title": "Read actual existing notes",

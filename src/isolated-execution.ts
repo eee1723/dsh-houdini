@@ -17,7 +17,8 @@ import {localVideoEnvironment} from './video-process.js'
 import {visualCapability} from './image-output.js'
 import {HOUDINI_TOOLS} from './tool-catalog.js'
 import {executionLogValue,executionStdout,renderExec,boundedFact} from './tool-output.js'
-import {MAX_PRESENTATION_BYTES} from './result-policy.js'
+import {MAX_MODEL_TEXT_BYTES,MAX_PRESENTATION_BYTES} from './result-policy.js'
+import {pointerKeys,pointerValue} from './result-details.js'
 import {TextRetainer} from '@deepseek-ai/dsh-output-retention'
 import {projectDirectoryPath} from './project-paths.js'
 
@@ -37,6 +38,8 @@ export interface IsolatedArgs {
   operation?:'run'|'read';manifest?:string;output_dir?:string;background?:boolean
   houdini_installation?:string
   timeout_seconds?:number;memory_mb?:number
+  pointer?:string;offset?:number;limit?:number
+  allow_undeclared_image_input?:boolean
 }
 export interface IsolatedProcessRequest {
   runtime:IsolatedRuntime;manifest:string;manifestSha256:string;output:string;cancelFile:string;timeout:number;memory:number
@@ -226,7 +229,7 @@ function isolatedSummary(original:any) {
       worker:report.worker?{status:report.worker.status,returncode:report.worker.returncode}:undefined}:undefined,
     builder_ok:result?.builder?.ok,
     checks:{count:result?.checks?.length??0,status_counts:inputStatusCounts(result?.checks)},
-    presentation:{status:'summary',reason:'The aggregate report exceeded the presentation budget. Read the complete original run and select the needed fields; absence from this summary is not evidence of absence.'}})))
+    presentation:{status:'summary',reason:'The aggregate report exceeded the model-text budget. Use operation="read" with a JSON Pointer such as "/result/builder/result" to retrieve only the needed field; absence from this summary is not evidence of absence.'}})))
 }
 
 /** Header, then execution envelopes through the live result renderer. Do not
@@ -254,7 +257,8 @@ export function renderIsolatedResult(value:any):ContentBlock[] {
     blocks.push({type:'text',text:row.label+':\n'+rendered.map(item=>item.text).join('\n\n')})
   }
   const textBytes=blocks.reduce((total,block)=>total+(block.type==='text'?Buffer.byteLength(block.text):0),0)
-  if(textBytes>MAX_PRESENTATION_BYTES)blocks.splice(0,blocks.length,{type:'text',text:JSON.stringify(isolatedSummary(value))})
+  if(textBytes>MAX_MODEL_TEXT_BYTES)blocks.splice(0,blocks.length,{type:'text',
+    text:JSON.stringify(boundedFact(isolatedSummary(value),'',MAX_MODEL_TEXT_BYTES))})
   blocks.push(...(value.imageAttachments??[]).filter((row:any)=>row.attachment)
     .map((row:any)=>({type:'image',attachment:row.attachment} as ContentBlock)))
   return blocks
@@ -284,7 +288,7 @@ export function isolatedJobSummary(value:any) {
         ?'Original input sources changed or could not be observed; read input_observations. Execution concerns the declared staged inputs; external effects are not restored.':'')})))
 }
 
-export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true) {
+export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true,allowUndeclaredImageInput=false) {
   const directory=await localPath(ctx,exec,output)
   const reportPath=path.join(directory.local,'report.json'),report=await readJson(ctx,exec,reportPath,MAX_REPORT_BYTES)
   let progress:any
@@ -309,7 +313,9 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
         continue
       }
       try {
-        if(capability.status!=='available')throw Error(capability.reason??'Image input unavailable')
+        if(capability.status==='unavailable'
+            ||(capability.status==='unsupported'&&!allowUndeclaredImageInput))
+          throw Error(capability.reason??'Image input unavailable')
         if(images.filter(row=>row.attachment).length>=attachments.imageLimits.maxImagesPerMessage)throw Error('Native image count limit reached')
         const filename=path.resolve(directory.local,artifact.file)
         if(!filename.startsWith(directory.local+path.sep))throw Error('Image artifact is outside its run directory')
@@ -320,7 +326,7 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
         if(data.length!==artifact.bytes||createHash('sha256').update(data).digest('hex')!==artifact.sha256)throw Error('Image artifact differs from the recorded result')
         const mediaType=path.extname(filename).toLowerCase()==='.png'?'image/png':/\.webp$/i.test(filename)?'image/webp':'image/jpeg'
         const attachment=await attachments.saveImage({data,mediaType,name:path.basename(filename)})
-        total+=attachment.bytes;images.push({from:filename,attachment,semantic_status:'unverified'})
+        total+=attachment.bytes;images.push({from:filename,attachment,semantic_status:'unverified',capability_status:capability.status})
       }catch(error){images.push({from:artifact.file,error:String(error),semantic_status:'unverified'})}
     }
   }
@@ -331,7 +337,21 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
   runner:IsolatedOptions['runner']=runIsolatedProcess,planner:typeof planIsolatedManifest=planIsolatedManifest) {
   if((args.operation??'run')==='read'){
     if(!args.output_dir)throw Error('operation=read requires the original absolute output_dir')
-    return readIsolatedRun(ctx,exec,args.output_dir)
+    const directory=await localPath(ctx,exec,args.output_dir)
+    const reportPath=path.join(directory.local,'report.json')
+    if(args.pointer!==undefined||args.offset!==undefined||args.limit!==undefined){
+      const pointer=args.pointer??'',offset=args.offset??0,limit=args.limit??6000
+      if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>16000)
+        throw Error('offset must be a nonnegative integer; limit must be 1..16000 characters')
+      const report=await readJson(ctx,exec,reportPath,MAX_REPORT_BYTES)
+      const text=JSON.stringify(pointerValue(report,pointerKeys(pointer)),null,2)
+      if(offset>text.length)throw Error('offset exceeds selected JSON text length')
+      const end=Math.min(offset+limit,text.length)
+      return {kind:'isolated-houdini-report-page',run_directory:directory.local,report_path:reportPath,
+        pointer,offset,total_chars:text.length,next_offset:end<text.length?end:null,
+        format:'json_text_page',text:text.slice(offset,end),scope:SCOPE,imageAttachments:[]}
+    }
+    return readIsolatedRun(ctx,exec,args.output_dir,true,args.allow_undeclared_image_input===true)
   }
   const cwd=workspaceOf(exec)
   if(!cwd)throw Error('Isolated Houdini requires the DSH session workspace')
@@ -374,7 +394,7 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
     // A cancelled caller still receives its terminal facts after the owned tree exits.
     const resultExec={...exec,signal:undefined}
     try {
-      const value=await readIsolatedRun(ctx,resultExec,output.local,!args.background)
+      const value=await readIsolatedRun(ctx,resultExec,output.local,!args.background,args.allow_undeclared_image_input===true)
       return {...value,ok:value.report?.ok===true&&process.exit_code===0&&!process.error,process}
     }
     catch(error){
@@ -436,6 +456,10 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
       output_dir:{type:'string',description:'Optional absolute NEW run directory for run; default unique execution_run directory under the current DSH workspace. read requires the exact directory returned by the original run. Existing or explicit paths are never moved.'},
       houdini_installation:{type:'string',description:'Optional explicit absolute Houdini installation directory (HFS). Otherwise use the selected scene\'s recorded installation even if live is offline; legacy fixed-Bridge connections obtain installation metadata online. No Host HFS or PATH fallback.'},
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
+      allow_undeclared_image_input:{type:'boolean',description:'Only when the user explicitly confirms this exact route accepts images: attach images despite missing metadata and let the real model response decide. Not a bypass for an observed provider rejection.'},
+      pointer:{type:'string',description:'Read only: JSON Pointer into report.json, for example /result/builder/result. Returns a bounded JSON text page without image attachments.'},
+      offset:{type:'number',description:'Read only: zero-based character offset into the selected JSON text; default 0. Use next_offset for continuation.'},
+      limit:{type:'number',description:'Read only: selected JSON text characters per page, 1..16000; default 6000.'},
       timeout_seconds:{type:'number',description:`Worker time budget in (0, ${inputPolicy.maxTimeoutSeconds}] seconds; default ${inputPolicy.defaultTimeoutSeconds}. Validated before job admission.`},
       memory_mb:{type:'number',description:`Integer process-tree memory budget ${inputPolicy.minMemoryMb}..${inputPolicy.maxMemoryMb} MiB; default ${inputPolicy.defaultMemoryMb}. Not GPU memory; validated before job admission.`}},
     output:{schema:{type:'json'},render:(_args,value)=>renderIsolatedResult(value),presentationMeta:(_args,value)=>({canonical:isolatedLogValue(value)})},

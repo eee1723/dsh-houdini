@@ -78,6 +78,29 @@ set_parms(r,{'soppath':n.path()})
     again=run('another')
     assert again['ok'] and again['run_id']!=success['run_id']
     assert again['result']['runtime']['runtime_id']!=success['result']['runtime']['runtime_id']
+
+    # USD classification can finish correctly yet crash H22 during native
+    # library shutdown. The real production child must exit cleanly without
+    # restricting computation or converting a failed builder into success.
+    usd_code = code + '''
+lop=tab_create('/stage','pythonscript',name='usd_shutdown')
+set_parms(lop,{'python': "from pxr import UsdLux,UsdGeom\\ns=hou.pwd().editableStage()\\nUsdLux.DomeLight.Define(s,'/Dome')\\nUsdLux.LightAPI.Apply(UsdGeom.Mesh.Define(s,'/EmissiveMesh').GetPrim())\\ns.DefinePrim('/NotALight','CustomLightishThing')"})
+summary=usd_stage_summary(lop)
+assert {row['path'] for row in summary['prims']['lights']}=={'/Dome','/EmissiveMesh'}
+assert {row['path'] for row in summary['prims']['geometry']}=={'/EmissiveMesh'}
+__result__={'lights':summary['counts']['lights'],'compute_threads':hou.maxThreads()}
+'''
+    script.write_text(usd_code,encoding='utf-8')
+    usd=run('usd-native-exit')
+    assert usd['ok'] and usd['worker']['returncode']==0 and usd['worker']['tree_reaped'],usd
+    usd_builder=runner.read_execution(root/'usd-native-exit',usd['result']['builder'])
+    assert usd_builder['result']=={'lights':2,'compute_threads':2},usd_builder
+    script.write_text(usd_code+"\nraise RuntimeError('EXPECTED_USD_BUILDER_FAILURE')\n",encoding='utf-8')
+    usd_failure=run('usd-native-failure-exit')
+    assert not usd_failure['ok'] and usd_failure['worker']['returncode']==1,usd_failure
+    assert 'EXPECTED_USD_BUILDER_FAILURE' in usd_failure['error'],usd_failure
+    assert usd_failure['inputs_unchanged'] and usd_failure['worker']['tree_reaped'],usd_failure
+
     (root/'dsh_isolated_fixture_support.py').write_text('VALUE=17\n',encoding='utf-8')
     script.write_text(code+'\nimport dsh_isolated_fixture_support\nassert dsh_isolated_fixture_support.VALUE==17\n',encoding='utf-8')
     manifest([checks[0]], files=['dsh_isolated_fixture_support.py'])
@@ -86,6 +109,90 @@ set_parms(r,{'soppath':n.path()})
     manifest([checks[0]])
     missing_dependency=run('undeclared-dependency')
     assert not missing_dependency['ok'] and 'dsh_isolated_fixture_support' in missing_dependency['error'],missing_dependency
+
+    # A saved HIP's $HIP-relative texture is lazy renderer input: loading the
+    # copied HIP succeeds, but Mantra must not produce a false-green check when
+    # that texture was omitted from the manifest. The original stays immutable.
+    import base64
+    texture_root=root/'textures';texture_root.mkdir()
+    texture_source=texture_root/'roughness.png'
+    texture_source.write_bytes(base64.b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a+p8AAAAASUVORK5CYII='))
+    texture_hip=root/'texture_fixture.hip'
+    texture_builder=root/'texture_builder.py'
+    texture_builder.write_text('''from __future__ import annotations
+g=tab_create('/obj','geo',name='texture_fixture')
+n=tab_create(g,'box',name='OUT')
+mat=tab_create('/mat','principledshader',name='TEXTURE_FIXTURE_MAT')
+set_parms(mat,{'rough_useTexture':1,'rough_texture':'$HIP/textures/roughness.png','rough':1.0})
+assigned=tab_create(g,'material',name='ASSIGN',inputs=[n],parms={'shop_materialpath1':mat.path()})
+sop_set_output(assigned)
+cam=tab_create('/obj','cam',name='TEXTURE_FIXTURE_CAM')
+camera_fit(cam,assigned,width=16,height=16)
+dry_fit=camera_fit(cam,assigned,width=16,height=16,dry_run=True)
+tab_create('/obj','hlight',name='TEXTURE_FIXTURE_LIGHT',parms={'tx':1.0,'ty':1.0,'tz':1.0,'light_intensity':1.0})
+for name in ('TEXTURE_ROP_FIRST','TEXTURE_ROP_LATER'):
+ tab_create('/out','ifd',name=name,parms={'camera':cam.path(),'vobject':g.path(),
+  'vm_renderengine':'pbrraytrace','override_camerares':1,'res_fraction':'specific','res_overridex':16,'res_overridey':16})
+saved=scene_save_as(path='''+repr(texture_hip.as_posix())+''',expected_current_path=scene_info()['hip_path'],
+ reason='Create authored isolated texture fixture')
+__result__={'saved':saved,'dry_fit':dry_fit}
+''',encoding='utf-8')
+    manifest_path.write_text(json.dumps({'script':'texture_builder.py','checks':[]}),encoding='utf-8')
+    fixture=run('texture-fixture')
+    assert fixture['ok'] and texture_hip.is_file(),fixture
+    assert fixture['result']['builder']['outcome']['checks']['unverified']==1,fixture
+    fixture_hash=runner.digest(texture_hip)
+    texture_checks=[
+        {'id':'first','kind':'render','node':'/out/TEXTURE_ROP_FIRST','frame':1,'file':'first.png'},
+        {'id':'later','kind':'render','node':'/out/TEXTURE_ROP_LATER','frame':1,'file':'later.png'},
+    ]
+    manifest_path.write_text(json.dumps({'hip':'texture_fixture.hip','checks':texture_checks}),encoding='utf-8')
+    missing_texture=run('texture-undeclared')
+    assert not missing_texture['ok'] and 'Unable to load texture' in missing_texture['error'],missing_texture
+    assert missing_texture['result']['phase']=='check:first',missing_texture
+    assert len(missing_texture['result']['checks'])==1,missing_texture
+    failed_texture=missing_texture['result']['checks'][0]
+    assert failed_texture['status']=='failed',failed_texture
+    failed_execution=failed_texture['execution']
+    assert failed_execution['outcome']['checks']['failed']==1,failed_execution
+    assert failed_execution['native_diagnostics'][0]['kind']=='texture_load_failed',failed_execution
+    expected_missing=(root/'texture-undeclared/inputs/textures/roughness.png').as_posix()
+    assert failed_execution['native_diagnostics'][0]['path']==expected_missing,failed_execution
+    assert expected_missing in failed_execution['native_output'],failed_execution
+    assert not (root/'texture-undeclared/artifacts/later').exists(),'later render must not execute'
+    assert runner.digest(texture_hip)==fixture_hash
+
+    # Builder execution and validation are separate in the Bridge envelope.
+    # Even authored code that ignores the returned render result cannot hide a
+    # failed native check from the isolated run or continue to manifest checks.
+    ignore_script=root/'texture_ignore_result.py'
+    ignore_script.write_text('''from pathlib import Path
+picture=Path(hou.hipFile.path()).parent.parent/'builder-diagnostic.png'
+rendered=render_frame('/out/TEXTURE_ROP_FIRST',picture=str(picture),frame=1)
+__result__={'ignored_render_errors':rendered['errors']}
+''',encoding='utf-8')
+    manifest_path.write_text(json.dumps({'hip':'texture_fixture.hip','script':'texture_ignore_result.py',
+        'checks':texture_checks[1:]}),encoding='utf-8')
+    ignored_texture=run('texture-builder-failed-check')
+    assert not ignored_texture['ok'] and 'Unable to load texture' in ignored_texture['error'],ignored_texture
+    assert ignored_texture['result']['phase']=='builder',ignored_texture
+    assert ignored_texture['result']['checks']==[],ignored_texture
+    assert ignored_texture['result']['builder']['outcome']['checks']['failed']==1,ignored_texture
+    assert ignored_texture['result']['builder']['native_diagnostics'],ignored_texture
+    assert not (root/'texture-builder-failed-check/artifacts/later').exists()
+    assert runner.digest(texture_hip)==fixture_hash
+
+    manifest_path.write_text(json.dumps({'hip':'texture_fixture.hip',
+        'files':['textures/roughness.png'],'checks':texture_checks[:1]}),encoding='utf-8')
+    declared_texture=run('texture-declared')
+    assert declared_texture['ok'],declared_texture
+    declared_execution=declared_texture['result']['checks'][0]['execution']
+    assert declared_execution['outcome']['checks']['failed']==0,declared_execution
+    assert not declared_execution.get('native_diagnostics'),declared_execution
+    assert (root/'texture-declared/inputs/textures/roughness.png').is_file()
+    assert runner.digest(texture_hip)==fixture_hash
+
     script.write_text(code,encoding='utf-8')
     manifest([{**checks[0], 'expect':{'points':999}}])
     bad=run('wrong-count')

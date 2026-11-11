@@ -32,6 +32,10 @@ const Recovery=z.object({schema:z.literal(2),kind:z.literal('executor_recovery')
   scene_epoch:z.string().regex(ID),runtime_id:z.string().regex(ID),hip_path:z.string().min(1),
   restored_nodes:z.number().int().nonnegative(),previous_work:z.unknown().optional(),
   unrestored_nodes:z.array(z.object({path:z.string(),reason:z.string()})).optional(),
+  restored_notes:z.number().int().nonnegative().optional(),
+  unrestored_notes:z.array(z.object({path:z.string(),reason:z.string()})).optional(),
+  restored_boxes:z.number().int().nonnegative().optional(),
+  unrestored_boxes:z.array(z.object({path:z.string(),reason:z.string()})).optional(),
   load_warnings:z.array(z.string()).optional(),
   load_warning_details:WarningDetails.optional(),
   user_choice:z.record(z.string(),z.unknown()).optional()})

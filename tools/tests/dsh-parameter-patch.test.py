@@ -47,7 +47,7 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
         h.create_spare_parms(consumer,spec=[{'type':'float','name':'linked','default':1}])
         dsh_parameter_values.set_parm(consumer,'linked','ch("../read_filter/referenced")')
         filtered=b.run_code(f'__result__=read_parms({probe.path()!r})',read_only=True)
-        assert filtered['ok'] and filtered['transaction']['status']=='no_scene_change',filtered
+        assert filtered['ok'] and filtered['transaction']['status']=='effects_unverified' and filtered['transaction']['source_executed'] is True,filtered
         by_name={row['name']:row for row in filtered['result']}
         assert 'plain' not in by_name and by_name['changed']['value']==2,by_name
         assert by_name['expression']['expression']=='1' and by_name['expression']['value']==1
@@ -58,7 +58,7 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
         for invalid in (['changed','missing'],1,None):
             rejected=b.run_code(f'__result__=read_parms({probe.path()!r},{invalid!r})',read_only=True)
             assert not rejected['ok'] and 'changed_only must be boolean' in rejected['error'],rejected
-            assert 'names=' in rejected['error'] and rejected['transaction']['status']=='no_scene_change'
+            assert 'names=' in rejected['error'] and rejected['transaction']['status']=='effects_unverified' and rejected['transaction']['source_executed'] is True
         rejects(lambda:h.read_parms(probe,names=['changed','missing']),'missing scalar')
         with mock_patch.object(hou.Parm,'isAtDefault',side_effect=RuntimeError('native default query failed')):
             rejects(lambda:h.read_parms(probe),'native default query failed')
@@ -110,19 +110,19 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
             field='label' if reason=='found 2' else 'snippet'
             rejects(lambda:dsh_parameter_values.set_parm(n,field,bad),reason)
         # A late bad patch prevents even earlier ORDINARY writes in set_parms.
-        setter=dsh_parameter_values.set_parm
+        setter=dsh_parameter_values._set_parm_impl
         writes=[]
         try:
             def write_spy(*args,**kwargs):
                 writes.append(1)
                 return setter(*args,**kwargs)
-            dsh_parameter_values.set_parm=write_spy
+            dsh_parameter_values._set_parm_impl=write_spy
             rejects(lambda:h.set_parms(n,{'amplitude':9,'snippet':patch(changed,'n=3','n=4'),
                                           'label':patch('alpha alpha','missing','x')}),'found 0')
             assert not writes and n.evalParm('amplitude')==1
             assert n.parm('snippet').unexpandedString()==changed
         finally:
-            dsh_parameter_values.set_parm=setter
+            dsh_parameter_values._set_parm_impl=setter
         # Sequential edits are validated against the proposed intermediate text.
         edits=patch(changed,'n=3','n=4')
         edits['patch'].append({'old':'n=4','new':'n=5','count':1})
@@ -183,7 +183,7 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
             reply=b.run_code(f'set_parm({n.path()!r},"snippet",{patch(before,"n=5","n=8")!r})',**options)
             assert not reply['ok'] and reason in reply['error'],reply
         invalid=b.run_code(f'set_parms({n.path()!r},{{"snippet":{patch(before,"absent","x")!r}}})',owner_session='patch-owner')
-        assert invalid['transaction']['status']=='no_scene_change',invalid
+        assert invalid['transaction']['status']=='effects_unverified' and invalid['transaction']['source_executed'] is True,invalid
         assert invalid['evidence'][0]['phase']=='parameter_patch_preflight',invalid
         valid=b.run_code(f'__result__=set_parms({n.path()!r},{{"snippet":{patch(before,"n=5","n=6")!r}}})',owner_session='patch-owner')
         assert valid['ok'] and valid['result']['patched']==['snippet'],valid

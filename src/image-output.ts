@@ -31,8 +31,8 @@ export async function visualCapability(exec: any, ctx: any) {
     return {...base,status:supported?'available':'unsupported',image_input:supported,
       attachment_channel:true,limits:attachments.imageLimits,
       ...(supported?{}:{reason:'current model route does not declare image input',
-        next_action:'Check the configured route input modalities or select a route that declares image input. This is a metadata refusal, not a test of the provider or the model inherent ability. Required reference matching and visual quality remain unverified until images can be inspected.'}),
-      observation:'Declared model input capability. An attached image can be inspected by the model; metadata alone does not describe its content.'}
+        next_action:'Check the configured route input modalities or select a route that declares image input. If the user explicitly confirms this exact route accepts images, allow_undeclared_image_input=true permits one native attempt; the actual model response is separate evidence. Never override an observed provider rejection.'}),
+      observation:'Declared model input capability only. Native images may be attempted even when metadata is absent; route acceptance and semantic inspection require an actual model response.'}
   } catch(error) {
     return {...base,status:'unavailable',image_input:null,reason:String(error),
       next_action:'Inspect the route/channel configuration; do not infer visual capability from a successful render.'}
@@ -53,7 +53,12 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
   try {
     const attachments = ctx.get?.('attachments')
     const capability = await visualCapability(exec,ctx)
-    if (capability.status !== 'available') throw new Error(capability.reason)
+    // Missing image metadata is not proof that the routed model rejects images.
+    // An explicit user-backed override permits one native attempt; the actual
+    // request establishes support. Channel/lookup failures still stop the read.
+    if (capability.status === 'unavailable'
+        || (capability.status === 'unsupported' && exec.allow_undeclared_image_input !== true))
+      throw new Error(capability.reason)
     let totalBytes = 0
     for (const from of paths) {
       try {
@@ -65,7 +70,7 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
         const data = await bridge.fetchMedia(from, exec.signal, cap)
         const attachment = await attachments.saveImage({ data, mediaType, name: path.basename(from.replaceAll('\\', '/')) })
         totalBytes += attachment.bytes
-        imageAttachments.push({ from, attachment, semantic_status: 'unverified' })
+        imageAttachments.push({ from, attachment, semantic_status: 'unverified', capability_status: capability.status })
       } catch (error) {
         imageAttachments.push({ from, error: String(error), semantic_status: 'unverified' })
       }

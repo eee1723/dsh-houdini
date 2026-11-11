@@ -19,7 +19,7 @@ def edit(path,action,**kwargs):
     tail=''.join(f', {key}={value!r}' for key,value in kwargs.items())
     call=f'hda_edit({path!r},{action!r}{tail}'
     p=run('__result__='+call+',dry_run=True)')
-    assert p['transaction']['status']=='no_scene_change', p
+    assert p['transaction']['status']=='effects_unverified' and p['transaction']['source_executed'] is True, p
     return run('__result__='+call+f",expected_plan={p['result']['plan_sha256']!r})")['result']
 
 with tempfile.TemporaryDirectory(prefix='dsh-hda-lifecycle-') as tmp:

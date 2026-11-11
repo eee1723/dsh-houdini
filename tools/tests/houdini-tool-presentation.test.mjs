@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HoudiniBridge } from '../../lib/bridge.js';
 import { registerHoudiniTools } from '../../lib/tools.js';
-import {renderJobStatus,renderJobObservation,execPresentationMeta,jobResultTitle} from '../../lib/tool-output.js';
+import {renderJobStatus,renderJobObservation,execPresentationMeta,jobResultTitle,resultTitle} from '../../lib/tool-output.js';
 import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs';
 import {houdiniSnapshot,executionResult} from '../../lib/dsh-adapter.js';
 
@@ -21,6 +21,13 @@ const ctx = {
 };
 
 registerHoudiniTools(await fixtureProjectionContext(ctx), {});
+assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
+  transaction:{status:'effects_unverified'}})}),'观察工程 · 已执行，场景影响未核实');
+assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
+  execution:{source_kind:'structured_query'},outcome:{operations:{total:2,failed:2}}})}),
+  '观察工程 · 查询未取得结果');
+await assert.rejects(definitions.get('houdini_inspect').execute({
+  code:'pass',queries:[{verb:'scene_info'}]},{}),/exactly one/);
 assert.deepEqual([...definitions.keys()].sort(), ['houdini_exec','houdini_inspect','houdini_ui_list','houdini_ui_screenshot','houdini_request','houdini_resource','houdini_capabilities','houdini_job_submit'].sort());
 
 const text = [{ type: 'text', text: 'fixture result' }];

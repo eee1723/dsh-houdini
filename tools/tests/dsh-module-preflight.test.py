@@ -113,7 +113,7 @@ try:
         assert before=={n.sessionId() for n in root.children()}
         env=b.run_code(f'build_module({root.path()!r},{specs!r},output={output!r})')
         assert not env['ok'] and message in env['error'],env
-        assert env['transaction']['status']=='no_scene_change',env
+        assert env['transaction']['status']=='effects_unverified' and env['transaction']['source_executed'] is True,env
         evidence=env['evidence'][0]
         assert evidence['phase']=='static_preflight' and evidence['scene_writes']==0,env
         assert before=={n.sessionId() for n in root.children()}

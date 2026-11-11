@@ -38,6 +38,7 @@ from dsh_execution_results import (
     _MAX_STREAM_BYTES, _CappedStringIO, _jsonable,
     _clip, _operation_summary, project_result,
 )
+from dsh_verb_dispatch import implementation, public_verb, request_dispatch, validate_structured_queries
 
 # Cache the actual callable, not only its name, so repair/reload and test
 # replacements obtain their own precise argument signature.
@@ -160,7 +161,7 @@ class VerbDefinition:
             raise ValueError('invalid verb execution contract')
         if access == 'query_or_exec' and content_impact != 'none':
             raise ValueError('read-only scene access cannot declare content edits')
-        self.function, self.access, self.content_impact = function, access, content_impact
+        self.function, self.access, self.content_impact = implementation(function), access, content_impact
 
 
 _VERB_DEFINITIONS = {
@@ -329,7 +330,8 @@ def _unrecovered_mutation(entry):
     return facts.get('scene_writes') != 0 and restored is not True
 
 
-def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
+def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, *,
+                 read_only=False, before_dispatch=None):
     # Give a precise, zero-write recovery path for repeated discovery mistakes;
     # do not label TypeErrors raised inside the implementation as argument errors.
     discovery_signature = _verb_signature(name, fn)
@@ -346,6 +348,11 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
         args_json = _verb_value(list(args))
         kwargs_json = {str(k): _verb_value(v) for k, v in kwargs.items()}
         try:
+            if read_only and name in _MUTATING_VERB_NAMES:
+                raise _DispatchBlockedError(
+                    f'{name} requires houdini_exec; the current request only permits query operations',
+                    {'ok': False, 'phase': 'access_mode', 'scene_writes': 0,
+                     'dispatched': False, 'requested_access': 'query'})
             if name in _MUTATING_VERB_NAMES:
                 failed = next((entry for entry in ledger if _unrecovered_mutation(entry)), None)
                 if failed is not None:
@@ -389,6 +396,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 if not targets:
                     impact['global'] = True
                 _observe_impact(targets, impact, descendants=name in ('delete_node', 'rename_node'))
+            if before_dispatch is not None:
+                before_dispatch(name)
             result = fn(*args, **kwargs)
             if impact is not None:
                 if edits_content:
@@ -423,6 +432,13 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
                 elif check.get('risk_status') == 'no_detected_integrity_risk':
                     entry['check_status'] = 'passed'
                 entry['check_scope'] = 'Polygon surface integrity only; no contact, self-intersection, appearance or intended-open-port certification'
+            if name == 'geo_frame_diff' and isinstance(check, dict) and check.get('mode') == 'baseline_series':
+                comparisons = check['comparisons']
+                if comparisons['error']:
+                    entry['check_status'] = 'failed'
+                elif comparisons['not_comparable']:
+                    entry['check_status'] = 'unverified'
+                entry['check_scope'] = 'Requested frame samples aligned only by point number; stable identity, matching topology and visual quality unverified'
             if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "viewport_screenshot", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
                 if check.get('status') in ('unverified', 'not_evaluated_manual', 'not_cooked_manual'):
                     entry['check_status'] = 'unverified'
@@ -466,6 +482,25 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None):
     return wrapped
 
 
+def _request_dispatcher(ledger, observed_nodes, impact, *, read_only, extra=None, before_dispatch=None):
+    """One request's wrappers serve injected calls and public facade aliases."""
+    traced = {}
+    registry = _VERBS if not extra else {**_VERBS, **extra}
+
+    def dispatch(name, args, kwargs):
+        fn = registry.get(name)
+        if fn is None:
+            raise ValueError(f'Unknown public Houdini verb {name!r}')
+        entry = traced.get(name)
+        if entry is None or entry[0] is not fn:
+            entry = (fn, _make_tracer(name, fn, ledger, observed_nodes, impact,
+                                     read_only=read_only, before_dispatch=before_dispatch))
+            traced[name] = entry
+        return entry[1](*args, **kwargs)
+
+    return dispatch
+
+
 def _raise_caught_verb_failure(verb_ledger: list) -> None:
     """Fail an exec that caught a verb exception and continued.
 
@@ -488,7 +523,8 @@ def _raise_caught_verb_failure(verb_ledger: list) -> None:
     )
 
 
-def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal, note_journal):
+def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal, note_journal,
+                  source_state):
     """Execute one admitted edit batch and restore the same ownership on undo."""
     error = rollback = None
     undo_enabled = bool(hou.undos.areEnabled())
@@ -501,6 +537,7 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, 
         imports_before = dsh_component_contracts.snapshot_imports()
         try:
             with hou.undos.group(label):
+                source_state['executed'] = True
                 exec(compiled, namespace)
                 _raise_caught_verb_failure(verb_ledger)
         except BaseException:
@@ -548,6 +585,7 @@ def _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, 
             error = original_error
     else:
         try:
+            source_state['executed'] = True
             exec(compiled, namespace)
             _raise_caught_verb_failure(verb_ledger)
         except BaseException:
@@ -595,6 +633,91 @@ class ExecutionRuntime:
         self.runtime_id = runtime_id
         self.executor_id = executor_id
         self.sequence = 0
+
+    def run_queries(self, queries, owner_session=None, owner_call=None):
+        """Run a fixed data-only read batch; never compile submitted Python.
+
+        Whole-batch shape validation precedes every operation. Unknown, write
+        and unsupported names are rejected per row; other reads still run.
+        Parameter and USD evaluation can execute existing scene expressions or
+        cooks, so those native effects remain explicitly unverified.
+        """
+        queries = validate_structured_queries(queries)
+        if threading.get_ident() != self.thread_id:
+            raise RuntimeError('run_queries must execute on Houdini\'s owning thread')
+        self.sequence += 1
+        sequence = self.sequence
+        ledger, observed_nodes = [], {}
+        impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
+        stdout, stderr = _CappedStringIO(_MAX_STREAM_BYTES), _CappedStringIO(_MAX_STREAM_BYTES)
+        rows = []
+        counts = {'succeeded': 0, 'rejected': 0, 'failed': 0}
+        native_evaluation = {'attempted': False}
+        allowed = {'scene_info', 'node_info', 'read_parms', 'tool_catalog', 'usd_prim_info', 'verb_help', 'selection'}
+
+        def selection():
+            from dsh_context import scene_context
+            return scene_context(self.runtime_id, self.thread_id)
+
+        def before_dispatch(name):
+            if name in ('read_parms', 'usd_prim_info'):
+                native_evaluation['attempted'] = True
+
+        dispatch = _request_dispatcher(ledger, observed_nodes, impact, read_only=True,
+                                       extra={'selection': selection}, before_dispatch=before_dispatch)
+        with (dsh_ownership.execution_owner(owner_session, owner_call), request_dispatch(dispatch),
+              contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr)):
+            for index, query in enumerate(queries):
+                name = query['verb']
+                row = {'index': index, 'verb': name, **({'id': query['id']} if 'id' in query else {})}
+                if name not in allowed:
+                    row.update(status='rejected', dispatched=False, error_type='QueryRejected',
+                               error=(f'{name} requires an execution tool, not a structured query'
+                                      if name in _MUTATING_VERB_NAMES else
+                                      f'Unsupported structured query {name!r}; available: {sorted(allowed)}'))
+                else:
+                    try:
+                        value = dispatch(name, query['args'], query['kwargs'])
+                        row.update(status='succeeded', dispatched=True,
+                                   result=_jsonable(value, _transform=_hom_json_leaf))
+                    except Exception as error:
+                        evidence = getattr(error, 'evidence', {})
+                        rejected = isinstance(error, (_DispatchBlockedError, _VerbArgumentError))
+                        row.update(status='rejected' if rejected else 'failed', dispatched=not rejected,
+                                   error=str(error), error_type=type(error).__name__)
+                        if isinstance(evidence, dict) and evidence:
+                            row['evidence'] = _jsonable(evidence)
+                counts[row['status']] += 1
+                rows.append(row)
+        result = {'rows': rows, 'counts': counts,
+                  'status': 'observed' if not counts['rejected'] and not counts['failed'] else
+                            'partial' if counts['succeeded'] else 'unavailable',
+                  'scope': 'Fixed read operations only; row success does not certify geometry or visual quality'}
+        envelope = project_result(ledger=ledger, images=[], stdout=stdout.getvalue(), stderr=stderr.getvalue(),
+            error=None, rollback=None, raw_usage={}, gate_outcome='not_applicable', allow_raw=None,
+            namespace={'__result__': result}, advisories=[])
+        envelope['outcome']['operations'] = {'total': len(rows), 'failed': counts['rejected'] + counts['failed']}
+        evaluated = native_evaluation['attempted']
+        impact['unavailable'] = impact['unavailable'] or evaluated
+        envelope['transaction'] = {
+            'status': 'effects_unverified' if evaluated else 'no_scene_change', 'source_executed': False,
+            'scope': ('Fixed read operations; native parameter/USD evaluation may invoke existing expressions or cooks; '
+                      'their side effects are not observed or restored' if evaluated else
+                      'Fixed metadata reads only; no submitted Python or scene-edit operation executed'),
+            'nodes': [{'identity': identity, 'prior_path': before,
+                       'exists': (node := hou.nodeBySessionId(identity)) is not None,
+                       'path': node.path() if node is not None else None}
+                      for identity, before in list(observed_nodes.items())[:64]],
+            'nodes_truncated': len(observed_nodes) > 64,
+            'coverage': 'Named fixed query operations only; no arbitrary submitted Python'}
+        envelope['execution'] = self._execution_snapshot(sequence, owner_session, True, impact)
+        envelope['execution']['source_kind'] = 'structured_query'
+        envelope['execution']['read_only_scope'] = 'Fixed query dispatch permits no explicit scene-edit operations; native evaluation effects are separate'
+        envelope['execution']['impact']['scope'] = (
+            'No explicit scene writes dispatched; native parameter/USD evaluation effects are unverified'
+            if evaluated else 'Fixed metadata operations only; no scene writes dispatched')
+        envelope['execution']['outputs'] = []
+        return envelope
 
     def _execution_snapshot(self, sequence, owner_session, read_only, impact):
         from dsh_context import hip_file_identity
@@ -676,11 +799,12 @@ class ExecutionRuntime:
         for _name, _fn in _VERBS.items():
             if read_only and _name in _MUTATING_VERB_NAMES:
                 continue
-            namespace[_name] = _make_tracer(_name, _fn, verb_ledger, observed_nodes, impact)
+            namespace[_name] = public_verb(_name, _fn)
         stdout = _CappedStringIO(_MAX_STREAM_BYTES)
         stderr = _CappedStringIO(_MAX_STREAM_BYTES)
         error = None
         rollback = None
+        source_state = {'executed': False}
         analysis = CodeAnalysis(code, entry=script.get('entry') if script is not None else None,
                                 filename=f'<dsh-script:{script["sha256"]}:{execution_sequence}>'
                                 if script is not None else '<dsh-houdini>')
@@ -690,7 +814,9 @@ class ExecutionRuntime:
         box_scope = contextlib.nullcontext({'entries': [], 'boxes': 0, 'nodes': 0}) if read_only else dsh_network_boxes.transaction_journal()
         control_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_navigation.transaction_journal()
         note_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_notes.transaction_journal()
+        dispatch = _request_dispatcher(verb_ledger, observed_nodes, impact, read_only=read_only)
         with (_script_namespace(module, analysis), dsh_ownership.execution_owner(owner_session, owner_call),
+              request_dispatch(dispatch),
               creation_scope as created_nodes, box_scope as box_journal,
               control_scope as control_journal, note_scope as note_journal,
               dsh_media_output.image_scope() as produced_images):
@@ -718,10 +844,12 @@ class ExecutionRuntime:
                             gate_outcome = "allowed"
                         compiled = analysis.compile()
                         if read_only:
+                            source_state['executed'] = True
                             exec(compiled, namespace)
                             _raise_caught_verb_failure(verb_ledger)
                         else:
-                            error, rollback = _execute_edit(compiled, namespace, verb_ledger, created_nodes, box_journal, control_journal, note_journal)
+                            error, rollback = _execute_edit(compiled, namespace, verb_ledger, created_nodes,
+                                box_journal, control_journal, note_journal, source_state)
                 except BaseException:
                     if error is None:
                         error = traceback.format_exc()
@@ -733,19 +861,22 @@ class ExecutionRuntime:
             namespace=namespace, advisories=advisories)
         if script is not None:
             envelope['script'] = script
+        # Only dispatched, instrumented operations establish observed edits.
+        # Static calls may never run, and an unrecognized/imported call can
+        # still mutate the scene. Neither absence nor presence in the AST is
+        # evidence that arbitrary Python made no changes or committed edits.
         mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
             (v.get('summary') or {}).get('scene_writes') != 0 and
             (v.get('ok') or (v.get('summary') or {}).get('restored') is not True)
-            for v in verb_ledger) or bool(raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'))
-        if error is None:
-            transaction_status = 'committed' if mutation_attempted else 'no_scene_change'
+            for v in verb_ledger)
+        if not source_state['executed']:
+            transaction_status = 'no_scene_change'
+        elif error is None:
+            transaction_status = 'committed' if mutation_attempted else 'effects_unverified'
         elif rollback and rollback.get('applied') and not rollback.get('error'):
             transaction_status = 'rolled_back'
-        elif not mutation_attempted or gate_outcome in ('blocked', 'forbidden', 'read_only_blocked'):
-            transaction_status = 'no_scene_change'
-        elif not created_nodes and not raw_usage.get('coveredMutations') and not raw_usage.get('suspectedMutations') and all(
-                (v.get('summary') or {}).get('scene_writes') == 0 for v in verb_ledger if v['verb'] in _MUTATING_VERB_NAMES):
-            transaction_status = 'no_scene_change'
+        elif not mutation_attempted:
+            transaction_status = 'effects_unverified'
         else:
             transaction_status = 'recovery_unverified'
         identities = sorted(set(observed_nodes) | created_nodes | set(impact['nodes']))
@@ -754,9 +885,14 @@ class ExecutionRuntime:
             node = hou.nodeBySessionId(identity)
             states.append({'identity': identity, 'prior_path': observed_nodes.get(identity, impact['nodes'].get(identity)),
                            'exists': node is not None, 'path': node.path() if node else None})
-        envelope['transaction'] = {'status': transaction_status, 'scope': 'Houdini undoable scene edits only; file/external side effects are separate',
+        envelope['transaction'] = {'status': transaction_status,
+                                   'source_executed': source_state['executed'],
+                                   'scope': ('Submitted Python did not execute; no scene writes from this source'
+                                             if not source_state['executed'] else
+                                             'Observed managed operations and native undoable edits only; '
+                                             'arbitrary Python, imported calls and external effects are not fully observed or restored'),
                                    'nodes': states, 'nodes_truncated': len(identities) > 64,
-                                   'coverage': 'created identities, primary arguments and bounded native dependency cone; not all implicit dependencies'}
+                                   'coverage': 'Instrumented verb arguments, registered created identities and bounded native dependency cone; not all Python effects or implicit dependencies'}
         if box_journal.get('entries'):
             envelope['transaction']['network_boxes'] = {
                 'entry_count': len(box_journal['entries']), 'box_count': box_journal['boxes'],
@@ -773,12 +909,19 @@ class ExecutionRuntime:
                 'scope': 'explicit Sticky Note presentation snapshots; no node or geometry recovery evidence'}
         if transaction_status != 'no_scene_change':
             _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
-            if raw_usage.get('coveredMutations') or raw_usage.get('suspectedMutations'):
-                impact['global'] = True
-                impact['attempted'] = True
+            # Retain real tracer observations without manufacturing a global
+            # edit from a syntactic hint. No complete arbitrary-Python effect
+            # observer exists, including for the requested inspect mode.
+            impact['unavailable'] = True
         else:
             impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
         envelope['execution'] = self._execution_snapshot(execution_sequence, owner_session, read_only, impact)
+        envelope['execution']['source_kind'] = 'python'
+        envelope['execution']['read_only_scope'] = 'Requested Python entry mode only; not proof of absence of scene or external effects'
+        envelope['execution']['impact']['scope'] = (
+            'No submitted Python executed' if not source_state['executed'] else
+            'Observed instrumented verb edits and bounded native dependencies only; '
+            'arbitrary Python and imported-call effects remain unobserved')
         bindings = []
         for item in envelope.get('evidence', []):
             if len(bindings) >= 64:

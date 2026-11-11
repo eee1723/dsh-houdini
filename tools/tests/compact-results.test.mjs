@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {registerHoudiniTools} from '../../lib/tools.js';
-import {MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js';
+import {MAX_MODEL_TEXT_BYTES,MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js';
 const definitions=new Map();registerHoudiniTools({tools:{register:d=>(definitions.set(d.name,d),()=>{})}},{});
 const render=value=>definitions.get('houdini_exec').output.render({},value).map(c=>c.text||'').join('\n');
 const conditions=Array.from({length:24},(_,i)=>({id:'domain-'+i,status:'pass',condition:{id:'domain-'+i,left:'gain',op:'ge',right:0},left_value:2,right_value:0,scope:'declared only'}));
@@ -14,9 +14,15 @@ const raw={ok:true,stdout:'',stderr:'',transaction:{status:'committed'},evidence
 const retained={...raw,details:{stored:true,sha256:'a'.repeat(64),read:'houdini_query result_ref'}};
 const original=JSON.stringify(raw);const text=render(retained);
 for(const fact of ['case-8','case-9','restoration-drift-middle','channel mismatch','not_run','not_checked','unverified','"restored":false','detail_pointer','duplicate_of'])assert(text.includes(fact),fact);
-assert(text.length<render(raw).length*.6,[text.length,render(raw).length]);
+assert(text.length<JSON.stringify(raw).length*.6,[text.length,JSON.stringify(raw).length]);
 assert(text.length<26000,'known bounded 16-case fixture should not spill into a 50k presentation');
 assert.equal(JSON.stringify(raw),original,'formatting is pure');
+const compactText=definitions.get('houdini_exec').output.render({presentation:'compact'},retained).map(c=>c.text||'').join('\n');
+assert(Buffer.byteLength(compactText)<=MAX_MODEL_TEXT_BYTES,'opt-in compact presentation reduces routine archived output');
+for(const fact of ['case-8','restoration-drift-middle','not_run','detail_pointer'])assert(compactText.includes(fact),fact);
+const unstored={...raw,details:{stored:false}};
+assert.deepEqual(definitions.get('houdini_exec').output.render({presentation:'compact'},unstored),
+  definitions.get('houdini_exec').output.render({},unstored),'compact never discards an unarchived fallback');
 const unknown={verb:'future_checker',domain:conditions,parameter_restore:state,novel_field:'must stay exact'};
 const unknownText=render({...retained,evidence:[unknown],verbs:[]});assert(unknownText.includes(JSON.stringify(unknown)),'unknown schema retains all fields');
 const help={items:[{name:'sample',signature:'sample(node, *, expected_plan=None)',call_mode:'exec',docstring:'Preview is zero-write. Application requires the exact expected plan. '+ 'bounded details '.repeat(400)}]};

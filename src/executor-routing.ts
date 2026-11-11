@@ -47,11 +47,18 @@ export class ExecutorDirectory {
   }
   private async read(id:string,expectedDirectory:string,expectedInstall:string):Promise<ExecutorRecord|undefined> {
     const filename=path.join(this.root,'endpoints',id+'.json')
-    let stat
-    try {stat=await fs.lstat(filename)}
-    catch(error) {if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error}
-    if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16384||canonical(path.dirname(await fs.realpath(filename)))!==expectedDirectory) throw new Error('Invalid executor record path/size')
-    const text=await fs.readFile(filename,'utf8')
+    let text:string
+    try {
+      const stat=await fs.lstat(filename)
+      if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16384||canonical(path.dirname(await fs.realpath(filename)))!==expectedDirectory)
+        throw new Error('Invalid executor record path/size')
+      text=await fs.readFile(filename,'utf8')
+    } catch(error) {
+      // A Windows publication can move the entry after lstat or realpath.
+      // Treat an absent entry as absent in this snapshot, not a broken list.
+      if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined
+      throw error
+    }
     if(Buffer.byteLength(text)>16384) throw new Error('Executor record exceeds read budget')
     const r=JSON.parse(text)
     if(!r||r.schema!==1||r.executor_id!==id||!ID.test(r.registration_id)||!ID.test(r.runtime_id)
@@ -245,7 +252,7 @@ export class ExecutorRouter {
     }
     if(record.runtime_id!==origin.runtimeId)throw new Error('原请求所属的 Houdini 运行代际已结束；结果保持未知，没有改用当前目标。')
     const bridge=this.bridge(record,{runtimeId:origin.runtimeId})
-    const health=await bridge.inspectExecutor(signal)
+    const health=await bridge.inspectReceiptRuntime(signal)
     if(health.runtimeId!==origin.runtimeId)throw new Error('原请求所属运行端已变化；结果保持未知。')
     return bridge
   }

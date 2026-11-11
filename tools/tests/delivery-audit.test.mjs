@@ -56,6 +56,14 @@ record({impact:{attempted:true,nodes:[{identity:10,path:'/obj/product/OUT_ASSET'
 assert.equal(projectDeliveryAudit(events).unresolved_checks[0].validity,'stale_after_recorded_change');
 events.splice(0);sequence=0;
 
+record({evidence:[declared('pass')],outputs:[binding()],verbs:[save(OLD)]});
+record({tool:'houdini_inspect',transaction:'effects_unverified',impact:{attempted:false,unavailable:true,nodes:[]}});
+let unknownEffects=projectDeliveryAudit(events);
+assert.equal(unknownEffects.unresolved_checks[0].validity,'unverified_after_unknown_execution');
+assert.equal(unknownEffects.delivery.status,'save_precedes_unverified_effects');
+assert.equal(unknownEffects.delivery.last_save.sequence,1,'the original save remains an actual event');
+events.splice(0);sequence=0;
+
 // Successful Save As carries old failures forward only as pending rechecks.
 record({evidence:[declared('fail')],outputs:[binding()]});
 record({hip:FINAL,verbs:[save(FINAL,OLD)],impact:{attempted:true,global:true,nodes:[],last_edit_ledger_index:1}});

@@ -6,6 +6,12 @@
  */
 /** Bridge wire JSON is independent of DSH's version-specific type re-exports. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
+export interface StructuredQuery {
+  verb: string
+  id?: string
+  args?: JsonValue[]
+  kwargs?: Record<string,JsonValue>
+}
 import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 import {isExecutionContractCompatible} from './component-compatibility.js'
 
@@ -133,6 +139,10 @@ function normalizeBaseUrl(url: string): string {
 /** A call is pinned to one process and, for live work, one loaded scene. */
 export interface BridgeTargetExpectation { runtimeId?:string; sceneEpoch?:string }
 
+// These known older receipt and job-status endpoints still enforce the
+// original owner/runtime and return the same facts. They admit no new work.
+const previousReceiptVersions = new Set([120,121])
+
 export class HoudiniBridge {
   readonly baseUrl: string
 
@@ -167,6 +177,10 @@ export class HoudiniBridge {
     return this.checkContract(signal)
   }
 
+  async inspectReceiptRuntime(signal?:AbortSignal):Promise<BridgeHealth> {
+    return this.checkContract(signal,undefined,undefined,true)
+  }
+
   /** Observation must also reach old components so the UI can explain an
    * installation mismatch. It never grants permission to execute scene code. */
   async observeExecutor(signal?:AbortSignal):Promise<BridgeHealth> {
@@ -193,18 +207,26 @@ export class HoudiniBridge {
    *  owner is mandatory: every HTTP execution carries the Host session
    *  identity, the per-call id and a one-time Bridge-issued ticket. */
   async exec(code: string, owner: OwnershipScope, signal?: AbortSignal, allowRaw?: string, readOnly = false, script?:ScriptSource): Promise<ExecResult> {
+    return this.runExecution({code,...(allowRaw?{allow_raw:allowRaw}:{}),
+      ...(readOnly?{read_only:'true'}:{}),...(script?{script}:{})},owner,signal)
+  }
+
+  /** Data-only observations use the same admitted request and receipt route. */
+  async inspectQueries(queries:StructuredQuery[],owner:OwnershipScope,signal?:AbortSignal):Promise<ExecResult> {
+    if(!Array.isArray(queries)||queries.length<1||queries.length>16)throw Error('Provide 1..16 structured Houdini queries')
+    return this.runExecution({queries},owner,signal)
+  }
+
+  private async runExecution(payload:Record<string,unknown>,owner:OwnershipScope,signal?:AbortSignal):Promise<ExecResult> {
     assertOwnership(owner, 'Houdini execution')
     const { runtimeId, requestRef: ref } = await this.checkContract(signal, owner)
     const body: Record<string, unknown> = {
-      code,
+      ...payload,
       owner_session: owner.sessionId,
       owner_call: owner.callId,
       expected_contract: this.expectedContract(),
       request_ref: ref,
     }
-    if (allowRaw) body.allow_raw = allowRaw
-    if (readOnly) body.read_only = 'true'
-    if (script) body.script = script
     try {
       return await this.post<ExecResult>('/exec', body, signal)
     } catch (error) {
@@ -330,7 +352,7 @@ export class HoudiniBridge {
     return { version: EXPECTED_EXECUTION_CONTRACT_VERSION, hash: EXPECTED_VERB_CATALOG_HASH }
   }
 
-  private async checkContract(signal?: AbortSignal, owner?: OwnershipScope, requestKind?:'node_navigation'): Promise<BridgeHealth> {
+  private async checkContract(signal?: AbortSignal, owner?: OwnershipScope, requestKind?:'node_navigation', receiptRead=false): Promise<BridgeHealth> {
     // No cached handshake: the process can restart on the same port. Preparing
     // a ticket also returns the contract, so admission costs no extra round trip.
     const health = owner
@@ -345,7 +367,9 @@ export class HoudiniBridge {
     if (this.executorId && health.executorId !== this.executorId) {
       throw new Error('当前连接指向另一个 Houdini，本次操作没有发送到工程。请从要操作的 Houdini 中重新打开 Open Workspace；同时开着多个窗口时，请先确认插件由哪个窗口使用。\n技术信息：Houdini executor mismatch: no scene code was submitted. Do not automatically rebind by port/HIP path.')
     }
-    if (health.ok && isExecutionContractCompatible(health.executionContractVersion,actual?.hash)) {
+    const readablePreviousReceipt = receiptRead && this.expectedTarget?.runtimeId && !this.expectedTarget.sceneEpoch
+      && previousReceiptVersions.has(health.executionContractVersion!) && actual?.hash===EXPECTED_VERB_CATALOG_HASH
+    if (health.ok && (isExecutionContractCompatible(health.executionContractVersion,actual?.hash)||readablePreviousReceipt)) {
       if (owner && (typeof health.runtimeId !== 'string' || typeof health.requestRef !== 'string'
           || !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(health.requestRef)
           || !health.requestRef.startsWith(health.runtimeId + '.'))) {
@@ -377,16 +401,16 @@ export class HoudiniBridge {
    *  the call waits for a terminal state or the requested duration. Read-only
    *  status queries are split below Node fetch's 300s response-header timeout.
    *  Job control is authorized by the owning session, so the request carries
-   *  the current identity and expected contract; a non-HOM health check runs
+   *  the current identity and matched receipt contract; a non-HOM health check runs
    *  first so an old Bridge that ignores owner fields is rejected before any
    *  job state is read or changed (no ticket is prepared or code submitted). */
   async jobStatus(jobId: string, owner: OwnershipScope, wait?: number, signal?: AbortSignal): Promise<JobStatus> {
     assertOwnership(owner, 'Houdini job status')
-    await this.checkContract(signal)
+    const health=await this.inspectReceiptRuntime(signal)
     const body: Record<string, unknown> = {
       owner_session: owner.sessionId,
       owner_call: owner.callId,
-      expected_contract: this.expectedContract(),
+      expected_contract: {version:health.executionContractVersion,hash:health.verbCatalog?.hash},
       ...(this.expectedTarget?.runtimeId?{runtime_id:this.expectedTarget.runtimeId}:{}),
     }
     const route = `/jobs/${encodeURIComponent(jobId)}/status`
@@ -463,7 +487,7 @@ export class HoudiniBridge {
     if (ref !== 'index' && !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(ref)) throw new Error('request_ref must be index or an execution receipt returned by Houdini')
     assertOwnership(owner,'Houdini request status')
     // The historical connection is pinned to its original runtime, never the current scene.
-    if(this.expectedTarget?.runtimeId)await this.checkContract(signal)
+    if(this.expectedTarget?.runtimeId)await this.inspectReceiptRuntime(signal)
     return this.post('/requests/status',{request_ref:ref,owner_session:owner.sessionId},signal)
   }
 

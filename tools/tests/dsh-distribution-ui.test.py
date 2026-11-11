@@ -28,7 +28,7 @@ import winreg
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli
+from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli,read_desktop_debug_port
 reexec_unpacked_test_cli()
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
 from dsh_deployment import _process_started
@@ -38,8 +38,14 @@ parser.add_argument('--artifact',required=True,type=Path)
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--unpacked-app',type=Path,help='Unmodified official app extracted for development-carrier UI checks; excludes packaged protocol/update qualification')
 parser.add_argument('--electron-carrier',type=Path,help='Official Electron copy with default_app.asar and no app.asar; requires --unpacked-app')
-parser.add_argument('--update-from',type=Path,help='Actual public 0.1.6 tgz seeded disabled by the previous official CLI, then updated through the real native update button')
-parser.add_argument('--previous-desktop-root',type=Path,default=Path('D:/dshdesktop'))
+parser.add_argument('--update-from',type=Path,help='Frozen older tgz seeded as a registry dependency by the official CLI, then updated through the real native update button')
+parser.add_argument('--update-from-sha256',help='Required SHA256 of the exact frozen --update-from package')
+parser.add_argument('--seed-enabled',action='store_true',help='Ordinary same-host update from an already enabled frozen registry package')
+parser.add_argument('--failure-fixture',choices=['module-load','malformed-patch'],default='module-load',
+    help='Owned update fault: module import failure or invalid downloaded bundle patch')
+parser.add_argument('--diagnose-load-failure',action='store_true',
+    help='Separate diagnostic: retain an unexpected applied load failure and verify explicit native recovery; never qualifies automatic rollback')
+parser.add_argument('--previous-desktop-root',type=Path,help='Explicit seed host for a cross-host update; otherwise use --desktop-root')
 parser.add_argument('--migration-from',type=Path,help='Frozen compatible package seeded from a URL/file, migrated by the current official CLI at the same version, then updated by the native button to --artifact')
 parser.add_argument('--migration-source',type=str.lower,choices=['url','file'],help='Original dependency source for --migration-from')
 parser.add_argument('--migration-url',help='Actual HTTPS source tarball for a public-registry migration; absent with the owned loopback registry uses its exact frozen bytes')
@@ -48,7 +54,7 @@ parser.add_argument('--migration-direct',action='store_true',help='Migrate and u
 parser.add_argument('--output-dir',type=Path,help='New evidence subdirectory allocated by the output manager; otherwise use a fresh temporary directory')
 parser.add_argument('--expected-sha256')
 parser.add_argument('--remote-only',action='store_true',help='Directly validate the owned HTTP/UI lifecycle after a fixture-only change')
-parser.add_argument('--local-only',action='store_true',help='Verify the actual local Native UI/Agent/credential path after a UI-only change')
+parser.add_argument('--local-only',action='store_true',help='Verify native local installation, direct tutorial settings and credential storage; no model inference')
 parser.add_argument('--remote-url',help='Install this actual HTTPS tarball URL through the native remote UI stage')
 parser.add_argument('--npm',action='store_true',help='Install the frozen artifact name@version through the native package-name UI')
 parser.add_argument('--npm-unversioned',action='store_true',help='With --npm, type the bare package name while still requiring the frozen artifact version and bytes')
@@ -56,8 +62,17 @@ parser.add_argument('--registry',help='Use only this registry in the owned profi
 parser.add_argument('--timeout',type=int,default=240)
 args=parser.parse_args()
 assert not (args.remote_only and args.local_only)
-if args.update_from and (not args.unpacked_app or args.remote_only or args.local_only or args.npm or args.remote_url or args.registry or args.migration_from):
-    parser.error('--update-from requires the unpacked carrier and its owned registry stage only')
+if args.update_from:
+    if args.remote_only or args.local_only or args.npm or args.remote_url or args.registry or args.migration_from:
+        parser.error('--update-from uses its dedicated owned registry stage only')
+    if not args.update_from_sha256 or not re.fullmatch(r'[0-9a-f]{64}',args.update_from_sha256):
+        parser.error('--update-from requires the exact frozen --update-from-sha256')
+elif args.update_from_sha256 or args.previous_desktop_root:
+    parser.error('--update-from-sha256 and --previous-desktop-root require --update-from')
+if args.seed_enabled and not args.update_from:
+    parser.error('--seed-enabled requires --update-from')
+if args.diagnose_load_failure and (not args.update_from or args.failure_fixture!='module-load'):
+    parser.error('--diagnose-load-failure requires --update-from and --failure-fixture module-load')
 if args.migration_from:
     if not args.migration_source or args.remote_only or args.local_only or args.npm or args.remote_url or args.update_from:
         parser.error('--migration-from requires --migration-source url|file and its dedicated migration stages')
@@ -88,22 +103,24 @@ with tarfile.open(artifact,'r:gz') as archive:
 npm_spec=(package['name'] if args.npm_unversioned else package['name']+'@'+package['version']) if args.npm else None
 previous_artifact=args.update_from.resolve(strict=True) if args.update_from else None
 migration_artifact=args.migration_from.resolve(strict=True) if args.migration_from else None
+def stable_version(value):
+    assert re.fullmatch(r'\d+\.\d+\.\d+',value),'Use stable frozen package versions for the migration/update path'
+    return tuple(map(int,value.split('.')))
 if migration_artifact:
     with tarfile.open(migration_artifact,'r:gz') as archive:migration_package=json.load(archive.extractfile('package/package.json'))
     assert migration_package['name']==package['name']=='dsh-houdini'
     if not args.migration_cli_only or args.migration_direct:
-        def stable_version(value):
-            assert re.fullmatch(r'\d+\.\d+\.\d+',value),'Use genuine stable frozen releases for the migration/update path'
-            return tuple(map(int,value.split('.')))
         assert stable_version(package['version'])>stable_version(migration_package['version']),'The actual native update needs a strictly newer frozen release'
 if previous_artifact:
     with tarfile.open(previous_artifact,'r:gz') as archive:previous_package=json.load(archive.extractfile('package/package.json'))
-    assert previous_package['name']==package['name']=='dsh-houdini' and previous_package['version']=='0.1.6'
+    assert previous_package['name']==package['name']=='dsh-houdini'
+    assert stable_version(package['version'])>stable_version(previous_package['version']),'The native update requires a strictly newer frozen candidate'
     with previous_artifact.open('rb') as stream:
-        previous_integrity='sha512-'+base64.b64encode(hashlib.file_digest(stream,'sha512').digest()).decode()
-    assert previous_integrity=='sha512-d2BJMGCZEM6k+c8d4xJVdLeCNXj2zRNJ4+b+LjQF3CLnl90mtQkuCJAI8/Yy13fw8SDLH9SqNRegsIVmxVgLsQ==', (
-        'Use the actual public npm 0.1.6 bytes, not a same-version local build')
+        assert hashlib.file_digest(stream,'sha256').hexdigest()==args.update_from_sha256,'Frozen update seed SHA256 mismatch'
 desktop=args.desktop_root.resolve(strict=True)
+seed_desktop=args.previous_desktop_root.resolve(strict=True) if args.previous_desktop_root else desktop
+if args.seed_enabled and seed_desktop!=desktop:
+    parser.error('--seed-enabled qualifies same-host updates only; keep the cross-host seed disabled')
 electron=desktop/'DeepSeek Harness.exe'
 unpacked=args.unpacked_app.resolve(strict=True) if args.unpacked_app else None
 if bool(unpacked)!=bool(args.electron_carrier):parser.error('--unpacked-app and --electron-carrier must be supplied together')
@@ -119,6 +136,9 @@ if unpacked:
 app_package=unpacked/'package.json' if unpacked else desktop/'resources/app.asar/package.json'
 dsh_package=unpacked/'dsh/node_modules/@deepseek-ai/dsh/package.json' if unpacked else desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json'
 fixture=args.output_dir.resolve() if args.output_dir else Path(tempfile.mkdtemp(prefix='dsh-distribution-ui-'))
+for parent in (fixture,*fixture.parents):
+    if (parent/'package.json').is_file():
+        parser.error('Native fixture must be outside every Node package ancestor; use the default temporary directory and copy reports to the evidence batch afterwards')
 if args.output_dir:fixture.mkdir(parents=True,exist_ok=False)
 env={name.upper():value for name,value in isolated_environment(fixture,gui=True).items()}
 for name,relative in {'APPDATA':'appdata','LOCALAPPDATA':'localappdata','TEMP':'temp','TMP':'temp',
@@ -145,6 +165,13 @@ def digest(file):
     with Path(file).open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 
+def frozen_runtime_hashes(file):
+    with tarfile.open(file,'r:gz') as archive:
+        return {name:hashlib.sha256(archive.extractfile('package/'+name).read()).hexdigest()
+            for name in ('lib/frontend-host.js','lib/executor-host.js','lib/desktop-integration.js',
+                         'lib/scene-context.js','lib/scene-recovery.js')}
+
+
 def registry_tree(key):
     values={};children={};index=0
     while True:
@@ -168,14 +195,15 @@ def protocol_hash():
     choice=tree(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\dsh\UserChoice')
     user=tree(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh')
     effective=tree(winreg.HKEY_CLASSES_ROOT,'dsh')
+    snapshot={'user':user,'effective':effective,'choice':choice}
+    # A mismatched post-run handler must still leave its complete raw values.
+    (fixture/'protocol-current.json').write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding='utf-8')
     if not unpacked and not args.migration_cli_only:
         assert choice is None,'Refusing packaged launch with a user-chosen dsh protocol handler'
         expected='"'+str(electron)+'" "%1"'
         for root,path in [(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh\shell\open\command'),(winreg.HKEY_CLASSES_ROOT,r'dsh\shell\open\command')]:
             with winreg.OpenKey(root,path) as key:
                 assert winreg.QueryValueEx(key,'')[0]==expected,'Refusing packaged launch with a different dsh handler'
-    snapshot={'user':user,'effective':effective,'choice':choice}
-    (fixture/'protocol-current.json').write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding='utf-8')
     return hashlib.sha256(json.dumps(snapshot,sort_keys=True).encode()).hexdigest()
 
 
@@ -300,30 +328,51 @@ def wait_until(read,seconds,label):
     raise AssertionError('Timed out: '+label)
 
 
+def check_frozen_compatibility(manifest,host,label):
+    """Use the selected official host's own compatibility contract, without exemptions."""
+    script=fixture/'check-frozen-compatibility.mjs'
+    script.write_text("import fs from 'node:fs';import{createRequire}from'node:module';import{pathToFileURL}from'node:url';"
+        "const require=createRequire(process.argv[2]);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));"
+        "const manifest=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),runtime=boot.getDshRuntimeVersion();"
+        "if(!['0.2.1-rc.5','0.2.2-rc.1'].includes(runtime))throw Error('Unqualified official fixture host: '+runtime);"
+        "const issue=boot.evaluatePluginCompatibility(manifest);"
+        "if(issue)throw Error('Frozen package is incompatible with the selected official host; choose --previous-desktop-root for an older seed: '+JSON.stringify(issue));"
+        "console.log(JSON.stringify({runtime,package:manifest.name,version:manifest.version,compatible:true}));",encoding='utf-8')
+    metadata=fixture/(label+'-package-manifest.json')
+    metadata.write_text(json.dumps(manifest),encoding='utf-8')
+    binary=host/'DeepSeek Harness.exe'
+    anchor=host/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json'
+    result=run([binary,script,anchor,metadata])
+    facts=json.loads(result.stdout.decode('utf-8-sig'))
+    (fixture/(label+'-compatibility.json')).write_text(json.dumps(facts,indent=2),encoding='utf-8')
+    return facts
+
+
 def init_empty_profile():
-    seed_desktop=args.previous_desktop_root.resolve(strict=True) if previous_artifact else desktop
     seed_electron=seed_desktop/'DeepSeek Harness.exe'
     seed_package=seed_desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/package.json' if previous_artifact else dsh_package
+    env['ELECTRON_RUN_AS_NODE']='1'
+    report['candidateCompatibility']=check_frozen_compatibility(package,desktop,'candidate')
+    seed_compatibility=check_frozen_compatibility(previous_package,seed_desktop,'seed') if previous_artifact else report['candidateCompatibility']
+    if previous_artifact:report['seedCompatibility']=seed_compatibility
     script=fixture/'init-profile.mjs'
-    templates="boot.PROFILE_TEMPLATES" if previous_artifact else "(await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-official-bundles')))).PROFILE_TEMPLATES"
+    templates="boot.PROFILE_TEMPLATES" if seed_compatibility['runtime']=='0.2.1-rc.5' else "(await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-official-bundles')))).PROFILE_TEMPLATES"
     script.write_text("import {createRequire} from 'node:module';import {pathToFileURL} from 'node:url';"
         "const require=createRequire(process.argv[2]);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));"
-        +("if(boot.getDshRuntimeVersion()!=='0.2.1-rc.5')throw Error('Seed only the verified previous official rc.5');" if previous_artifact else "")+
-        ("if(boot.getDshRuntimeVersion()!=='0.2.2-rc.1')throw Error('Source migration requires the verified current official 0.2.2-rc.1');" if migration_artifact else "")+
         "boot.initProfile(process.argv[3],"+templates+".web.bundles);",encoding='utf-8')
-    env['ELECTRON_RUN_AS_NODE']='1'
     run([seed_electron,script,seed_package,profile])
     if previous_artifact:
         entry=seed_desktop/'resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
         seeded=run([seed_electron,'--expose-internals',entry,'plugin','--profile','desktop','add',
             'dsh-houdini@'+previous_package['version'],'--registry',base,'--store-dir',Path(env['PNPM_HOME'])/'store'])
         (fixture/'previous-official-cli.log').write_bytes(seeded.stdout+seeded.stderr)
-        disable=fixture/'disable-previous-official.mjs'
-        disable.write_text("import fs from 'node:fs';import{createRequire}from'node:module';import{pathToFileURL}from'node:url';"
-            "const r=createRequire(process.argv[2]);const boot=await import(pathToFileURL(r.resolve('@deepseek-ai/dsh-app-boot')));"
-            "const dir=process.argv[3],manifest=JSON.parse(fs.readFileSync(dir+'/package.json','utf8'));"
-            "const selected=manifest.dsh.profile.bundles;boot.writeProfileBundles(dir,manifest,selected.filter(name=>name!=='dsh-houdini'));",encoding='utf-8')
-        run([seed_electron,disable,seed_package,profile])
+        if not args.seed_enabled:
+            disable=fixture/'disable-previous-official.mjs'
+            disable.write_text("import fs from 'node:fs';import{createRequire}from'node:module';import{pathToFileURL}from'node:url';"
+                "const r=createRequire(process.argv[2]);const boot=await import(pathToFileURL(r.resolve('@deepseek-ai/dsh-app-boot')));"
+                "const dir=process.argv[3],manifest=JSON.parse(fs.readFileSync(dir+'/package.json','utf8'));"
+                "const selected=manifest.dsh.profile.bundles;boot.writeProfileBundles(dir,manifest,selected.filter(name=>name!=='dsh-houdini'));",encoding='utf-8')
+            run([seed_electron,disable,seed_package,profile])
     if migration_artifact:
         seeded=official_cli(['add',migration_source_spec,'--save-exact','--registry',migration_registry,
             '--store-dir',Path(env['PNPM_HOME'])/'store'])
@@ -337,7 +386,7 @@ def init_empty_profile():
     env.pop('ELECTRON_RUN_AS_NODE',None)
     manifest=json.loads((profile/'package.json').read_text(encoding='utf-8'))
     assert ('dsh-houdini' in manifest.get('dependencies',{}))==bool(previous_artifact or migration_artifact)
-    assert 'dsh-houdini' not in manifest.get('dsh',{}).get('profile',{}).get('bundles',[])
+    assert ('dsh-houdini' in manifest.get('dsh',{}).get('profile',{}).get('bundles',[]))==args.seed_enabled
     patch=('- id: workspace-controller\n  config:\n    documentsDirectory: '+json.dumps(str(fixture/'documents'))+'\n'
         '- id: llm-pi-ai\n  config:\n    providers:\n      owned-distribution-chat:\n'
         '        api: openai-completions\n        baseURL: '+json.dumps(base+'/v1/')+'\n'
@@ -425,7 +474,8 @@ def endpoints():
         text=log.read_text(encoding='utf-8',errors='replace')
         main=re.search(r'Debugger listening on (ws://127\.0\.0\.1:\d+/[^\s]+)',text)
         file=user_data/'DevToolsActivePort'
-        if main and file.exists():return {'mainInspector':main.group(1),'port':int(file.read_text().splitlines()[0])}
+        port=read_desktop_debug_port(file,text)
+        if main and port:return {'mainInspector':main.group(1),'port':port}
     return wait_until(read,args.timeout,'owned Native inspectors')
 
 
@@ -468,7 +518,8 @@ if previous_artifact:
         'main':'lib/broken.js','exports':{'.':'./lib/broken.js'},'engines':package['engines'],
         'dsh':{'bundle':{'patch':['./broken.patch.yml']}}}
     with tarfile.open(broken,'w:gz') as archive:
-        for name,text in {'package.json':json.dumps(broken_manifest),'broken.patch.yml':'- insert:\n    - id: owned-update-failure\n      name: dsh-houdini\n',
+        for name,text in {'package.json':json.dumps(broken_manifest),'broken.patch.yml':
+                '- insert: [\n' if args.failure_fixture=='malformed-patch' else '- insert:\n    - id: owned-update-failure\n      name: dsh-houdini\n',
                 'lib/broken.js':'throw new Error("Owned update failure fixture; not a product release")\n'}.items():
             data=text.encode();info=tarfile.TarInfo('package/'+name);info.size=len(data);archive.addfile(info,io.BytesIO(data))
     registry_files['/broken-fixture.tgz']=broken
@@ -484,17 +535,20 @@ remote_spec=npm_spec or args.remote_url or base+'/dsh-houdini.tgz'
 threading.Thread(target=server.serve_forever,daemon=True).start()
 immutable={str(file):digest(file) for file in [electron,desktop/'resources/app.asar',desktop/'resources/runtime/versions.json']}
 if previous_artifact:
-    previous_desktop=args.previous_desktop_root.resolve(strict=True)
+    previous_desktop=seed_desktop
     immutable.update({str(file):digest(file) for file in [previous_desktop/'DeepSeek Harness.exe',
         previous_desktop/'resources/app.asar',previous_desktop/'resources/runtime/versions.json']})
 report={'fixture':str(fixture),'artifactSha256':digest(copied),'nativeElectronWindowTested':False,'nativeProfile':'desktop',
-    'installedByNativeUi':False,'cliPluginInstallUsed':False,'chatModel':'owned scripted loopback provider',
+    'installedByNativeUi':False,'cliPluginInstallUsed':False,'configuredChatModel':'owned scripted loopback provider',
+    'realModelInferenceTested':False,
     'remoteDistribution':'published npm package installed by native UI' if args.npm else 'explicit HTTPS tarball installed by native UI' if args.remote_url else 'owned HTTP tarball mechanism only; no npm/GitHub publication claim',
     'remoteInstallSpec':remote_spec,'requestedRegistry':args.registry,'immutable':immutable}
 report['carrierMode']='official-unpacked-development' if unpacked else 'official-packaged'
 report['packagedProtocolAndUpdaterQualified']=False
 if previous_artifact:
-    report.update(seededByPreviousOfficialCli=True,cliPluginInstallUsed=True,previousArtifactSha256=digest(previous_artifact),
+    report.update(seededByOfficialCli=True,seedDesktopRoot=str(seed_desktop),crossHostUpdate=seed_desktop!=desktop,
+        cliPluginInstallUsed=True,previousArtifactSha256=digest(previous_artifact),seedEnabled=args.seed_enabled,
+        failureFixture=args.failure_fixture,diagnosticOnly=args.diagnose_load_failure,
         remoteDistribution='owned loopback registry update and failure-recovery mechanism; no public publication claim')
 if migration_artifact:
     report.update(cliPluginInstallUsed=True,migrationSource=args.migration_source,migrationSourceSpec=migration_source_spec,
@@ -535,7 +589,12 @@ try:
             'appPackage':str(app_package),'expectedPackaged':not bool(unpacked),
             'asrEndpoint':asr_endpoint,'sentinel':sentinel,
             'remoteOnly':mode in ['remote','update','migration-before','migration-after'],'expectedPid':process.pid,'timeoutMs':args.timeout*1000,'output':str(stage/'ui-result.json'),**endpoint}
-        if previous_artifact:settings.update(updateFromVersion=previous_package['version'],updateRegistry=base,brokenVersion=broken_version)
+        if previous_artifact:settings.update(updateFromVersion=previous_package['version'],updateRegistry=base,expectedRegistry=base,brokenVersion=broken_version,
+            failureFixture=args.failure_fixture,diagnoseLoadFailure=args.diagnose_load_failure,
+            seedEnabled=args.seed_enabled,runtimeDescriptor=str(home/'dsh-houdini/desktop.json'),
+            installedPackageRoot=str(profile/'node_modules/dsh-houdini'),
+            seedRuntimeHashes=frozen_runtime_hashes(previous_artifact),candidateRuntimeHashes=frozen_runtime_hashes(copied),
+            updateState=str(fixture/'update-native-state.json'),updateWorkspace=str(fixture/'documents'))
         if migration_artifact:settings.update(migrationPhase='before' if mode=='migration-before' else 'after',
             migrationVersion=migration_package['version'],migrationSource=args.migration_source,migrationSourceSpec=migration_source_spec,
             migrationDirect=args.migration_direct,
@@ -571,7 +630,12 @@ try:
     if migration_artifact:
         report['migratedByOfficialCli']='migrationCli' in report
         report['nativeVersionsUiLatest']=any(stage.get('nativeVersionsUiLatest') is True for stage in report['ui'].values())
-    if previous_artifact:assert report['updatedByNativeUi'],'The consumer did not observe the real Native update button path'
+    if previous_artifact:
+        assert report['updatedByNativeUi'],'The consumer did not observe the real Native update button path'
+        assert report['ui']['update'].get('updateStatePreserved') is True,'The original native session was not verified after update and failure restoration'
+        report['automaticUpdateRecoveryQualified']=report['ui']['update'].get('automaticFailureRecoveryVerified') is True
+        if not args.diagnose_load_failure:
+            assert report['automaticUpdateRecoveryQualified'],'Automatic rollback was not verified'
     if migration_artifact and not args.migration_cli_only:
         assert report['ui']['migration-after'].get('migrationStatePreserved') is True
         if args.migration_direct:
@@ -580,12 +644,14 @@ try:
     assert server_facts['asrRequests']==0 and not server_facts['errors'],server_facts
     if not (previous_artifact or migration_artifact) and not args.local_only and not args.remote_url and not args.npm:assert server_facts['tarballGets']>0,server_facts
     assert server_facts['sentinelAbsentFromModel'],server_facts
-    if not args.remote_only and not migration_artifact:assert server_facts['chatRequests']==0 and not server_facts['toolCalls'],server_facts
+    if not args.remote_only and not migration_artifact and not previous_artifact:
+        assert server_facts['chatRequests']==0 and not server_facts['toolCalls'],server_facts
     assert protocol_hash()==baseline and {file:digest(file) for file in immutable}==immutable
-    report.update(ok=True,normalExitCode=process.returncode if process else None,loopback=server_facts,desktopInstallationAndProtocolUnchanged=True)
+    report.update(ok=True,normalExitCode=process.returncode if process else None,loopback=server_facts,
+        scriptedModelInferenceTested=server_facts['chatRequests']>0,desktopInstallationAndProtocolUnchanged=True)
     remote_label='npm package' if args.npm else 'HTTPS tarball' if args.remote_url else 'HTTP tarball'
-    print(('PASS official CLI source migration only; GUI/session/button not tested' if args.migration_cli_only else 'PASS public CLI direct upgrade and actual Native Versions up-to-date UI; no button update claimed' if migration_artifact and args.migration_direct and args.registry else 'PASS CLI direct upgrade and actual Native Versions up-to-date UI; no public/button claim' if migration_artifact and args.migration_direct else 'PASS Native source eligibility, official CLI migration and real update button with original session/settings preserved' if migration_artifact else 'PASS Native update button from actual disabled registry 0.1.6 and API failed-fixture restoration' if previous_artifact else 'PASS Native local tarball UI + real Agent/credentials' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
-        'PASS Native UI local tgz + real tutorial Agent/credentials + '+remote_label+' distribution/lifecycle')+': '+str(fixture),flush=True)
+    print(('DIAGNOSTIC Native module-load update and explicit recovery; automatic rollback is not qualified' if args.diagnose_load_failure else 'PASS official CLI source migration only; GUI/session/button not tested' if args.migration_cli_only else 'PASS public CLI direct upgrade and actual Native Versions up-to-date UI; no button update claimed' if migration_artifact and args.migration_direct and args.registry else 'PASS CLI direct upgrade and actual Native Versions up-to-date UI; no public/button claim' if migration_artifact and args.migration_direct else 'PASS Native source eligibility, official CLI migration and real update button with original session/settings preserved' if migration_artifact else 'PASS Native update button from frozen registry '+previous_package['version']+' and '+args.failure_fixture+' failed-fixture restoration; owned registry only' if previous_artifact else 'PASS Native local tarball UI + direct settings/credentials; no model inference' if args.local_only else 'PASS Native '+remote_label+' UI install/disable/re-enable/uninstall' if args.remote_only else
+        'PASS Native UI local tgz + direct tutorial settings/credentials + '+remote_label+' distribution/lifecycle; no model inference')+': '+str(fixture),flush=True)
 except BaseException as error:
     report['error']=repr(error);raise
 finally:
@@ -602,8 +668,11 @@ finally:
     if 'protocolSha256Before' in report:
         try:
             report['protocolUnchangedAfterCleanup']=protocol_hash()==baseline
-            shutil.copy2(fixture/'protocol-current.json',fixture/'protocol-after.json')
             report['desktopInstallationUnchangedAfterCleanup']={file:digest(file) for file in immutable}==immutable
+            assert report['protocolUnchangedAfterCleanup'],'Global dsh protocol values changed during cleanup'
+            assert report['desktopInstallationUnchangedAfterCleanup'],'Official Desktop installation changed during cleanup'
         except Exception as error:report['isolationVerificationError']=repr(error);report['ok']=False
+        finally:
+            if (fixture/'protocol-current.json').exists():shutil.copy2(fixture/'protocol-current.json',fixture/'protocol-after.json')
     (fixture/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     assert 'isolationVerificationError' not in report,report.get('isolationVerificationError')

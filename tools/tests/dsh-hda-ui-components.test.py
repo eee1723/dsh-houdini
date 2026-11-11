@@ -44,7 +44,7 @@ __result__=hda_create(n,{'dsh_ui::'+name+'::1.0'!r},hda_file={str(library)!r})
         n=hou.node(path); nodes.append(n)
         original=library.read_bytes()
         preview=run(f'__result__=hda_set_interface({path!r},layout={layout!r},keep_std=False,dry_run=True)')
-        assert preview['transaction']['status']=='no_scene_change'
+        assert preview['transaction']['status']=='effects_unverified' and preview['transaction']['source_executed'] is True
         assert library.read_bytes()==original
         assert not preview['result']['ui_analysis']['issues'], preview['result']['ui_analysis']
         result=run(f'__result__=hda_set_interface({path!r},layout={layout!r},keep_std=False)')['result']

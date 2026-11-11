@@ -456,6 +456,12 @@ def _apply_parameter_patch(p, plan):
     return {'parm': p.name(), 'patch': plan['evidence'], 'value_omitted': True}
 
 
+def _validate_snippet_source(node, name, value):
+    if name == 'snippet' and isinstance(value, str) and 'wrangle' in node.type().name():
+        from dsh_cook_control import validate_vex
+        validate_vex(value)
+
+
 def set_parm(node, name: str, value,
              allow_foreign: str | None = None) -> dict:
     """设参；numeric string 是表达式，Menu string 是精确 token。
@@ -475,9 +481,7 @@ def set_parm(node, name: str, value,
     """
     n = dsh_node_access._resolve(node)
     dsh_ownership.require_owned(n, "set_parm", allow_foreign)
-    if name == 'snippet' and isinstance(value, str) and 'wrangle' in n.type().name():
-        from dsh_cook_control import validate_vex
-        validate_vex(value)
+    _validate_snippet_source(n, name, value)
     p = n.parm(name)
     targets = (p,) if p is not None else n.parmTuple(name)
     is_patch = isinstance(value, dict) and ('patch' in value or 'source' in value)
@@ -560,7 +564,7 @@ def _expression_evaluation(p, value, language, previous_errors=()):
         'scope':'last parameter evaluation; tuple warnings may concern a sibling, node diagnostics may predate this write; no geometry cook or effect validation'}
 
 
-def _set_expression(p, expression, language):
+def _set_expression(p, expression, language, *, readback=True):
     previous_errors=tuple(str(e) for e in p.node().errors())
     try:
         _clear_animation(p)
@@ -569,6 +573,13 @@ def _set_expression(p, expression, language):
         raise dsh_errors.CheckpointError(f'expression write failed at {p.path()} ({language}): {error}',
             {'ok':False,'node':p.node().path(),'parm':p.name(),'expression':expression,'language':language,
              'failure_stage':'write','write_status':'failed','evaluation':{'status':'not_run'},'effect_status':'unverified'}) from error
+    if not readback:
+        return {'parm':p.name(),'expression':expression,'language':language,'_previous_errors':previous_errors}
+    return _evaluate_written_expression(p, expression, language, previous_errors)
+
+
+def _evaluate_written_expression(p, expression, language, previous_errors):
+    """Evaluate once at the caller's readback boundary; do not rewrite the channel."""
     try:
         value=p.eval()
         evaluation=_expression_evaluation(p,value,language,previous_errors)
@@ -585,7 +596,7 @@ def _set_expression(p, expression, language):
 
 
 def _set_parm_impl(node, name: str, value,
-                   allow_foreign: str | None = None) -> dict:
+                   allow_foreign: str | None = None, *, readback=True) -> dict:
     """设参数（组件名或元组名均可）；失败时列出相似参数名供自纠。
 
     数值型参数收到字符串值时按**表达式**处理（H21/H22 实测 ``Parm.set(str)``
@@ -605,7 +616,7 @@ def _set_parm_impl(node, name: str, value,
             language = value.get("language", "hscript")
             if language not in ("hscript", "python"):
                 raise ValueError("expression language 必须为 hscript/python")
-            return _set_expression(p,value['expression'],language)
+            return _set_expression(p,value['expression'],language,readback=readback)
         # Menu tokens are not expressions. Do not let an invalid token silently
         # evaluate to 0 or leave an animated parameter with its keys deleted.
         tpl = p.parmTemplate()
@@ -618,7 +629,8 @@ def _set_parm_impl(node, name: str, value,
                                     bitmask=dsh_parameter_templates._menu_kind(tpl) == 'toggle_strip')
             cleared = _clear_animation(p)
             p.set(setting)
-            return {"parm": p.name(), "value": dsh_node_access._val(p.eval()), "menu_token": p.evalAsString(),
+            return {"parm": p.name(),
+                    **({"value":dsh_node_access._val(p.eval()),"menu_token":p.evalAsString()} if readback else {}),
                     **({"note": f"cleared {cleared}"} if cleared else {})}
         if tpl.type() in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
             _validate_numeric_parameter_value(value)
@@ -629,10 +641,10 @@ def _set_parm_impl(node, name: str, value,
             except Exception:
                 pass
             if tpl_type in (hou.parmTemplateType.Int, hou.parmTemplateType.Float):
-                return _set_expression(p,value,'hscript')
+                return _set_expression(p,value,'hscript',readback=readback)
         cleared = _clear_animation(p)
         p.set(value)
-        out = {"parm": p.name(), "value": dsh_node_access._val(p.eval())}
+        out = {"parm": p.name(), **({"value": dsh_node_access._val(p.eval())} if readback else {})}
         if cleared:
             out["note"] = f"cleared {cleared}"
         return out
@@ -646,7 +658,7 @@ def _set_parm_impl(node, name: str, value,
                 _validate_numeric_parameter_value(value, [p.name() for p in pt])
             cleared = [c for pp in pt for c in [_clear_animation(pp)] if c]
             pt.set(value)
-            out = {"parm": pt.name(), "value": [dsh_node_access._val(v) for v in pt.eval()]}
+            out = {"parm": pt.name(), **({"value": [dsh_node_access._val(v) for v in pt.eval()]} if readback else {})}
             if cleared:
                 out["note"] = f"cleared {', '.join(cleared)}"
             return out
@@ -667,7 +679,8 @@ def set_parms(node, values: dict,
               allow_foreign: str | None = None, strict: bool = True) -> dict:
     """批量设参：``{name: value}`` 逐项走 ``set_parm`` 同一套语义（含表达式/关键帧清除）。
 
-    默认 strict：预检参数名，失败恢复本批参数（含表达式/关键帧）并抛错。
+    默认 strict：预检参数名，全批写完后按请求顺序回读，失败恢复本批参数（含表达式/关键帧）并抛错。
+    readback_timing=after_batch_writes；不先逐项求值再重读表达式，不保证后续cook/表达式副作用后的值。
     multiparm数量包含其全部嵌套实例快照；恢复后回读实例结构、值、keys与锁定状态。
     ``strict=False`` 仅用于明确允许部分成功的诊断/恢复，返回 ``ok/set/failed``。
     参数回调的外部副作用不能靠参数快照回滚，复杂批次仍需 Bridge undo 事务。
@@ -705,29 +718,52 @@ def set_parms(node, values: dict,
                     raise dsh_errors.ParameterPatchError(f'{key}: patch requires a scalar string parameter', n.path())
                 patch_plans[key] = _prepare_parameter_patch(parm, value)
     done, failed, notes, evaluations = {}, {}, {}, {}
-    for key, value in values.items():
+    def collect(r):
+        done[r["parm"]] = r['patch'] if 'patch' in r else r.get("value", r.get("expression"))
+        if "note" in r:notes[r["parm"]] = r["note"]
+        if 'evaluation' in r:evaluations[r['parm']]=r['evaluation']
+    if strict:
+        phase = 'parameter_write'
         try:
-            r = (_apply_parameter_patch(n.parm(key), patch_plans[key]) if key in patch_plans
-                 else set_parm(n, key, value, allow_foreign=allow_foreign))
-            done[r["parm"]] = r['patch'] if 'patch' in r else r.get("value", r.get("expression"))
-            if "note" in r:
-                notes[r["parm"]] = r["note"]
-            if 'evaluation' in r:evaluations[r['parm']]=r['evaluation']
-        except Exception as e:
-            failed[key] = str(e)
-            if strict:
-                restore_errors = _restore_parameters(snapshots)
-                if isinstance(e,dsh_errors.CheckpointError):
-                    e.evidence.update({'restored':not restore_errors, 'restore_errors':restore_errors,
-                                       'batch_parameter_state_restored':not restore_errors,
-                                       'batch_restore_errors':restore_errors,'write_status':'restored' if not restore_errors else 'recovery_unverified',
-                                       'restoration_scope':'all snapshotted parameters in this batch; callbacks, cooks and external side effects are separate'})
-                    raise
-                raise dsh_errors.CheckpointError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}",
-                    {'ok':False, 'node':n.path(), 'phase':'parameter_write',
-                     'restored':not restore_errors, 'restore_errors':restore_errors,
-                     'restoration_scope':'all snapshotted parameters in this batch; callbacks, cooks and external side effects are separate'}) from e
-    out = {"node": n.path(), "ok": not failed, "set": done}
+            written = []
+            for key, value in values.items():
+                _validate_snippet_source(n, key, value)
+                written.append(_apply_parameter_patch(n.parm(key), patch_plans[key]) if key in patch_plans
+                    else _set_parm_impl(n, key, value, allow_foreign, readback=False))
+            phase = 'parameter_readback'
+            for r in written:
+                key = r['parm']
+                if 'patch' not in r:
+                    p = n.parm(key)
+                    pt = None if p is not None else n.parmTuple(key)
+                    if p is None and pt is None:
+                        raise ValueError(f'{n.path()}: parameter {key!r} no longer exists after batch writes')
+                    if 'expression' in r:
+                        r = _evaluate_written_expression(p, r['expression'], r['language'], r['_previous_errors'])
+                    elif p is not None:
+                        r['value'] = dsh_node_access._val(p.eval())
+                    else:
+                        r['value'] = [dsh_node_access._val(v) for v in pt.eval()]
+                collect(r)
+        except BaseException as e:
+            restore_errors = _restore_parameters(snapshots)
+            if isinstance(e,dsh_errors.CheckpointError):
+                e.evidence.update({'restored':not restore_errors, 'restore_errors':restore_errors,
+                                   'batch_parameter_state_restored':not restore_errors,
+                                   'batch_restore_errors':restore_errors,'write_status':'restored' if not restore_errors else 'recovery_unverified',
+                                   'restoration_scope':'all snapshotted parameters in this batch; callbacks, cooks and external side effects are separate'})
+                raise
+            if not isinstance(e, Exception):raise
+            raise dsh_errors.CheckpointError(f"set_parms failed at {key!r}: {e}; parameter_restore_errors={restore_errors}",
+                {'ok':False, 'node':n.path(), 'phase':phase,
+                 'restored':not restore_errors, 'restore_errors':restore_errors,
+                 'restoration_scope':'all snapshotted parameters in this batch; callbacks, cooks and external side effects are separate'}) from e
+    else:
+        for key, value in values.items():
+            try:collect(set_parm(n, key, value, allow_foreign=allow_foreign))
+            except Exception as e:failed[key] = str(e)
+    out = {"node": n.path(), "ok": not failed, "set": done,
+           'readback_timing':'after_batch_writes' if strict else 'after_each_write'}
     if patch_plans:
         out['patched'] = list(patch_plans)
     if notes:

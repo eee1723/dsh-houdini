@@ -41,7 +41,7 @@ def require_task_source(record, owner, executors):
     if not known.intersection(sources(record)):
         raise RuntimeError('保存点来自另一任务执行端，不能按目录或文件名恢复。')
     if any(row.get('source_executor', record['executor_id']) not in known
-           for row in record['nodes'] if row['owner']['session'] == owner):
+           for row in [*record['nodes'], *record.get('notes', []), *record.get('boxes', [])] if row['owner']['session'] == owner):
         raise RuntimeError('保存点中此任务的节点来源与对话记录不一致，未授予修改权。')
 
 

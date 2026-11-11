@@ -144,7 +144,7 @@ async function resultDocument(workspace:string|null,ref:string,retainedPath?:str
   return JSON.parse(bytes.toString('utf8'))
 }
 
-function pointerKeys(pointer:string):string[] {
+export function pointerKeys(pointer:string):string[] {
   if (typeof pointer !== 'string' || pointer.length > 2048 || (pointer !== '' && !pointer.startsWith('/'))) {
     throw new Error('pointer must be an empty string or JSON Pointer beginning with /')
   }
@@ -154,7 +154,7 @@ function pointerKeys(pointer:string):string[] {
   })
 }
 
-function pointerValue(document:unknown,keys:string[]):unknown {
+export function pointerValue(document:unknown,keys:string[]):unknown {
   let selected=document
   for (const key of keys) {
     if (selected === null || typeof selected !== 'object' || !Object.hasOwn(selected, key)

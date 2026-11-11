@@ -718,6 +718,10 @@ const quality=collectQualityLoopEvidence({steps:[builtCheckpoint,controlCheckpoi
 assert.equal(quality.outputCheckpoints.length,1);
 assert.equal(collectQualityLoopEvidence({steps:[{...builtCheckpoint,transaction:{status:'rolled_back'}}]}).outputCheckpoints.length,0,
   'a successful build later rolled back is not current output evidence');
+const boundedNodeSummary={index:2,tool:'job_output',failed:false,
+  transaction:{status:'committed',nodes:{count:64,detail_pointer:'/transaction/nodes'}},verbs:[]};
+assert.equal(collectQualityLoopEvidence({steps:[builtCheckpoint,boundedNodeSummary]}).outputCheckpoints.length,1,
+  'a bounded node-count summary is not a per-node removal record and must remain analyzable');
 assert.deepEqual(quality.relations.probeSteps,[1]);
 assert.equal(quality.perturbation.controlTests.length,1);
 assert.ok(!qualityLoopRisks(quality).some(r=>r.code==='procedural_control_not_perturbed'));

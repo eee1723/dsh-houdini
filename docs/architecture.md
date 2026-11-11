@@ -67,13 +67,13 @@ Bridge终态由生产者经DSH的`appendPluginRecord`写入同一Session中的`p
 
 工作区可写且预算内时，完整原始JSON保存在`dsh-artifacts/results/`的hash归档，作为长期维护源。只读、工作区归档失败或超过其32MiB预算时，原文交DSH原生spill存储，保留opaque locator和后端读取指导；不解析locator、不把宿主临时后端称为长期归档。两种存储均不可用时明确标记durable unavailable，完整即时结构返回仍可供PTC程序消费，原操作的成功/失败不因留存失败改变；原Bridge请求可能仍可查回，但不保证无限期保留，不重放代码。
 
-执行回执的持久canonical和模型可见文字各受64KiB预算约束，归档失败也不回填整份结果；独立run报告聚合多份执行后仍受同一总预算，超限改为既有作业摘要，保留路径、实际结论、状态和检查数量及read入口。省略范围与原值/恢复入口明确表达，原生图片独立服从附件限额。预算由[结果政策](../houdini/result-detail-policy.json)同源维护，UTF-8文字保留复用DSH的TextRetainer。工作区hash归档可按字段验证和分页；原生opaque结果沿其读取指导取得，不能假装已应用JSON Pointer。完整run报告与各执行原值按自身地址读取。实际机制验证见[结果留存](../tools/tests/result-details.test.mjs)和[独立执行](../tools/tests/isolated-execution.test.mjs)，长期自然任务内存与用户加载缺口仍见[交接](handoff.md)。
+执行回执的持久canonical受64KiB预算约束，归档失败也不回填整份结果。exec/inspect默认保留完整模型正文；常规已归档结果可显式选择compact，把模型正文压到16KiB并沿detail pointer续读，未归档和未知结构保持完整兜底。独立run聚合模型正文为16KiB，超限保留路径、实际结论、状态和检查数量；operation=read支持JSON Pointer及分页，不把整份报告重复送入上下文。省略范围与原值/恢复入口明确表达，原生图片独立服从附件限额。预算由[结果政策](../houdini/result-detail-policy.json)同源维护，UTF-8文字保留复用DSH的TextRetainer。工作区hash归档可按字段验证和分页；原生opaque结果沿其读取指导取得，不能假装已应用JSON Pointer。完整run报告与各执行原值按自身地址读取。实际机制验证见[结果留存](../tools/tests/result-details.test.mjs)和[独立执行](../tools/tests/isolated-execution.test.mjs)，长期自然任务内存与用户加载缺口仍见[交接](handoff.md)。
 
 ### 一次性独立执行
 
 `houdini_isolated`为本次调用在新hython中执行明确builder或已保存HIP的副本，复用[隔离检查器](../tools/isolated-houdini-check.py)、输入依赖复制与自有进程回收。结果保留本次输入版本、实际执行、进程退出、检查和产物；原生图像沿DSH附件返回，长任务沿DSH既有作业机制承载。
 
-输入文件与有界帧序列使用同一清单，限制由[输入政策](../houdini/isolated-execution-policy.json)维护；Python检查器的纯规划入口是清单语法、序列展开和检查定义的唯一实现。Host将经DSH读取的原字节交给该入口；规划不读取依赖或调用HOM，Host再逐文件消费DSH读取政策。校验失败在作业准入前返回；worker用同一解析器并核对授权字节摘要后复制输入。run报告与hash归档保存完整执行事实，原生canonical只保留轻量投影；工具展示与后台通知分别按交互用途投影，通知只携带定位信息和数量，不再复制全部输入异常。完整执行的地址由DSH适配器returnedExecutions统一识别，只走生产者声明的live或isolated槽位；详情读取和离线审计复用它，不递归猜测用户返回值。
+输入文件与有界帧序列使用同一清单，限制由[输入政策](../houdini/isolated-execution-policy.json)维护；Python检查器的纯规划入口是清单语法、序列展开和检查定义的唯一实现。Host将经DSH读取的原字节交给该入口；规划不读取依赖或调用HOM，Host再逐文件消费DSH读取政策。校验失败在作业准入前返回；worker用同一解析器并核对授权字节摘要后复制输入。run报告与hash归档保存完整执行事实，原生canonical只保留轻量投影；工具展示与后台通知分别按交互用途投影，通知只携带定位信息和数量，不再复制全部输入异常。大型run报告通过operation=read的JSON Pointer和分页按需消费，聚合正文超限时不反复返回整份报告。完整执行的地址由DSH适配器returnedExecutions统一识别，只走生产者声明的live或isolated槽位；详情读取和离线审计复用它，不递归猜测用户返回值。
 
 DSH团队负责创建子任务、上下文和消息；每个作者可以调用同一工具完成独立构建与自验证，不需要常驻子作者执行端或新的会话状态机。同一live现场仍只有一个修改作者。团队默认交付builder及输入/入口和实际检查；现场作者通过现有exec/job的script入口执行并观察实际消费者，不自动合并或重放。需保留已有节点真实状态时按需使用原生片段；未保存现场与未声明依赖不属于独立检查的证据范围。按需方法见[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)。
 
@@ -119,7 +119,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页直接保存同源配置并诊断本机依赖；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
-| [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；元数据预检不证明GUI或识图成功 |
+| [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；缺少图片模态声明保留警告；用户明确确认路由后可单次allow_undeclared_image_input覆盖，实际路由接受与语义识图分别验证 |
 | [src/image-generation.ts](../src/image-generation.ts) | Host图片生成/编辑：复用DSH配置/凭据、上传参考图原字节；managed经Bridge只读观察所选HIP，原图与预览分别保存，不修改场景、不自动重试或替换模型 |
 | [src/api-route.ts](../src/api-route.ts) | 图片与转录共用的DSH显式API路由、endpoint和凭据解析；不猜测模型协议、不维护第二份账号注册表 |
 | [src/video-transcription.ts](../src/video-transcription.ts) | 教程ASR发现与执行，复用DSH的环境清理后仅显式传入本次凭据；传递明确并发/速率与模型选项，原生/PTC消费同一转录结果，attempt/outcome仍由视频脚本维护，无HOM和自动重试 |
@@ -132,6 +132,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/isolated-execution.ts](../src/isolated-execution.ts) | 一次性builder/HIP副本；安装来自登记或显式HFS，不要求live健康。报告元数据与执行正文分开，正文复用通用结果呈现；完整报告与执行原值留run及hash归档，canonical保留轻量事实，成功报告不再作为stdout重复展示。消费DSH输入政策、作业和附件，不建立常驻子执行端 |
 | [src/execution-source.ts](../src/execution-source.ts) | exec/job共用的内联或文件源码读取；经DSH文件服务固定UTF-8字节和摘要、核对可选版本后提交，不选择现场、不执行HOM、不自动重放 |
 | [src/tool-query.ts](../src/tool-query.ts) | Host来源/历史结果/能力/回执读取；工作区hash结果支持select批读与JSON Pointer分页，原生opaque结果返回真实读取指导，durable unavailable返回明确缺口及原请求恢复入口，不重复执行HOM |
+| [src/houdini-help.ts](../src/houdini-help.ts)、[houdini-help.py](../tools/houdini-help.py) | 按已选或明确指定的实际安装读取 SideFX 随附帮助，沿 DSH 进程服务运行该安装的普通 Python；精确 ZIP 条目、来源和有界分页，无 HOM、网络查询或跨版本回退 |
 | [src/tool-output.ts](../src/tool-output.ts) | 通用结果schema、模型正文与轻量执行事实；canonical和文字各有64KiB预算，复用DSH TextRetainer，完整即时结构返回不变；重复内容与审计清单引用原详情，不再次解释领域结论 |
 | [src/bridge.ts](../src/bridge.ts) | HTTP、取消/超时、每次场景执行前比对词表及语义版本；透传非自动交付的`artifactCandidates` |
 | [src/component-compatibility.ts](../src/component-compatibility.ts)、[src/component-installation.ts](../src/component-installation.ts) | 执行/界面共用兼容判断；异步消费安装器预览与实际加载身份，区分待安装和待重开，不以组件构建差异阻断兼容执行 |
@@ -140,7 +141,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-host.ts](../src/executor-host.ts) | 官方根插件拥有的现场目录与选择服务；await私有投影handle就绪后再公开域服务，原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：目标选择/取消、Bridge终态与旧格式读取，晚到回执不能覆盖新选择；私有handle经域服务委托同步读取，不跨域按注册key访问；历史不证明在线或节点归属 |
 | [src/context.ts](../src/context.ts) | 上下文装配与请求准入；原生/PTC共用本步toolSet判断可用Houdini工具，图像能力消费本步modelSelection/agent.model；异步准备文本由原生context provider同步读取，不以仅注册存在或顶层schema猜准入 |
-| [src/scene-context.ts](../src/scene-context.ts) | 为每条用户消息采集一次轻量现场metadata，绑定消息、限制观察大小并在续接时读取原观察 |
+| [src/scene-context.ts](../src/scene-context.ts) | 用户消息进入原生Inbox时采集一次轻量现场metadata；热状态仅保留待领取消息和当前观察，原生discard释放取消项；冷领取只复用同消息持久观察或明确缺失，不把重开后的现场补成旧观察 |
 | [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As可在原授权项目内跟随原生工作目录，不改会话创建目录或历史位置 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
@@ -175,7 +176,7 @@ domain skill给出本领域默认方法、例外和按需路由，reference维�
 复杂任务由persona路由到[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)，按编辑用途和依赖选择可观察单元；SOP的完整源组件由[建模方法](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护，网络分组由[网络交接skill](../skills/houdini-network-handoff/SKILL.md)消费实际职责。DSH计划记录当前工作，执行回执提供事实，不增加模块状态机、完成账本或执行门槛。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
-scene-context为每条用户消息提供一次消息绑定的metadata；execution-history关联已记录执行事实，execution-state仅提供运行状态、真实失败与未知请求。任务资料从resource按需读取。
+scene-context为每条用户消息提供一次消息绑定的metadata。节点选择保留现有信息，选中的便签和网络框单列类型、父网络及名称，界面上的点面选择保持未观察。execution-history关联已记录执行事实，execution-state仅提供运行状态、真实失败与未知请求。任务资料从resource按需读取。
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。
@@ -192,10 +193,11 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_component_contracts.py](../houdini/python3.11libs/dsh_component_contracts.py) | 普通SOP subnet片段候选导出/可信导入、hash/同构建/有限依赖检查；component_replace已有显式计划与有限迁移，完整依赖迁移和质量验收不由片段往返保证 |
 | [dsh_bridge.py](../houdini/python3.11libs/dsh_bridge.py) | HTTP、主线程队列、job、身份与合同；队列每轮8ms预算，在任务之间让出GUI，不抢占HOM |
 | [dsh_code_analysis.py](../houdini/python3.11libs/dsh_code_analysis.py) | 内联或脚本/尾段的同一AST、源码摘要核对、共享预检与Raw Gate；同源词法调用归属区分内建值、可信标准库API、HOM与未知，分类同时供准入和执行证据消费；拒绝已知隐藏执行源码，无HOM |
-| [dsh_execution.py](../houdini/python3.11libs/dsh_execution.py) | 动词注册、签名绑定/缓存、调用追踪、编辑事务和现场执行事实；只读不准备编辑Undo或journals |
+| [dsh_execution.py](../houdini/python3.11libs/dsh_execution.py) | 动词注册、签名绑定、调用追踪、编辑事务与现场执行事实；固定批量查询复用实际动词或选择观察，不执行提交源码 |
+| [dsh_verb_dispatch.py](../houdini/python3.11libs/dsh_verb_dispatch.py) | 请求内统一动词入口，注入与公开导入共享访问模式和执行记录；不拦截任意 Python 或私有实现导入 |
 | [dsh_execution_results.py](../houdini/python3.11libs/dsh_execution_results.py) | 序列化、操作证据、检查和产物路径，统一编组公开结果信封 |
 | [dsh_requests.py](../houdini/python3.11libs/dsh_requests.py) | 同runtime单次入场票、有界回执/正文缓存、owner/payload冲突拒绝；活动请求/job关联保护到执行终结，旧票不随缓存淘汰复活，无HOM |
-| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 公开动词导出与按需帮助；不持有可变执行状态，领域实现不反向导入此入口；完整目录由tool-design维护 |
+| [dsh_hou_helpers.py](../houdini/python3.11libs/dsh_hou_helpers.py) | 公开动词导出经请求派发；领域实现不反向导入此入口，完整目录由 tool-design 维护 |
 | [dsh_ownership.py](../houdini/python3.11libs/dsh_ownership.py) | 节点identity、当前调用作者、嵌套创建记录、只读快照及Undo/HDA转换身份接续的唯一维护源；路径与持久标签不授予归属 |
 | [dsh_errors.py](../houdini/python3.11libs/dsh_errors.py)、[dsh_node_access.py](../houdini/python3.11libs/dsh_node_access.py)、[dsh_service_constants.py](../houdini/python3.11libs/dsh_service_constants.py) | 无上层依赖的执行错误、节点解析和值投影、持久渲染服务标识 |
 | [dsh_node_types.py](../houdini/python3.11libs/dsh_node_types.py)、[dsh_node_creation.py](../houdini/python3.11libs/dsh_node_creation.py) | 节点类型/参数卡自省、真实Tab/Shelf创建与失败清理；通过ownership接口记录身份 |
@@ -210,6 +212,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance和handoff应用；首次创建网络登记原生框，整根删除通过原生Undo核对框／便签成员；局部完整补偿与按原生identity首次状态去重的Bridge恢复journal |
 | [dsh_network_navigation.py](../houdini/python3.11libs/dsh_network_navigation.py) | 真实节点上的控制声明、持久交付标识、无cook读取与队列内定位；注解不代替控制有效性或ownership |
 | [dsh_network_notes.py](../houdini/python3.11libs/dsh_network_notes.py) | Sticky Note读取/局部修改、独立运行身份归属、失败补偿与编辑事务恢复；在节点首次创建登记边界记录原生初始化便签，后加便签不继承父级归属；说明不承担任务完成状态 |
+| [dsh_editor_checkpoints.py](../houdini/python3.11libs/dsh_editor_checkpoints.py) | Network Box与Sticky Note共用的已验证保存标记、fresh-load原生对象映射及激活复核；父网络metadata仅承载标记，各领域仍维护独立修改归属，不按父级、名称或复制标签授权 |
 | [dsh_ui_capture.py](../houdini/python3.11libs/dsh_ui_capture.py) | 当前可见pane/Qt窗口/停靠面板发现、实际对象引用与精确区域截图；Bridge显式传入本次runtime身份，捕获实现不反向导入HTTP层；只观察已有界面，不建另一登记表或认证语义 |
 | [dsh_cop_contracts.py](../houdini/python3.11libs/dsh_cop_contracts.py) | 原生ImageLayer全buffer观察、对齐差值和可恢复COP控制；exec-only、Manual/预算/非有限值边界，不证明艺术效果 |
 | [dsh_hda_interfaces.py](../houdini/python3.11libs/dsh_hda_interfaces.py) | HDA界面版本、增量预检、通道保持及定义写入恢复；与场景Undo分离 |
@@ -232,7 +235,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_quality_contracts.py](../houdini/python3.11libs/dsh_quality_contracts.py) | 实际接口、拓扑/domain和可恢复control实验 |
 | [dsh_bgeo_fingerprint.py](../houdini/python3.11libs/dsh_bgeo_fingerprint.py) | 以原生BJSON流核对完整大型几何；解析字符串引用后排除写入时间等既定元数据，不忽略用户同名属性；不支持编码明确失败 |
 | [dsh_camera_framing.py](../houdini/python3.11libs/dsh_camera_framing.py) | 八角点投影、预览取景/深度分离与镜头缩放、静态OBJ camera_fit、实际USD产品预检 |
-| [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata与统一HIP身份；GUI自动采集不探测HIP文件或真实目录，显式磁盘状态另查；无socket/进程探测 |
+| [dsh_context.py](../houdini/python3.11libs/dsh_context.py) | 主线程现场metadata与统一HIP身份；一次读取已选节点、便签和网络框，只保留有界标识，不推断编辑权限或几何分量；GUI自动采集不探测HIP文件、目录、socket或进程 |
 
 [执行与证据契约](execution-contract.md)维护这些模块的跨层不变量，节点领域recipe在skills。
 

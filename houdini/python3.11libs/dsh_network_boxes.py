@@ -13,6 +13,7 @@ import uuid
 import hou
 
 from dsh_network_layout import Rect, contains, union
+from dsh_editor_checkpoints import EditorCheckpoints
 
 
 ROLE_COLORS = {
@@ -41,6 +42,39 @@ if globals().get('_BOX_REGISTRY_PID') != _PID:
     _SERVICE_BOXES = {}
     _BOX_GENERATION = uuid.uuid4().hex
 _ACTIVE_JOURNAL = None
+CHECKPOINT_KEY = 'dsh_houdini_checkpoint_boxes'
+_CHECKPOINTS = EditorCheckpoints('network_box', CHECKPOINT_KEY, 'networkBoxes',
+    lambda box: is_service_box(box) or _service_node_or_ancestor(box.parent()))
+
+
+def clear_for_scene_load():
+    _OWNED_BOXES.clear()
+    _SERVICE_BOXES.clear()
+
+
+def ownership_snapshot():
+    return {key: dict(value) for key, value in _OWNED_BOXES.items()}
+
+
+def restore_ownership(snapshot):
+    _OWNED_BOXES.clear()
+    _OWNED_BOXES.update(snapshot)
+
+
+def capture_loaded_boxes(parents):
+    return _CHECKPOINTS.capture(parents)
+
+
+def checkpoint_mapping(rows, baseline, owner=None):
+    return _CHECKPOINTS.mapping(rows, baseline, owner)
+
+
+def prepare_checkpoint(rows, baseline, executor):
+    return _CHECKPOINTS.prepare(rows, baseline, _OWNED_BOXES, executor)
+
+
+def restore_checkpoint(mapping, session):
+    _CHECKPOINTS.restore(mapping, session, _OWNED_BOXES)
 
 
 def _box_key(box):

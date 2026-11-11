@@ -3,5 +3,6 @@
   "maxArchiveBytes": 33554432,
   "detailThresholdChars": 12000,
   "maxPresentationBytes": 65536,
+  "maxModelTextBytes": 16384,
   "loadWarningPreviewBytes": 4096
 }

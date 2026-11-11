@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 120
+Execution contract version: 122
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 
@@ -60,12 +60,26 @@ render_view与viewport_screenshot默认把验证图分配到同源`visual_check`
 
 工具注册在[src/tools.ts](../src/tools.ts)，结果展示在[src/tool-output.ts](../src/tool-output.ts)，来源/历史结果与查回在[src/tool-query.ts](../src/tool-query.ts)。保存与渲染使用执行工具中的动词，不额外提供产品计划或完成认证工具。
 
+同一现场的关联查询优先使用 `houdini_inspect` 的 `queries`，每项包含 `verb`，可选 `id`、`args` 和 `kwargs`。目前支持 selection、scene_info、node_info、read_parms、tool_catalog、usd_prim_info、verb_help。按输入顺序返回逐项结果，局部错误不丢掉其他查询。native 参数或 USD 求值的影响范围随回执说明。下例同时读取当前帧和指定 Box SOP 的尺寸参数。
+
+```json
+{"queries":[
+  {"id":"scene","verb":"scene_info"},
+  {"id":"parameters","verb":"read_parms","args":["/obj/example_geo/box1"],"kwargs":{"names":["sizex"]}}
+]}
+```
+
+每个查询仍走原动词合同，同一次请求只进入一轮主线程队列。历史结果的多个字段用 `houdini_resource(kind="result", select=[...])`，动词说明用 `verb_help([名称, ...])`。
+
+查 SideFX 的本地安装帮助时，用 `houdini_resource(kind="help", ref="hom/hou/Node")`。同样可用 `vex/functions/noise` 或 `nodes/sop/box`。默认采用所选现场登记的安装，未绑定时只有一个受支持安装才自动选择。多个安装时使用返回的精确 `houdini_installation`，不会改变现场选择。回执包含实际构建、归档、页名和 SHA-256，后续页沿回执的 `next` 读取。
+
 Host比对Bridge词表与合同，结果包含操作记录、执行状态、checks、evidence、图像和文件事实。失败保留具体阶段与恢复结果；模型据此决定下一步。
 
 execution中的hip_dir来自同次场景观察，未命名场景为null；Host工作区提醒直接使用该字段，
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。现场选择不迁工作区目录；本对话成功Save As按既有目录接续合同处理。
 Bridge每次启动同时建立新的请求注册表与执行runtime，回执和execution使用同一个runtime_id；
 executor_id标识Houdini进程，不能与某次Bridge运行或DSH会话身份互换。
+合同122增加结构化查询和统一动词派发，旧组件须重开后才接收新执行。已知120/121原进程仍在线时，只能按已核对的原运行代际与会话读取原请求或作业状态，原归属校验保持。
 有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
 同时读取词表与执行合同；它替代普通health握手，不增加网络往返，也不进入HOM队列。GET /health不签票。
 票仅在首次提交前保留120秒，未用票最多4096条；登记时在同锁内消费。只有Bridge签发的票可首次登记，
@@ -154,7 +168,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 | `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；已有成员Network Box时，两者无显式nodes的整网重排写前拒绝，明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器，需显式boxes；可直接应用，也可dry_run取得plan_sha256，提供expected_plan时才检查计划仍新鲜。重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
 | `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 按显式groups整理Network Box：每项需要name，可选label/role/members/boxes/color；label默认name，role只提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。可直接应用，dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对实际受影响的来源框和目标框权限；Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
 | `network_controls(parent, controls=None, *, remove=None, allow_foreign=None)` | 明确声明实际控制入口：controls为node/label对象列表，remove为显式节点列表，目标须在parent范围内且遵守ownership。声明保存在节点userData，随HIP保存、改名保留；省略controls/remove只读列出parent内的已声明入口，不按名字或参数数量猜角色、不cook。节点交付卡片复用同一控制声明；不证明联动或正确性 | dict |
-| `network_notes(parent, notes=None, *, remove=None, allow_foreign=None)` | 读取或局部维护明确名称的Sticky Note；省略notes/remove只读返回实际text/position/size/color与归属。notes项需要name/text，可选position/size/color；默认新Note放在现有内容旁，显式remove不扫全网。Note按实际session identity独立归属，不因名称/parent认领，渲染服务永不豁免；预检及失败恢复保留事实。Note不隐式加入Box，是后续布局固定障碍；文字不证明业务正确或维护完成账本 | dict |
+| `network_notes(parent, notes=None, *, remove=None, allow_foreign=None)` | 局部维护明确名称的独立 Sticky Note，返回原生正文、位置、矩形、颜色、字号和归属。已有项只传 name 与要改的字段，新建项另需 text。`text_size` 为网络单位的字高，0 使用原生默认值，`effective_text_size` 在实际可读取时返回。改变字号保持矩形与正文，除非同时明确修改。省略 notes/remove 只读。便签有独立 identity，写前校验，失败保留恢复事实 | dict |
 | `present_nodes(nodes, *, allow_foreign=None)` | 明确交付节点入口，nodes为node及可选label/role/description/new_identity的1..16项列表；role为control/output/node，只表达导航用途，description为<=200字符的单行操作说明。返回context来自真实节点类别，说明和路径属于交付时观察。缺少持久标识时在目标节点userData写UUID，真实修改遵守ownership；显式new_identity只用于续新标识，旧引用失效。成功批次从present_nodes动词回执显示节点卡片，不依赖__result__包装，与DSH文件交付并列。声明后保存同一HIP，重开/改名仍可定位；不存在或复制导致重复不按历史路径猜目标，不写独立交付账本 | dict |
 | `focus_node(reference, *, expected_hip)` | 在Bridge主线程队列按持久id与原交付HIP进行显式界面导航，适用于节点卡片点击。定位同一实际节点并打开参数页、展开祖先框；不同HIP、缺失或重复id明确拒绝。只改变导航/框展开，不改模型参数/几何或加载保存HIP；历史runtime sessionId不作为持久节点身份 | dict |
 
@@ -165,7 +179,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 | `list_parms(node)` | 参数**目录**：名字/标签/类型/帮助/默认值及实际menu token/index/label/set_value、menu_kind、menu_setting和参数自身conditionals（不给当前值，不推断是否生效）；动态菜单以实际节点为准。toggle_strip条目为位值，0清空、组合整数精确替换；exclusive_strip为选项索引 | list |
 | `read_parms(node, changed_only=True, *, names=None)` | 参数**值**：默认只看非默认 + 带表达式/动画 + 被引用的（意图解读）；names可选1..32个唯一标量或tuple字段，按请求顺序返回且不受changed_only过滤，tuple给聚合value/component_names及逐分量诊断，缺失报错。无动画string含原始UTF-8源码source_sha256，展开值不同于原文时另含raw_value；表达式附referenced_parm，被引用标referenced_by；动画附time_dependent/key_count/first_frame/last_frame/curves，不默认倾倒全部keys | list |
 | `set_parm(node, name, value, allow_foreign=None)` | 设参（数值字符串=表达式）。已有表达式/keys在普通赋值时清除，note说明变化。字面string可传`{expected_sha256,patch:[{old,new,count}]}`精确替换，或`{expected_sha256,source:完整字面源码}`全量同步，两者互斥；精确版本和次数、全部锚点先验，拒绝锁定/动画/表达式/callback/固定菜单；返回前后hash/字符数及value_omitted，不回传整份源码，同文同步changed=False。patch最多32项，source/result各524288字符、替换文本累计131072字符、count为1..256；不执行正则/脚本。文本通过不证明cook/几何通过 | dict |
-| `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参：预检名称/重叠/锁定；value支持set_parm的string patch对象，本节点本批全部patch在任何设参前验证。patch只允许strict=True，set内返回变化摘要，patched列出字段；失败恢复本批值/表达式/keys。其他节点不在本批预检范围，参数回调/外部文件不属快照回滚。无patch的显式strict=False仍返回ok/set/failed；Menu string为精确token，数值string为HScript表达式，表达式对象可声明language | dict |
+| `set_parms(node, values, allow_foreign=None, strict=True)` | 默认严格批量设参，预检名称/重叠/锁定，全部写完再按请求顺序回读参数值和表达式求值，返回 `readback_timing=after_batch_writes`。本批全部字面 patch 在任何设参前验证，patch 仍返回操作摘要。失败恢复本批值/表达式/keys，回调或外部文件副作用另算。显式 strict=False 允许部分成功并逐项回读，返回 `after_each_write`。菜单用精确 token，数值 string 为 HScript 表达式 | dict |
 | `set_keyframes(node, channels, replace=True, allow_foreign=None)` | 批量写数值标量 channel keys；统一 frame 单位，有限曲线 `constant/linear/bezier`。全量预检包含锁定状态，失败恢复原值、表达式、keys和frame，并明确restored/restore_errors；提交后回读/采样并恢复用户frame。只负责channel数据，不代替路径依赖状态机或KineFX/APEX | dict |
 | `create_spare_parms(node, code_parm='snippet', defaults=None, spec=None, allow_foreign=None, *, update_defaults=None, layout=None, dry_run=False)` | 缺省扫描代码参数的 `ch/chf/chi/chv/chs` 引用并创建缺失 spare parameters。`spec=[...]` 的精确条目为 folder `{type,name,label?,parms:[...]}` 或 scalar `{type:'toggle\|int\|float\|string',name,label?,default?,min?,max?,min_strict?,max_strict?,help?}`；spec必须用具名参数，严格上下限字段只接受min_strict/max_strict。spec 返回 `{node,mode,created,leaf_values}`；扫描返回 `{node,code_parm,references,created,existing,defaults_applied,unsupported}`；创建仍拒绝同名覆盖。新建接口后重新赋写code_parm原始源码/keys以刷新编译依赖，保留表达式与动画；返回refreshed_code_parm（未刷新为null），锁定源码在接口写入前拒绝。显式 `update_defaults={name:literal}` 仅更新1..32个已有scalar spare的默认值，与spec/defaults/非默认code_parm互斥；保留当前值/表达式/keys，返回updated前后值及current_state_preserved。支持float/int/toggle/string，拒绝内建/tuple/menu/callback/multiparm及表达式默认值；当前值另用set_parms。layout与spec/defaults/update_defaults互斥，复用共享UI组件，默认追加并拒绝已有模板/参数名冲突；dry_run仅layout有效，预览零写入。应用保持已有通道值/keys/locks，失败恢复节点接口及通道，不修改HDA定义或绑定 | dict |
 | `parameter_ui(node, max_depth=6, include_state=False, analyze_ui=False)` | 任意节点参数界面只读自省：类型/可选定义文件与section、实例interface及definition.interface，含范围/默认表达式/回调/菜单生成器/条件/tags、tuple look和Ramp类型。include_state返回至多512通道raw值/keys/locks；analyze_ui返回非阻断结构建议。不执行菜单/表达式/cook，不自动修复或创建绑定 | dict |
@@ -198,7 +212,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 `geo_check_interfaces(method='bore_clearance')`接受最终闭合朝外Polygon `target_group`、SOP local `axis`、同轴`start/end`与正数`radius`。以外切棱柱覆盖声明圆形空域，只在声明的轴向区间与该组做有界Boolean Intersect；零交集pass，有效侵入fail并给交集包围盒，不完整组/模糊结果unverified。对带铰耳的叶片，区间应覆盖需要打孔的板厚，不能把整件总包围盒当板厚；通过不证明区间外通畅、孔位归属、周围材料或公差。当前棱柱边数、目标面数限制和max_pairs范围由执行源的interface_limits同时供完整verb_help与结果runtime_limits使用。面数/剩余预算不足返回unverified及budget实际规模，不执行部分检查，不把能力不足当几何失败或回滚同批正常修改；提高max_pairs不能解除目标面数限制。非法参数仍明确拒绝。
 | `test_controls(controller, output, tests, interfaces=None, allow_foreign=None, *, domain=None, topology=None, baseline_interfaces=None, views=None, view_bounds=None)` | 可恢复数字控制测试，必须exec：1..16个 `{id,values:{parm:number},expectations:[{metric,axis?,group?,delta:[min,max]}],interfaces?}`，每个case最多16个expectations；同一扰动的大检查用相同values拆成多个case。metric支持bounds_size/center/min/max(axis)、point_count、primitive_count、area、point_mean(axis)、boundary_edges、piece_count、max_point_displacement/mean_point_displacement；max_transform_error另给16数row-major仿射transform，测实际点相对声明变换的最大残差。位移/变换要求稳定唯一id_attrib和相同Polygon拓扑。range验基准/扰动绝对范围，至少一项delta排除0。顶层interfaces在基准和全部case复查，baseline_interfaces只验基准，case内interfaces只验对应扰动；适合合盖接触与开盖分离等不同合同，均用geo_check_interfaces的schema和预算。control_summary区分已声明与实际执行的关系覆盖；基准失败时参数零写入且results=[]明确标not_run。domain/topology复查声明关系；恢复参数/keys/frame及完整bgeo内容（内嵌Packed临时地址转内容引用、忽略对应writer索引偏移；排除导出头date/派生group_summary，组目录按名规范排列；保留成员及组内顺序）。Polygon/Mesh/Sphere/Tube/点支持范围各指标明确，嵌入PackedGeometry在内存副本展开量测，原载荷/属性/变换按内容指纹验证恢复，其他写前unverified。拒绝callback/menu/button/multiparm/tuple列表值，foreign需单次授权；只证明声明case，非外部副作用恢复或艺术/强度认证 | dict |
 | `geo_piece_stats(node, piece_attrib=None, sample=16, *, inspect=False, group=None, basis=None, integrity_only=False)` | 默认统计primitive piece局部bbox/extent/面积；无piece属性用内存Connectivity SOP Verb。inspect=True按精确primitive组观察有界Polygon边界/非流形/边连通、正交basis下extent、surface_area、duplicate_boundary_faces、closed_planar_components及center_axis_surface_hits。仅近看Polygon完整性时用inspect=True, integrity_only=True：跳过昂贵的中心线/截面诊断，最多100000 prim/400000顶点引用，返回非流形、相邻面朝向冲突、闭壳有向体积符号、显式N与几何朝向相反的样本、零面积/零边及完全重复面风险；平面大面以重复点桥接孔时另报planar_repeated_point_ngons/shading_review_status，提示同角度近景复核，不把合法布线判破面。负号提示核对整壳朝向，嵌套空腔的内壳可有意反向，不能自动判错。开放边单列open_boundary_unreviewed，可能是有意接口，需按设计核对。风险/超预算在Bridge摘要与执行提醒中保留；no_detected_integrity_risk只表示本检查未发现列出的风险，不认证任意重叠、自交、接触、外形、着色或强度。普通完整inspect仍保持原预算与语义；不支持或超预算为unverified | dict |
-| `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用geometryAtFrame比较两帧point数值属性，correspondence为point_number，不能证明跨拓扑变化的稳定身份。可比较时精确返回键`mean_delta`、`max_delta`、`delta_percentiles.{p50,p90,p99}`、`component_delta.{min,max,mean}`、`unchanged_pct`（另含sampled_points/tolerance/data_type/size），不是`mean/max`。不移动playbar；只证明所声明对应与抽样范围内的数据变化，不单独证明审美/运动语义 | dict |
+| `geo_frame_diff(node, frame_a, frame_b, attrib='P', sample=4096, tolerance=1e-6)` | 用 geometryAtFrame 比较 point 数值属性，不移动播放帧。frame_b 为单帧时保留原返回，也可给 1..16 帧共用一个冻结基线，按输入顺序返回逐帧数值、不可比原因或实际错误。可比较结果包含 `mean_delta`、`max_delta`、`delta_percentiles`、`component_delta` 和 `unchanged_pct`。按 point number 对齐，点面数量相同仍不证明稳定身份、拓扑或视觉质量 | dict |
 
 `test_controls` 的顶层、基准及单个case接口均可声明`solid_overlap`；
 有转轴的活动产品要逐状态检查实体禁穿插，并另验同轴与真实孔道。

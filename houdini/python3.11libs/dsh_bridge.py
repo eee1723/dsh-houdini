@@ -86,7 +86,7 @@ _HELPER = loaded_helper()
 
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 120
+_EXECUTION_CONTRACT_VERSION = 122
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -775,10 +775,22 @@ class _Handler(BaseHTTPRequestHandler):
             # Host identity, contract and a one-time ticket. Untracked execution
             # (formerly the no-ticket compatibility branch) no longer exists.
             rejection = _owner_error(body)
+            structured = self.path == "/exec" and 'queries' in body
             if rejection is None:
                 rejection = _contract_error(body.get("expected_contract"))
-            if rejection is None and not isinstance(body.get("code"), str):
-                rejection = 400, "code must be a string"
+            if rejection is None:
+                if structured:
+                    allowed = {'queries', 'owner_session', 'owner_call', 'expected_contract', 'request_ref'}
+                    if set(body) != allowed:
+                        rejection = 400, 'Structured observation accepts queries and ticket provenance only'
+                    else:
+                        from dsh_execution import validate_structured_queries
+                        try:
+                            validate_structured_queries(body['queries'])
+                        except ValueError as error:
+                            rejection = 400, str(error)
+                elif 'queries' in body or not isinstance(body.get("code"), str):
+                    rejection = 400, "code must be a string; only /exec accepts structured queries"
             if rejection is None and (not isinstance(body.get("request_ref"), str) or not body["request_ref"]):
                 rejection = 400, "request_ref ticket is required; untracked HTTP execution is not supported"
             if rejection is None and body.get('request_kind') == 'node_navigation':
@@ -787,7 +799,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": rejection[1]}, status=rejection[0])
                 return
         if self.path == "/exec":
-            code = body["code"]
+            code = body.get("code")
             allow_raw = body.get("allow_raw")
             allow_raw = str(allow_raw) if allow_raw else None
             owner_session = body["owner_session"]
@@ -798,7 +810,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": "read_only must be a boolean or true/false string"}, status=400)
                 return
             read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
-            invoke=lambda: run_code(code, allow_raw, owner_session, owner_call, read_only, script=body.get('script'))
+            if structured:
+                invoke=lambda: _runtime.run_queries(body['queries'], owner_session, owner_call)
+            else:
+                invoke=lambda: run_code(code, allow_raw, owner_session, owner_call, read_only, script=body.get('script'))
             try:
                 admitted=_request_registry.reserve(ref,owner_session,body)
             except ValueError as error:

@@ -90,15 +90,24 @@ def _publish_json(temp: Path, path: Path):
     # State publication reproduced a MoveFileEx (os.replace) conflict despite
     # shared deletion. ReplaceFile supports the old reader snapshots while
     # retaining the existing state's access-control list.
-    if kernel.ReplaceFileW(str(path), str(temp), None, 0, None, None):
-        return
-    code = ctypes.get_last_error()
-    if code == 2:  # No existing destination: publish the first generation.
-        os.replace(temp, path)
-        return
-    error = ctypes.WinError(code)
-    error.filename, error.filename2 = str(temp), str(path)
-    raise error
+    deadline = time.monotonic() + .05
+    while True:
+        if kernel.ReplaceFileW(str(path), str(temp), None, 0, None, None):
+            return
+        code = ctypes.get_last_error()
+        if code == 2:  # No existing destination: publish the first generation.
+            os.replace(temp, path)
+            return
+        remaining = deadline - time.monotonic()
+        # Live registration reproduced 1175; short reader locks reproduce 32.
+        # For 1175 Windows keeps both names unchanged, so retry only this same
+        # completed JSON. 1176/1177 may partly move files and must not retry.
+        if code in (32, 33, 1175) and remaining > 0:
+            time.sleep(min(.002, remaining))
+            continue
+        error = ctypes.WinError(code)
+        error.filename, error.filename2 = str(temp), str(path)
+        raise error
 
 
 def read_json(path: Path, limit=8 * 1024**2):

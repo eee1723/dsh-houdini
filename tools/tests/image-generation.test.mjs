@@ -64,6 +64,13 @@ await assert.rejects(()=>generateImage(context,exec,{...args(),output:path.join(
 await assert.rejects(()=>generateImage(context,exec,{...args(),output:'$HIP/dsh-artifacts/textures/no.png'},success),/actual HIP/)
 await assert.rejects(()=>generateImage(context,exec,{...args(),output:'transparent.jpg',background:'transparent'},success),/Transparent/)
 assert.equal(requests.length,1)
+const resolveVision=context.llm.resolveModelInfo
+try {
+  context.llm.resolveModelInfo=async()=>({inputModalities:['text']})
+  result=await generateImage(context,exec,{...args('metadata-only.png'),allow_undeclared_image_input:true},success)
+  assert(result.attachment,'missing image metadata must not fabricate an attachment refusal')
+  assert.equal(result.capability_status,'unsupported')
+} finally {context.llm.resolveModelInfo=resolveVision}
 
 const input=path.join(root,'source.png');await fs.writeFile(input,png)
 result=await generateImage(context,exec,{...args('edit.png'),references:[input],size:'1024x1024'},success)

@@ -256,7 +256,7 @@ const timelineHtml = steps.map((s, i) => {
 
 const rawEffectLabels = {
   gate_blocked: 'Gate 执行前拦截', mutation_candidate: '检测到裸修改候选',
-  suspected_effect: '疑似副作用 / 外部操作', read_only_query: '只读 query（守卫范围）',
+  suspected_effect: '疑似副作用 / 外部操作', read_only_query: '查询模式（旧回执静态判断）',
   failed: '失败；未证明只读', unknown: '副作用未知（含动态调用）',
 };
 const rawHouHtml = rawHouSteps.length

@@ -9,6 +9,23 @@ import os
 import re
 
 
+def read_desktop_debug_port(port_file, owned_log):
+    """Observe this launch's browser port without racing Chrome's port-file write."""
+    found = re.search(r'DevTools listening on ws://127\.0\.0\.1:(\d+)/', owned_log)
+    if found:
+        return int(found.group(1))
+    try:
+        lines = Path(port_file).read_text(encoding='utf-8').splitlines()
+    except (FileNotFoundError, PermissionError):
+        return None
+    if not lines or not lines[0].strip():
+        return None
+    port = int(lines[0])
+    if not 1 <= port <= 65535:
+        raise ValueError('Owned Desktop reported an invalid browser debugging port')
+    return port
+
+
 def windows_package_name(process_handle=None):
     """Read an owned/current process's package identity; None means unpackaged."""
     if os.name != 'nt':

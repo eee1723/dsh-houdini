@@ -27,12 +27,12 @@ with dsh_ownership.execution_owner('efficiency','setup'):
     switch=h.tab_create(root,'switch','choice',inputs=[source])
 try:
     rejects(lambda:h.node_info('Sop','box'),'existing absolute network')
-    rejects(lambda:h.node_info('/obj','box'),'search_tab_menu')
+    rejects(lambda:h.node_info('/obj','box'),"search_tab_entries('/obj'")
     for code in ['node_info("box")','node_info(type_name="box")','node_info(type="box",context="sop")']:
         env=b.run_code(code,read_only=True)
         assert not env['ok'] and 'node_info(parent, type_name' in env['error'],env
         assert 'existing_geo' in env['error'] and 'houdini_exec' in env['error'],env
-        assert env['transaction']['status']=='no_scene_change',env
+        assert env['transaction']['status']=='effects_unverified' and env['transaction']['source_executed'] is True,env
     with dsh_ownership.execution_owner('efficiency','test'):
         rejects(lambda:h.set_parm(switch,'input','chi("../CTRL/enabled")'),'Unknown function')
         # Native fault injection still exercises cook error refresh; the public

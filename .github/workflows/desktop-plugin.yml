@@ -44,6 +44,9 @@ jobs:
       - run: npm run docs:check
       - shell: pwsh
         run: python tools/run-deployment-tests.py --hython "$env:H21_HYTHON" --hython "$env:H22_HYTHON"
+      - name: Verify saved editor items in both Houdini builds
+        shell: pwsh
+        run: python tools/tests/dsh-note-recovery.test.py "$env:H21_HYTHON" "$env:H22_HYTHON"
       - name: Assemble standard plugin and source-complete media
         shell: pwsh
         run: python tools/build-release.py --output tools/out/plugin-release --media-cache "$env:RUNNER_TEMP/dsh-media-cache"

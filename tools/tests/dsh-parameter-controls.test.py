@@ -28,7 +28,7 @@ controller=run("__result__=tab_create('/obj','null',name='control_panel').path()
 n=hou.node(controller)
 before=n.parmTemplateGroup().asDialogScript()
 preview=run(f'__result__=create_spare_parms({controller!r},layout={layout!r},dry_run=True)')
-assert preview['transaction']['status']=='no_scene_change'
+assert preview['transaction']['status']=='effects_unverified' and preview['transaction']['source_executed'] is True
 assert n.parmTemplateGroup().asDialogScript()==before
 run(f'create_spare_parms({controller!r},layout={layout!r})')
 info=run(f'__result__=parameter_ui({controller!r},analyze_ui=True)',query=True)['result']
@@ -41,7 +41,7 @@ assert n.type().name()=='null'  # no HDA necessary
 box=run("g=tab_create('/obj','geo',name='model'); __result__=tab_create(g,'box',name='shape').path()")['result']
 mapping=[{'source':'width','target':box+'/sizex','scale':1,'offset':0}]
 plan=run(f'__result__=bind_controls({controller!r},{mapping!r},dry_run=True)')
-assert plan['transaction']['status']=='no_scene_change'
+assert plan['transaction']['status']=='effects_unverified' and plan['transaction']['source_executed'] is True
 assert hou.parm(box+'/sizex').keyframes()==()
 revision=plan['result']['plan_sha256']
 applied=run(f'__result__=bind_controls({controller!r},{mapping!r},expected_plan={revision!r})')['result']

@@ -35,17 +35,23 @@ parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
 parser.add_argument('--hfs',type=Path,help='Also verify the installed tarball with one owned real Houdini GUI')
 parser.add_argument('--legacy-components',action='store_true',help='Seed owned legacy entry/data fixtures before automatic component preparation (requires --hfs)')
 parser.add_argument('--startup-discovery',action='store_true',help='Ordinary no-ticket GUI A/B startup and reselect B from the original native browser conversation')
+parser.add_argument('--help-hfs',action='append',type=Path,default=[],help='Read installed SideFX help via the packaged Host tool and exact installation; no model or Houdini GUI')
+parser.add_argument('--editor-smoke',action='store_true',help='Verify an owned note style change and observation receipts in the installed helper GUI')
 parser.add_argument('--expected-helper-id',help='Verify installed helper sources match an already validated GUI build')
 parser.add_argument('--timeout',type=int,default=600)
 args=parser.parse_args()
 if args.legacy_components and not args.hfs:parser.error('--legacy-components requires --hfs')
 if args.startup_discovery and (not args.hfs or args.legacy_components):parser.error('--startup-discovery requires --hfs and cannot combine with --legacy-components')
+if args.editor_smoke and (not args.hfs or args.startup_discovery):parser.error('--editor-smoke requires --hfs without --startup-discovery')
 artifact=args.artifact.resolve(strict=True)
 assert artifact.is_file() and artifact.suffix=='.tgz','Pass the actual release tarball'
 with tarfile.open(artifact,'r:gz') as archive:
     expected_manifest=json.load(archive.extractfile('package/package.json'))
+    expected_names=['client.js','lib/frontend-host.js','lib/index.js','runtime/video/build-provenance.json']
+    if args.help_hfs:
+        expected_names+=['lib/houdini-help.js','tools/houdini-help.py']
     expected_files={name:hashlib.sha256(archive.extractfile('package/'+name).read()).hexdigest()
-        for name in ['client.js','lib/frontend-host.js','lib/index.js','runtime/video/build-provenance.json']}
+        for name in expected_names}
 install_spec=expected_manifest['name']+'@'+expected_manifest['version'] if args.npm else str(artifact)
 desktop=args.desktop_root.resolve(strict=True)
 cli=desktop/'resources/runtime/cli/bin/dsh.cmd'
@@ -157,10 +163,58 @@ if args.npm:
 facts_file=fixture/'installed-composition.json'
 inspector=fixture/'inspect.mjs'
 inspector.write_text("""
-import fs from 'node:fs';import path from 'node:path';import {createRequire} from 'node:module';
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {createRequire} from 'node:module';
 export const inject=['loader','tools','agentPresets','clientModules','houdiniFrontend'];
+async function inspectRegisteredTool(ctx,input,signal) {
+  const resolved=await ctx.get('sessionController').resolveAgent(input.sessionId);
+  assert(!resolved.error&&resolved.agent,JSON.stringify(resolved.error));
+  const agent=resolved.agent;
+  assert.equal(agent.id,input.sessionId);
+  assert.equal(ctx.agentPresets.presetForSession(agent.session),'houdini');
+  const before=agent.session.snapshotEvents().length;
+  const lease=await ctx.agentPresets.acquireScope('houdini');
+  try {
+    const tool=ctx.tools.get('houdini_inspect',lease.key);
+    assert(tool,'The installed Houdini scope must register houdini_inspect');
+    const args={queries:[{id:'scene',verb:'scene_info'},{id:'selection',verb:'selection'}]};
+    const value=await tool.execute(args,{agent,callId:input.callId,name:'houdini_inspect',signal});
+    assert.equal(value.ok,true,JSON.stringify(value));
+    assert.equal(value.execution.source_kind,'structured_query');
+    assert.equal(value.transaction.status,'no_scene_change');
+    assert.equal(value.transaction.source_executed,false);
+    assert.equal(value.execution.impact.attempted,false);
+    assert.equal(value.execution.executor_id,input.executorId);
+    assert.equal(value.requestReceipt.runtime_id,input.runtimeId);
+    assert.equal(value.execution.scene_recovery.scene_epoch,input.sceneEpoch);
+    assert.equal(value.result.status,'observed');
+    assert.deepEqual(value.result.counts,{succeeded:2,rejected:0,failed:0});
+    assert.deepEqual(value.result.rows.map(row=>[row.id,row.verb,row.status,row.dispatched]),
+      [['scene','scene_info','succeeded',true],['selection','selection','succeeded',true]]);
+    const [scene,selection]=value.result.rows.map(row=>row.result);
+    assert.equal(scene.version,input.houdiniVersion);
+    assert.equal(scene.ui_available,true);
+    assert.equal(typeof scene.frame,'number');
+    assert.equal(typeof scene.hip_path,'string');
+    assert.equal(selection.runtime_id,input.runtimeId);
+    assert.equal(selection.version,input.houdiniVersion);
+    assert(Array.isArray(selection.selection));
+    assert.equal(typeof selection.selection_count,'number');
+    const meta=tool.output.presentationMeta(args,value);
+    assert.equal(meta.canonical.ok,true);
+    assert.equal(meta.canonical.execution.source_kind,value.execution.source_kind);
+    assert.equal(meta.canonical.transaction.status,value.transaction.status);
+    assert.equal(meta.canonical.transaction.source_executed,false);
+    assert.deepEqual(meta.canonical.requestReceipt,value.requestReceipt);
+    const events=agent.session.snapshotEvents().slice(before);
+    assert(!events.some(row=>row.type==='turn/start'||row.type.startsWith('llm/')),
+      'The registered-tool fixture must not invoke a model');
+    return {ok:true,sessionId:agent.id,callId:input.callId,tool:'houdini_inspect',
+      invocation:'registered tool.execute with real native session; no agent/model dispatch',
+      queries:args.queries,value,canonical:meta.canonical,noModelInvocation:true};
+  }finally{await lease[Symbol.asyncDispose]()}
+}
 export function apply(ctx) {
-  ctx.effect(()=>{let disposed=false;queueMicrotask(async()=>{
+  ctx.effect(()=>{let disposed=false,requestTimer;const lifetime=new AbortController();queueMicrotask(async()=>{
     try {
       await ctx.loader.await();
       const require=createRequire(path.join(process.env.DSH_HOME,'profiles/web/package.json'));
@@ -172,24 +226,70 @@ export function apply(ctx) {
         hostProjectionZod:JSON.parse(fs.readFileSync(hostRequire.resolve('zod/package.json'),'utf8')).version,
         hostProjectionRequiresZod:projection.dependencies?.zod};
       const roster=await ctx.agentPresets.remoteExportList();
-      const modes={};
+      const modes={},help=[];
       for(const id of ['houdini','standard']){
         const lease=await ctx.agentPresets.acquireScope(id);
-        try{modes[id]=ctx.tools.schemas(lease.key).map(row=>row.name)}finally{await lease[Symbol.asyncDispose]()}
+        try{
+          modes[id]=ctx.tools.schemas(lease.key).map(row=>row.name)
+          if(id==='houdini'&&process.env.DSH_PACKAGED_HELP_HFS){
+            const tool=ctx.tools.get('houdini_resource',lease.key);
+            for(const hfs of JSON.parse(process.env.DSH_PACKAGED_HELP_HFS)){
+              const signal=AbortSignal.timeout(20000);
+              const args={kind:'help',ref:'hom/hou/Node',limit:80,houdini_installation:hfs};
+              const page=await tool.execute(args,{signal});
+              if(!page.ok||!page.result.next)throw Error('Installed help page failed: '+(page.error??'missing continuation'));
+              const next=await tool.execute(page.result.next,{signal});
+              const source=page.result.source;
+              if(!next.ok||next.result.offset!==page.result.end_offset||next.result.source.sha256!==source.sha256
+                ||fs.realpathSync(source.hfs)!==fs.realpathSync(hfs)||source.member!=='hou/Node.txt'
+                ||page.result.text.length!==80||!/^2[12]\\.0\\.\\d+$/.test(source.houdini_version))
+                throw Error('Installed help source/continuation did not match the exact installation');
+              help.push({source,continuationVerified:true});
+            }
+          }
+        }finally{await lease[Symbol.asyncDispose]()}
       }
       const graph=ctx.clientModules.graph();
-      const result={root,manifest,roster,modes,graph,dependencyVersions,
+      const result={root,manifest,roster,modes,graph,dependencyVersions,help,
         prepareBridge:typeof ctx.get('houdiniFrontend').prepareBridge==='function',
         rootEntries:[...ctx.loader.entries()].map(row=>({name:row.options.name,disabled:row.disabled}))};
       if(!disposed)fs.writeFileSync(process.env.DSH_PACKAGED_TEST_FACTS,JSON.stringify(result,null,2));
+      if(!disposed&&process.env.DSH_PACKAGED_INSPECT_REQUEST) {
+        const deadline=Date.now()+Number(process.env.DSH_PACKAGED_INSPECT_TIMEOUT_MS);
+        const save=value=>{
+          if(disposed)return;
+          const target=process.env.DSH_PACKAGED_INSPECT_RESULT;
+          fs.writeFileSync(target+'.tmp',JSON.stringify(value,null,2));
+          fs.renameSync(target+'.tmp',target);
+        };
+        requestTimer=setInterval(async()=>{
+          if(disposed)return;
+          if(!fs.existsSync(process.env.DSH_PACKAGED_INSPECT_REQUEST)) {
+            if(Date.now()<deadline)return;
+            clearInterval(requestTimer);save({ok:false,error:'Registered-tool fixture request deadline expired'});return;
+          }
+          clearInterval(requestTimer);
+          try {
+            const input=JSON.parse(fs.readFileSync(process.env.DSH_PACKAGED_INSPECT_REQUEST,'utf8'));
+            save(await inspectRegisteredTool(ctx,input,AbortSignal.any([lifetime.signal,AbortSignal.timeout(45000)])));
+          }catch(error){save({ok:false,error:String(error.stack||error)})}
+        },100);
+        requestTimer.unref();
+      }
     }catch(error){if(!disposed)fs.writeFileSync(process.env.DSH_PACKAGED_TEST_FACTS,JSON.stringify({error:String(error.stack||error)}))}
-  });return()=>{disposed=true}})
+  });return()=>{disposed=true;clearInterval(requestTimer);lifetime.abort()}})
 }
 """,encoding='utf-8')
 overlay=fixture/'inspect.patch.yml'
 overlay.write_text('- id: workspace-controller\n  config:\n    documentsDirectory: '+json.dumps(str(fixture/'documents'))+
     '\n- insert:\n    - id: packaged-plugin-inspector\n      name: '+inspector.as_uri()+'\n',encoding='utf-8')
 env['DSH_PACKAGED_TEST_FACTS']=str(facts_file)
+if args.editor_smoke:
+    env['DSH_PACKAGED_INSPECT_REQUEST']=str(fixture/'registered-inspect-request.json')
+    env['DSH_PACKAGED_INSPECT_RESULT']=str(fixture/'registered-inspect-result.json')
+    env['DSH_PACKAGED_INSPECT_TIMEOUT_MS']=str(args.timeout*1000)
+if args.help_hfs:
+    env['DSH_PACKAGED_HELP_HFS']=json.dumps([str(path.resolve(strict=True)) for path in args.help_hfs])
 with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
 log=fixture/'host.log'
 auth=DshWebSession('http://127.0.0.1:'+str(port),str(log),str(fixture/'runtime.json'))
@@ -299,16 +399,62 @@ def verify_real_houdini(installed,workspace_id):
     birth=_process_started(record['pid']);assert birth is not None
     assert ready['result']['sessionId']==session['sessionId']
     checker=fixture/'check-houdini.mjs'
-    checker.write_text('import fs from "node:fs";import {HoudiniBridge} from '+json.dumps((installed/'lib/bridge.js').as_uri())+''';
+    checker.write_text('import fs from "node:fs";import assert from "node:assert/strict";import {HoudiniBridge} from '+json.dumps((installed/'lib/bridge.js').as_uri())+''';
 const input=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),signal=AbortSignal.timeout(45000);
 const bridge=new HoudiniBridge(input.record.bridge_url,45000,input.target.executor_id,undefined,{runtimeId:input.target.runtime_id,sceneEpoch:input.target.scene_epoch});
 const health=await bridge.observeExecutor(signal);
 await bridge.claimWriter(input.sessionId,input.record.registration_id,input.record.hip_path,signal);
 const code="import os,sys,threading,dsh_bridge,dsh_launcher,dsh_desktop_client,dsh_workbench_entry\\n__result__={'version':hou.applicationVersionString(),'hip':hou.hipFile.path(),'new':hou.hipFile.isNewFile(),'hfs':hou.getenv('HFS'),'pid':os.getpid(),'mainThread':threading.get_ident()==dsh_bridge._HOU_THREAD_ID,'bridgeFile':dsh_bridge.__file__,'pythonPath':list(sys.path),'loadedFiles':{'launcher':dsh_launcher.__file__,'desktopClient':dsh_desktop_client.__file__,'entry':dsh_workbench_entry.__file__}}";
 const value=await bridge.exec(code,{sessionId:input.sessionId,callId:'packaged-real-houdini-read'},signal,undefined,true);
-fs.writeFileSync(process.argv[3],JSON.stringify({...value,health}));if(value.ok!==true)process.exitCode=1;
+let editorSmoke;
+if(input.editorSmoke){
+  const owner=callId=>({sessionId:input.sessionId,callId});
+  const baseline=await bridge.exec("g=tab_create('/obj','geo',name='editor_smoke')\\n"
+      +"__result__=network_notes(g,[{'name':'travel_help','text':'Original task note'}])['notes'][0]",
+      owner('packaged-create-note'),signal);
+  assert(baseline.ok,baseline.error);
+  const before=baseline.result;
+  assert(before.effective_text_size>0,JSON.stringify(before));
+  const font=before.effective_text_size*1.25;
+  const edit=await bridge.exec("__result__=network_notes('/obj/editor_smoke',[{'name':'travel_help','text_size':"
+      +JSON.stringify(font)+"}])",owner('packaged-change-font'),signal);
+  assert(edit.ok,edit.error);
+  const after=edit.result.notes[0];
+  assert(Math.abs(after.text_size-font)<1e-6 && after.effective_text_size===after.text_size);
+  for(const key of ['identity','text','size','position'])assert.deepEqual(after[key],before[key]);
+  assert.equal(edit.result.scene_writes,1);
+  const raw=await bridge.exec("hou.node('/obj/editor_smoke').findStickyNote('travel_help').setTextSize(0.9)",
+    owner('packaged-covered-raw'),signal,undefined,false);
+  assert.equal(raw.ok,false);
+  assert.equal(raw.transaction.status,'no_scene_change');
+  assert.equal(raw.transaction.source_executed,false);
+  assert.equal(value.transaction.status,'effects_unverified');
+  assert.equal(value.transaction.source_executed,true);
+  assert.equal(health.rawGate,true);
+  const alias=await bridge.exec("from dsh_hou_helpers import set_parm as change\\nchange('/obj/editor_smoke','tx',7)",
+    owner('packaged-read-only-alias'),signal,undefined,true);
+  assert.equal(alias.ok,false);
+  const fixed=await bridge.inspectQueries([{id:'selection',verb:'selection'},{id:'scene',verb:'scene_info'}],
+    owner('packaged-structured-metadata'),signal);
+  assert(fixed.ok,JSON.stringify(fixed));
+  assert.equal(fixed.execution.source_kind,'structured_query');
+  assert.equal(fixed.transaction.source_executed,false);
+  assert.equal(fixed.transaction.status,'no_scene_change');
+  assert.deepEqual(fixed.result.rows.map(row=>row.id),['selection','scene']);
+  const mixed=await bridge.inspectQueries([
+    {id:'rejected',verb:'set_parm',args:['/obj/editor_smoke','tx',8]},
+    {id:'original',verb:'read_parms',args:['/obj/editor_smoke'],kwargs:{names:['tx']}},
+  ],owner('packaged-structured-partial'),signal);
+  assert.equal(mixed.result.rows[0].status,'rejected');
+  assert.equal(mixed.result.rows[1].result[0].value,0);
+  editorSmoke={before:before.effective_text_size,after:after.text_size,unchanged:['identity','text','size','position'],
+    nativeDefaultObserved:true,coveredRawRefused:true,observationEffect:value.transaction.status,
+    importedAliasRefused:true,structuredMetadataNoPython:true,structuredMixedRowsVerified:true};
+}
+fs.writeFileSync(process.argv[3],JSON.stringify({...value,health,editorSmoke}));if(value.ok!==true)process.exitCode=1;
 ''',encoding='utf-8')
-    inputs=fixture/'hom-input.json';inputs.write_text(json.dumps({'record':record,'target':target,'sessionId':session['sessionId']}),encoding='utf-8')
+    inputs=fixture/'hom-input.json';inputs.write_text(json.dumps({'record':record,'target':target,'sessionId':session['sessionId'],
+        'editorSmoke':args.editor_smoke}),encoding='utf-8')
     hom_file=fixture/'hom-result.json'
     checked=subprocess.run([shutil.which('node'),str(checker),str(inputs),str(hom_file)],cwd=fixture,env=env,
         capture_output=True,timeout=65,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -321,6 +467,19 @@ fs.writeFileSync(process.argv[3],JSON.stringify({...value,health}));if(value.ok!
     assert facts['mainThread'] and facts['new'] and facts['pid']==record['pid'] and facts['version']==selected['version'],facts
     assert Path(facts['hfs']).samefile(hfs) and Path(facts['bridgeFile']).resolve().is_relative_to(helper_root),facts
     assert all(filename and Path(filename).resolve().is_relative_to(helper_root) for filename in facts['loadedFiles'].values()),facts['loadedFiles']
+    registered_inspect=None
+    if args.editor_smoke:
+        request=Path(env['DSH_PACKAGED_INSPECT_REQUEST'])
+        request.with_suffix('.tmp').write_text(json.dumps({'sessionId':session['sessionId'],
+            'callId':'packaged-registered-inspect-'+uuid.uuid4().hex,'executorId':target['executor_id'],
+            'runtimeId':target['runtime_id'],'sceneEpoch':target['scene_epoch'],'houdiniVersion':selected['version']}),encoding='utf-8')
+        request.with_suffix('.tmp').replace(request)
+        response=Path(env['DSH_PACKAGED_INSPECT_RESULT'])
+        registered_inspect=wait_until(lambda:json.loads(response.read_text(encoding='utf-8')) if response.exists() else None,
+            60,'installed Host registered houdini_inspect tool')
+        assert registered_inspect.get('ok') is True,registered_inspect
+        assert registered_inspect['sessionId']==session['sessionId'] and registered_inspect['noModelInvocation'] is True
+        print('PASS installed Host registered houdini_inspect queries, typed rows and canonical receipt',flush=True)
     def component_current():
         presence=rpc('houdiniFrontend/projectPresence',{})
         observed=next(row for row in presence if row['executorId']==target['executor_id'])
@@ -343,7 +502,11 @@ fs.writeFileSync(process.argv[3],JSON.stringify({...value,health}));if(value.ok!
     assert menu['result']['sessionId']==session['sessionId'],'Native menu must return the exact registered writer conversation'
     assert menu['result']['executorId']==target['executor_id'],menu
     print('PASS installed helper GUI, loaded build identity, current component status, main-thread HOM and exact native-menu conversation',flush=True)
+    if args.editor_smoke:
+        assert hom_result['editorSmoke']['nativeDefaultObserved'] and hom_result['editorSmoke']['coveredRawRefused']
+        print('PASS installed GUI Sticky Note font and truthful observation receipt',flush=True)
     return {**facts,'loadedHelper':health['helper'],'componentUpdate':component,'releaseTarballUsed':True,'automaticComponentPreparation':True,'helperRoot':str(helper_root),
+        **({'editorSmoke':hom_result['editorSmoke'],'registeredInspect':registered_inspect} if args.editor_smoke else {}),
         'componentInstallRoot':str(install_root),'legacyComponents':args.legacy_components,
         'migrationReport':str(component_report) if component_report else None,
         'legacyFilesRetained':len(legacy_files),'legacyEntryCount':len(legacy_packages),'sessionId':session['sessionId'],
@@ -492,6 +655,9 @@ with log.open('wb') as output:
         assert standard['isDefault'] and not houdini['isDefault'] and len(presets)>=5 and 'broken' not in houdini,presets
         assert {'houdini_exec','houdini_inspect','houdini_isolated'}<=set(facts['modes']['houdini'])
         assert not any(name.startswith('houdini_') for name in facts['modes']['standard'])
+        if args.help_hfs:
+            assert len(facts['help'])==len(args.help_hfs) and all(row['continuationVerified'] for row in facts['help'])
+            report['packagedHelp']=facts['help']
         entries=facts['graph'].get('entries',facts['graph']) if isinstance(facts['graph'],dict) else facts['graph']
         assert sum(row['id']=='dsh-houdini' for row in entries)==1
         assert facts['prepareBridge'] is True

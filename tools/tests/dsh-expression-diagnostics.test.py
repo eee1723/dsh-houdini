@@ -67,6 +67,47 @@ with dsh_ownership.execution_owner('expression-owner','test'):
         except dsh_errors.CheckpointError as error:
             assert error.evidence['batch_parameter_state_restored'],error.evidence
         assert box.parm('ty').keyframes()==keys and box.evalParm('tz')==0
+
+        # Strict batch results observe dependencies after all writes. They do
+        # not evaluate the new expression once during writing and again later.
+        batch=h.tab_create(root,'box','batch_dependencies')
+        h.create_spare_parms(batch,spec=[{'type':'float','name':'follow','default':0.},
+                                       {'type':'float','name':'driver','default':0.}])
+        for values, expected in [({'follow':'ch("driver")','driver':7},7),
+                                 ({'follow':'ch("sizex")','size':[3,4,5]},3)]:
+            result=h.set_parms(batch,values)
+            assert result['readback_timing']=='after_batch_writes',result
+            assert result['set']['follow']==expected and result['evaluations']['follow']['value']==expected,result
+        assert result['set']['size']==[3,4,5],result
+        h.set_parms(batch,{'follow':0,'driver':0})
+        hou.session.dsh_batch_expression_reads=0
+        counted=("hou.session.dsh_batch_expression_reads += 1\n"
+                 "return hou.pwd().evalParm('driver')")
+        result=h.set_parms(batch,{'follow':{'expression':counted,'language':'python'},'driver':11})
+        assert result['set']['follow']==11 and result['evaluations']['follow']['status']=='evaluated',result
+        assert hou.session.dsh_batch_expression_reads==1,'batch must not explicitly evaluate the authored Python expression twice'
+        h.set_parm(batch,'follow',0)
+        del hou.session.dsh_batch_expression_reads
+        # A direct setter still reports its own write-time value, and explicit
+        # partial-success mode retains the same per-item evaluation boundary.
+        h.set_parm(batch,'driver',0)
+        single=h.set_parm(batch,'follow','ch("driver")')
+        assert single['value']==0 and 'readback_timing' not in single,single
+        partial=h.set_parms(batch,{'follow':'ch("driver")','driver':17},strict=False)
+        assert partial['readback_timing']=='after_each_write' and partial['set']['follow']==0,partial
+        assert batch.evalParm('follow')==17
+        # A late evaluation error restores every written value and the original
+        # channels, including tuple literals written after the bad expression.
+        follow_keys=batch.parm('follow').keyframes()
+        size_before=batch.parmTuple('size').eval()
+        try:
+            h.set_parms(batch,{'driver':19,'follow':{'expression':'1/0','language':'python'},'size':[9,9,9]})
+            raise AssertionError('deferred expression error was accepted')
+        except dsh_errors.CheckpointError as error:
+            assert error.evidence['batch_parameter_state_restored'] and error.evidence['failure_stage']=='evaluation',error.evidence
+        assert batch.evalParm('driver')==17 and batch.parm('follow').keyframes()==follow_keys
+        assert batch.parmTuple('size').eval()==size_before
+
         native_set=hou.Parm.setExpression
         def refuse_write(p,*args,**kwargs):
             if p.path()==box.parm('tx').path():raise hou.OperationFailed('injected native write failure')

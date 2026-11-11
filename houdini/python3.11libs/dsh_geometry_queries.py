@@ -270,9 +270,9 @@ def geo_piece_stats(node, piece_attrib: str | None = None,
 
 def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
                    sample: int = 4096, tolerance: float = 1e-6) -> dict:
-    """比较 SOP 两帧的 point 数值属性，不移动用户 playbar。
+    """比较 SOP 的 point 数值属性，不移动用户 playbar。
 
-    使用 ``geometryAtFrame`` 取得冻结几何；拓扑一致时返回抽样点的 mean/max delta、
+    使用 ``geometryAtFrame`` 取得冻结几何；数量和属性类型可比较时返回抽样点的 mean/max delta、
     p50/p90/p99、逐分量位移统计与 unchanged 百分比。适合区分“真实几何静止”和
     “ROP/图片缓存”；这些数值证明数据在动，不自动证明运动的审美语义。
 
@@ -281,23 +281,76 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
     （``min/max/mean`` 数组）、``unchanged_pct``、``sampled_points``、
     ``tolerance``、``data_type`` 和 ``size``；不要读取不存在的简写
     ``mean``/``max``。所有结果另含 node/attrib/frame/counts/bbox。
+
+    frame_b 为标量时保留原两帧返回结构；也可给1..16个有限帧号的list/tuple，
+    每帧按输入顺序与同一冻结基线比较。系列返回mode=baseline_series、results和
+    comparisons.{compared,not_comparable,error}；各行status明确区分数值比较、
+    不可比和执行错误。单个目标失败保留其他行；基线几何采集失败拒绝整个查询。
+    空点集在系列中保持not_comparable。只有点数/面数相等不证明拓扑或稳定身份，
+    point重排可能表现为位移；observed不认证动画、视觉或完整工程质量。
     """
     n = dsh_node_access._resolve(node)
     if n.type().category() != hou.sopNodeTypeCategory():
         raise ValueError("geo_frame_diff 只接受 SOP 节点")
     if not isinstance(sample, int) or sample <= 0 or sample > 1_000_000:
         raise ValueError("sample 必须是 1..1000000 的整数")
-    if tolerance < 0:
-        raise ValueError("tolerance 不能为负")
-    fa, fb = float(frame_a), float(frame_b)
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("tolerance 必须是有限非负数")
+    series = isinstance(frame_b, (list, tuple))
+    if series and not 1 <= len(frame_b) <= 16:
+        raise ValueError('frame_b 帧列表必须包含1..16个帧号')
+    fa = float(frame_a)
+    targets = [float(frame) for frame in frame_b] if series else [float(frame_b)]
+    if not math.isfinite(fa) or not all(math.isfinite(frame) for frame in targets):
+        raise ValueError('frame_a/frame_b 必须是有限帧号')
     _cook_control.require_evaluation('geo_frame_diff')
     ga = n.geometryAtFrame(fa)
-    gb = n.geometryAtFrame(fb)
-    if ga is None or gb is None:
-        raise ValueError(f"节点 {n.path()} 在指定帧没有 geometry")
-    counts_a = {"points": len(ga.points()), "prims": len(ga.prims())}
-    counts_b = {"points": len(gb.points()), "prims": len(gb.prims())}
-    bbox_a, bbox_b = ga.boundingBox(), gb.boundingBox()
+    if ga is None:
+        raise ValueError(f"节点 {n.path()} 在基线帧 {fa} 没有 geometry")
+    baseline = {'geometry': ga, **_frame_diff_summary(ga)}
+    if not series:
+        return _frame_diff_comparison(n, baseline, n.geometryAtFrame(targets[0]), fa, targets[0], attrib, sample, tolerance)
+    rows = []
+    counts = {'compared': 0, 'not_comparable': 0, 'error': 0}
+    for fb in targets:
+        try:
+            gb = n.geometryAtFrame(fb)
+            row = _frame_diff_comparison(n, baseline, gb, fa, fb, attrib, sample, tolerance)
+            if row['comparable'] and not row['sampled_points']:
+                row = {key: value for key, value in row.items() if key in (
+                    'node', 'attrib', 'frame_a', 'frame_b', 'correspondence', 'scope',
+                    'counts_a', 'counts_b', 'bbox_a', 'bbox_b')}
+                row.update(comparable=False, reason='no points to compare')
+            row['status'] = 'compared' if row['comparable'] else 'not_comparable'
+        except (hou.Error, ValueError, TypeError) as error:
+            row = {'node': n.path(), 'attrib': attrib, 'frame_a': fa, 'frame_b': fb,
+                   'status': 'error', 'comparable': False,
+                   'error': (error.instanceMessage() or str(error)) if isinstance(error, hou.Error) else str(error),
+                   'error_type': type(error).__name__}
+        counts[row['status']] += 1
+        rows.append(row)
+    return {'node': n.path(), 'attrib': attrib, 'mode': 'baseline_series',
+            'frame_a': fa, 'frames_b': targets, 'counts_a': baseline['counts'], 'bbox_a': baseline['bbox'],
+            'status': 'partial' if counts['not_comparable'] or counts['error'] else 'observed',
+            'comparisons': counts, 'results': rows, 'correspondence': 'point_number',
+            'semantic_status': 'unverified',
+            'scope': 'Each requested frame is sampled against one frozen baseline by point number. '
+                     'Count/type comparability is not matching primitive topology or stable point identity; '
+                     'successful numerical observations do not certify motion or visual quality.'}
+
+
+def _frame_diff_summary(geometry):
+    bounds = geometry.boundingBox()
+    return {'counts': {'points': len(geometry.points()), 'prims': len(geometry.prims())},
+            'bbox': {'min': [float(v) for v in bounds.minvec()], 'max': [float(v) for v in bounds.maxvec()]}}
+
+
+def _frame_diff_comparison(n, baseline, gb, fa, fb, attrib, sample, tolerance):
+    if gb is None:
+        raise ValueError(f"节点 {n.path()} 在目标帧 {fb} 没有 geometry")
+    ga = baseline['geometry']
+    target = _frame_diff_summary(gb)
+    counts_a, counts_b = baseline['counts'], target['counts']
     base = {
         "node": n.path(),
         'correspondence': 'point_number',
@@ -307,14 +360,8 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
         "frame_b": fb,
         "counts_a": counts_a,
         "counts_b": counts_b,
-        "bbox_a": {
-            "min": [float(v) for v in bbox_a.minvec()],
-            "max": [float(v) for v in bbox_a.maxvec()],
-        },
-        "bbox_b": {
-            "min": [float(v) for v in bbox_b.minvec()],
-            "max": [float(v) for v in bbox_b.maxvec()],
-        },
+        "bbox_a": baseline['bbox'],
+        "bbox_b": target['bbox'],
     }
     if counts_a != counts_b:
         base.update({"comparable": False, "reason": "topology counts differ"})
@@ -328,7 +375,9 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
     if aa.dataType() == hou.attribData.String:
         raise ValueError("geo_frame_diff 只支持数值 point 属性")
     getter = "pointFloatAttribValues" if aa.dataType() == hou.attribData.Float else "pointIntAttribValues"
-    values_a = list(getattr(ga, getter)(attrib))
+    if 'values' not in baseline:
+        baseline['values'] = list(getattr(ga, getter)(attrib))
+    values_a = baseline['values']
     values_b = list(getattr(gb, getter)(attrib))
     size = aa.size()
     point_count = counts_a["points"]
@@ -348,7 +397,10 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
             float(values_b[offset + c]) - float(values_a[offset + c])
             for c in range(size)
         ]
-        deltas.append(math.sqrt(sum(value * value for value in components)))
+        magnitude = math.sqrt(sum(value * value for value in components))
+        if not all(math.isfinite(value) for value in components) or not math.isfinite(magnitude):
+            raise ValueError('sampled attribute difference is nonfinite or exceeds the supported numeric range')
+        deltas.append(magnitude)
         for component, value in enumerate(components):
             component_deltas[component].append(value)
     unchanged = sum(1 for value in deltas if value <= tolerance)
@@ -390,6 +442,10 @@ def geo_frame_diff(node, frame_a, frame_b, attrib: str = "P",
         },
         "unchanged_pct": unchanged * 100.0 / len(deltas) if deltas else 100.0,
     })
+    measured = [base['mean_delta'], base['max_delta'], *base['delta_percentiles'].values(),
+                *(value for values in base['component_delta'].values() for value in values)]
+    if not all(math.isfinite(value) for value in measured):
+        raise ValueError('sampled attribute summary exceeds the supported numeric range')
     return base
 
 

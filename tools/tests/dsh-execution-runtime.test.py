@@ -23,8 +23,9 @@ import dsh_component_contracts
 import dsh_network_boxes as boxes
 
 
-# Queries, including failed queries, do not touch editing journals or the undo
-# stack. Their ordinary ledger/result facts still flow through the same runtime.
+# Requested queries do not touch editing journals or the undo stack. Their
+# entry mode is not proof about arbitrary Python effects; captured operation
+# facts still flow through the same runtime.
 with (patch.object(hou.undos, 'areEnabled', side_effect=AssertionError('query inspected undo')),
       patch.object(dsh_ownership, 'track_created_nodes', side_effect=AssertionError('query prepared creation journal')),
       patch.object(boxes, 'transaction_journal', side_effect=AssertionError('query prepared box journal'))):
@@ -32,10 +33,12 @@ with (patch.object(hou.undos, 'areEnabled', side_effect=AssertionError('query in
         result = bridge.run_code('__result__ = scene_info()["frame"]', read_only=True)
     assert parsed.call_count == 1, parsed.call_count
     assert result['ok'] and result['result'] == float(hou.frame()), result
-    assert result['transaction']['status'] == 'no_scene_change', result
+    assert result['transaction']['status'] == 'effects_unverified', result
+    assert result['transaction']['source_executed'] and result['execution']['read_only'], result
+    assert result['execution']['impact']['unavailable'], result
 
     failed = bridge.run_code("describe('/obj/__missing_query_fixture__')", read_only=True)
-    assert not failed['ok'] and failed['transaction']['status'] == 'no_scene_change', failed
+    assert not failed['ok'] and failed['transaction']['status'] == 'effects_unverified', failed
     assert 'rollback' not in failed, failed
 
     with patch.object(analysis.ast, 'parse', wraps=analysis.ast.parse) as parsed:
@@ -43,6 +46,85 @@ with (patch.object(hou.undos, 'areEnabled', side_effect=AssertionError('query in
     assert parsed.call_count == 1, parsed.call_count
     assert not blocked['ok'] and blocked['rawUsage']['gateOutcome'] == 'read_only_blocked', blocked
     assert blocked['transaction']['status'] == 'no_scene_change', blocked
+    assert not blocked['transaction']['source_executed'] and not blocked['execution']['impact']['unavailable'], blocked
+
+# Public facade aliases now share request dispatch and access mode. Dynamic
+# raw HOM still lies outside that narrow facade guarantee and must retain the
+# phase-1 effects-unverified receipt. These are disposable isolated nodes.
+with dsh_ownership.execution_owner('effect-observer', 'setup'):
+    effect_root = helpers.tab_create('/obj', 'geo', name='receipt_effect_fixture')
+    effect_node = helpers.tab_create(effect_root, 'box', name='observed')
+try:
+    alias_code = ("from dsh_hou_helpers import set_parm as change\n"
+                  f"change({effect_node.path()!r}, 'sizex', 4)")
+    alias = bridge.run_code(alias_code, owner_session='effect-observer', read_only=True)
+    assert not alias['ok'] and effect_node.evalParm('sizex') == 1, alias
+    assert alias['transaction']['status'] == 'effects_unverified', alias
+    assert alias['execution']['read_only'] and 'Requested' in alias['execution']['read_only_scope'], alias
+    assert alias['execution']['impact']['unavailable'] and not alias['execution']['impact']['attempted'], alias
+    assert not alias['execution']['impact']['global'] and not alias['execution']['impact']['nodes'], alias
+    assert len(alias['verbs']) == 1 and alias['verbs'][0]['verb'] == 'set_parm', alias
+    assert alias['verbs'][0]['summary']['phase'] == 'access_mode' and alias['verbs'][0]['summary']['scene_writes'] == 0, alias
+    assert 'rollback' not in alias, 'requested inspect did not perform native undo'
+
+    alias_edit = bridge.run_code(alias_code, owner_session='effect-observer')
+    assert alias_edit['ok'] and effect_node.evalParm('sizex') == 4, alias_edit
+    assert alias_edit['transaction']['status'] == 'committed', alias_edit
+    assert [row['verb'] for row in alias_edit['verbs']] == ['set_parm'], alias_edit
+
+    dynamic_code = (f"target = hou.node({effect_node.path()!r}).parm('sizex')\n"
+                    "method = 'set'\ngetattr(target, method)(6)")
+    dynamic = bridge.run_code(dynamic_code, owner_session='effect-observer', read_only=True)
+    assert dynamic['ok'] and effect_node.evalParm('sizex') == 6, dynamic
+    assert dynamic['transaction']['status'] == 'effects_unverified', dynamic
+    assert dynamic['execution']['impact']['unavailable'] and not dynamic['execution']['impact']['global'], dynamic
+    assert dynamic['rawUsage']['scope'].startswith('Static source classification'), dynamic
+
+    dynamic_exec = bridge.run_code(dynamic_code, owner_session='effect-observer')
+    assert dynamic_exec['ok'] and effect_node.evalParm('sizex') == 6, dynamic_exec
+    assert dynamic_exec['transaction']['status'] == 'effects_unverified', dynamic_exec
+    assert not dynamic_exec['execution']['impact']['attempted'] and not dynamic_exec['execution']['impact']['global'], dynamic_exec
+
+    failed_exec = bridge.run_code(dynamic_code.replace('(6)', '(7)') + "\nraise RuntimeError('failed custom edit')",
+                                  owner_session='effect-observer')
+    assert not failed_exec['ok'], failed_exec
+    rollback = failed_exec.get('rollback', {})
+    if rollback.get('applied') and not rollback.get('error'):
+        assert failed_exec['transaction']['status'] == 'rolled_back' and effect_node.evalParm('sizex') == 6, failed_exec
+    else:
+        assert failed_exec['transaction']['status'] == 'effects_unverified' and effect_node.evalParm('sizex') == 7, failed_exec
+    assert 'not fully observed or restored' in failed_exec['transaction']['scope'], failed_exec
+
+    dynamic_failure = bridge.run_code(dynamic_code + "\nraise RuntimeError('after hidden write')",
+                                     owner_session='effect-observer', read_only=True)
+    assert not dynamic_failure['ok'] and effect_node.evalParm('sizex') == 6, dynamic_failure
+    assert dynamic_failure['transaction']['status'] == 'effects_unverified' and 'rollback' not in dynamic_failure, dynamic_failure
+
+    # Successful arbitrary code is unknown even when there was no real write;
+    # the result must not manufacture a global edit to compensate for missing
+    # observation. Explicit managed writes keep their actual bounded facts.
+    harmless = bridge.run_code("__result__ = 2 + 3", owner_session='effect-observer')
+    assert harmless['ok'] and harmless['result'] == 5, harmless
+    assert harmless['transaction']['status'] == 'effects_unverified', harmless
+    assert harmless['execution']['impact']['unavailable'] and not harmless['execution']['impact']['attempted'], harmless
+    managed = bridge.run_code(f"set_parm({effect_node.path()!r}, 'sizex', 8)", owner_session='effect-observer')
+    assert managed['ok'] and managed['transaction']['status'] == 'committed', managed
+    assert managed['execution']['impact']['attempted'] and managed['execution']['impact']['unavailable'], managed
+    assert effect_node.sessionId() in {item['identity'] for item in managed['execution']['impact']['nodes']}, managed
+
+    # The appearance of an exempted method in a dead branch is no evidence of
+    # an executed edit. Preserve the static report separately from effects.
+    exempted = bridge.run_code("if False:\n    hou.setFrame(90)", allow_raw='static unreachable fixture',
+                               owner_session='effect-observer')
+    assert exempted['ok'] and exempted['rawUsage']['gateOutcome'] == 'exempted', exempted
+    assert exempted['transaction']['status'] == 'effects_unverified', exempted
+    assert not exempted['execution']['impact']['attempted'] and not exempted['execution']['impact']['global'], exempted
+
+    syntax = bridge.run_code("if :", owner_session='effect-observer', read_only=True)
+    assert not syntax['ok'] and syntax['transaction']['status'] == 'no_scene_change', syntax
+    assert not syntax['transaction']['source_executed'] and not syntax['execution']['impact']['unavailable'], syntax
+finally:
+    effect_root.destroy()
 
 # A warm vocabulary does not re-inspect all signatures on each request. When a
 # callable changes, its actual new signature is used for both dispatch and help.

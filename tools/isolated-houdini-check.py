@@ -198,7 +198,8 @@ def execution_view(envelope, details):
            'fields': ['/' + key for key in envelope if key != 'verbs']}}
     fields = [('error', 1600), ('outcome', 800), ('rollback', 800), ('scope', 450),
               ('semantic_status', 160), ('restored', 160), ('execution', 1000),
-              ('script', 500), ('evidence', 2300), ('checks', 800), ('result', 4000),
+              ('script', 500), ('native_diagnostics', 1600), ('native_output_omitted_bytes', 160), ('evidence', 2300),
+              ('checks', 800), ('result', 4000), ('native_output', 1200),
               ('stderr', 700), ('advisory', 450), ('stdout', 1000),
               ('transaction', 700), ('rawUsage', 500), ('artifactCandidates', 400)]
     for key, allowance in fields:
@@ -493,6 +494,77 @@ def load_manifest(path, *, expected_sha256=None):
     return manifest
 
 
+def _execute_with_native_output(call):
+    """Capture native/child-process output for exactly one Bridge execution.
+
+    Bridge's redirect_stdout/stderr only sees Python text. Mantra inherits the
+    worker's OS descriptors, so scope descriptor redirection to this synchronous
+    call and restore both descriptors before any subsequent check.
+    """
+    with tempfile.TemporaryFile() as native_log:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        saved = [(fd, os.dup(fd)) for fd in (1, 2)]
+        try:
+            try:
+                for fd, _backup in saved:
+                    os.dup2(native_log.fileno(), fd)
+                envelope = call()
+            finally:
+                sys.stdout.flush()
+                sys.stderr.flush()
+                for fd, backup in saved:
+                    os.dup2(backup, fd)
+        finally:
+            for _fd, backup in saved:
+                os.close(backup)
+        # Scan the complete stream for the confirmed failure, but retain only a
+        # bounded head/tail preview. A chatty renderer cannot exhaust worker RAM
+        # or the result archive merely because diagnostics are being collected.
+        edge = 128 * 1024
+        native_log.seek(0, os.SEEK_END)
+        size = native_log.tell()
+        omitted = max(0, size - 2 * edge)
+        native_log.seek(0)
+        if not omitted:
+            data = native_log.read()
+        else:
+            head = native_log.read(edge)
+            marker = ('\n[native output omitted %d bytes; full stream was scanned for renderer diagnostics]\n' % omitted).encode('ascii')
+            native_log.seek(-edge, os.SEEK_END)
+            data = head + marker + native_log.read(edge)
+        native_output = data.decode('utf-8', errors='replace')
+        diagnostic_lines = []
+        native_log.seek(0)
+        for raw_line in native_log:
+            line = raw_line.decode('utf-8', errors='replace').rstrip('\r\n')
+            if re.fullmatch(r"\[[0-9:]+\] mantra: Unable to load texture '(.+)'", line):
+                diagnostic_lines.append(line)
+    return envelope, native_output, omitted, diagnostic_lines
+
+
+def _record_native_diagnostics(envelope, native_output, omitted=0, diagnostic_lines=None):
+    """Promote only the observed Mantra texture-load failure, not arbitrary logs."""
+    if native_output:
+        envelope['native_output'] = native_output
+    if omitted:
+        envelope['native_output_omitted_bytes'] = omitted
+    diagnostics = []
+    for line in native_output.splitlines() if diagnostic_lines is None else diagnostic_lines:
+        match = re.fullmatch(r"\[[0-9:]+\] mantra: Unable to load texture '(.+)'", line)
+        if match:
+            diagnostics.append({'kind': 'texture_load_failed', 'renderer': 'mantra',
+                                'path': match[1], 'message': line})
+    if not diagnostics:
+        return envelope
+    envelope['native_diagnostics'] = diagnostics
+    envelope.setdefault('checks', []).append({
+        'verb': 'native_renderer', 'status': 'failed', 'diagnostics': diagnostics})
+    checks = envelope.setdefault('outcome', {}).setdefault('checks', {})
+    checks['failed'] = checks.get('failed', 0) + 1
+    return envelope
+
+
 def worker(request_file):
     # The caller has assigned this process to its limited Job before GO.
     request = read_json(request_file, MAX_ARCHIVE_BYTES)
@@ -512,7 +584,10 @@ def worker(request_file):
                              'verb_catalog_sha256': bridge._VERB_CATALOG_HASH, 'owner_session': session}
 
         def execute(code, call, *, script=None):
-            return bridge._execute(lambda: bridge.run_code(code, owner_session=session, owner_call=call, script=script))
+            envelope, native_output, omitted, diagnostic_lines = _execute_with_native_output(
+                lambda: bridge._execute(lambda: bridge.run_code(
+                    code, owner_session=session, owner_call=call, script=script)))
+            return _record_native_diagnostics(envelope, native_output, omitted, diagnostic_lines)
 
         def retain(envelope, identifier):
             remaining = len(request['manifest']['checks']) - len(result['checks'])
@@ -525,6 +600,11 @@ def worker(request_file):
         def successful(envelope):
             if not envelope['ok']:
                 raise RuntimeError(envelope.get('error') or 'Bridge execution failed')
+            checks = envelope.get('outcome', {}).get('checks', {})
+            if checks.get('failed', 0) > 0:
+                diagnostics = envelope.get('native_diagnostics', [])
+                detail = '; '.join(row['message'] for row in diagnostics)
+                raise RuntimeError(detail or 'Bridge execution reported failed checks')
             return envelope.get('result')
 
         def run():
@@ -729,7 +809,12 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POL
                         raise ValueError('artifact integrity mismatch')
             report.update(ok=True, phase='completed')
         if not report['ok']:
-            report['error'] = result.get('error') or process.get('error') or 'worker did not complete all checks'
+            incomplete = (f"worker reported completed work but its process did not exit cleanly "
+                          f"(status={process.get('status')}, returncode={process.get('returncode')}); "
+                          'inspect the retained results before considering another execution'
+                          if result.get('ok') is True and result.get('phase') == 'completed'
+                          else 'worker did not complete all checks')
+            report['error'] = result.get('error') or process.get('error') or incomplete
     except Exception as error:
         report.update(ok=False, error=_brief_text(str(error) or type(error).__name__))
     finally:
@@ -799,6 +884,24 @@ def status(directory, cancel=False):
         'scope':'Last recorded run evidence, not a live-process liveness claim. Cancellation is a request until a terminal report confirms it. Large immutable execution details are referenced from the report.'}
 
 
+def _exit_worker(code):
+    """Finish only the disposable hython, after its work and report are done.
+
+    USD cleanup can still schedule Work tasks during native library teardown.
+    H22's observed shutdown failure is avoided by ending that concurrency here,
+    without restricting the builder/checks or changing the caller environment.
+    hou.exit is the documented non-graphical Houdini shutdown path; the actual
+    worker code is preserved and the supervisor still verifies process exit.
+    """
+    import hou
+    if hou.isUIAvailable():
+        raise RuntimeError('Disposable worker shutdown requires a headless process')
+    from pxr import Work
+    Work.SetConcurrencyLimit(1)
+    hou.exit(exit_code=code, suppress_save_prompt=True)
+    raise RuntimeError('Houdini worker shutdown unexpectedly returned')
+
+
 def main():
     if sys.argv[1:2] == ['--plan']:
         parser = argparse.ArgumentParser(description='Pure isolated input planning; no dependency reads or HOM')
@@ -815,7 +918,8 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--worker':
         if sys.stdin.readline().strip() != 'GO':
             return 2
-        return worker(Path(sys.argv[2]))
+        code = worker(Path(sys.argv[2]))
+        _exit_worker(code)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path)
     parser.add_argument('--manifest-sha256', help='Host-authorized manifest bytes; reject edits before staging')

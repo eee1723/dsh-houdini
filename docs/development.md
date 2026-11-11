@@ -98,6 +98,10 @@ npm首次发布由维护者通过`npm login --registry=https://registry.npmjs.or
 
 npm分发回访仍使用上述现有入口：分发检查传`--remote-only --npm`，从`--artifact`内读取精确包名和版本，在原生插件页安装、启用、停用、重新启用及卸载；[发行包CLI/Host组合](../tools/tests/dsh-packaged-plugin-install.test.py)传`--npm --artifact <冻结tgz>`核对registry依赖记录、同包manifest/文件、模式隔离与完整媒体资源。按需沿`--hfs`核对真实Houdini加载。验证使用自有profile，不修改用户现有安装；同包只换分发渠道时不重复整套HOM回归。
 
+本地帮助随包验收可向上述组合测试重复传入 `--help-hfs <Houdini安装绝对目录>`。由安装后的 Houdini 作用域调用 `houdini_resource`，核对各安装构建的原始页来源及分页连续性。此项无需启动 Houdini 或模型。
+
+编辑器与结构化观察随包验收可用 `--hfs <Houdini安装绝对目录> --editor-smoke`。测试在自有真实 GUI 中写入便签字号，核对原生默认、写后回读、属性保持、已覆盖裸写入拒绝和数据查询回执，无需模型。
+
 包名及精确版本仅在所选registry已公开时作为可用入口；裸包名的latest还须核对`engines.dsh`，不能用GitHub同版可下载、源码版本或切换registry代替上游公开。URL／文件安装保留原来源，不因npm公开自动成为registry安装。原生更新资格、同名添加与来源迁移合同统一见[DSH适配](dsh-update-compatibility.md#第三方插件更新入口)。
 
 中国大陆镜像采用[npmmirror的只读同步服务](https://npmmirror.com/)。npm正式版本可下载后，通过[本包同步页](https://npmmirror.com/sync/dsh-houdini)发起同步，核对任务结果、镜像的精确版本与dist-tag，再下载镜像tgz与同一冻结包比较摘要。镜像任务提交或网页旧缓存不代表版本已可安装；以目标registry实际查询及下载为准。原生分发检查可加`--registry https://registry.npmmirror.com/`，仅在自有profile配置该源、清空回退，并核对实际消费者读到的配置，避免自动选源掩盖未同步问题。同步延迟时仍提供npm官方源和GitHub直链，不修改用户全局registry或另发一份包。
@@ -186,6 +190,10 @@ npm test
 | 批量 SOP 构建 | [dsh-module-preflight](../tools/tests/dsh-module-preflight.test.py) |
 | multiparm结构与通道恢复 | [dsh-multiparm-restoration](../tools/tests/dsh-multiparm-restoration.test.py) |
 
+保存点恢复涉及独立编辑项时，再运行[编辑项跨进程恢复](../tools/tests/dsh-note-recovery.test.py)：
+`python tools/tests/dsh-note-recovery.test.py <H21-hython> <H22-hython> --output-dir <新证据目录>`。
+该入口分别保存、重开独立HIP，验证Sticky Note和Network Box的真实加载身份、复制/同名替换拒绝、仅编辑项任务、inactive作者及激活原子性；不连接用户现场，也不把父网络标记当作归属。
+
 视口临时着色用[dsh-viewport-screenshot](../tools/tests/dsh-viewport-screenshot.test.py)核对成功、部分setter失败和恢复失败；[原生GUI入口](../tools/tests/dsh-ui-surfaces-gui.test.py)的`--only-shading`核对H21/H22实际Bridge只读settings、捕获期间着色、图像与恢复。该入口复用自有WorkerJob回收，独立工程目录必须在源码树外。
 
 通过 [houdini_test_environment](../tools/houdini_test_environment.py) 创建临时偏好、空 package 环境和目标安装路径；启动目录使用指定安装的 bin。Python 通过 PYTHONPATH/测试入口兼容 H21/H22，不继承用户插件、Qt override 或模型凭据。隔离检查不连接 live，也不加载用户 HIP。部署运行器的纯 Python 检查由普通 CLI 解释器执行一次；显式hython只执行HOM与实际启动隔离检查，避免把Houdini运行成本混入普通进程／内存夹具。
@@ -194,7 +202,7 @@ npm test
 
 功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
 
-[图像请求组合](../tools/tests/dsh-image-consumption-fixture.mjs)以`node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]`运行固定DSH Web标准preset、原生read_image及真实pi-ai适配器，由自建loopback provider捕获最终HTTP图片。它在同一会话调整并恢复原生requestImagePixelBudget，核对原参考/A/B均保留、请求变体与wire哈希一致、模型句柄尺寸、源文件/持久附件不变及无offload。受控响应不证明真实模型识图或token费用下降；比较像素和编码字节时分别记录格式变化，不把较小分辨率当成较小传输。记录实际Node/DSH/运行修复身份，标准preset通过不扩大为Houdini preset、GUI或正式发行验证。实际模型的预算对照仍沿下述授权试验入口。
+[图像请求组合](../tools/tests/dsh-image-consumption-fixture.mjs)以`node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]`运行固定DSH Web标准preset、原生read_image及真实pi-ai适配器，由自建loopback provider捕获最终HTTP图片。它在同一会话调整并恢复原生requestImagePixelBudget，核对原参考/A/B均保留、请求变体与wire哈希一致、模型句柄尺寸、源文件/持久附件不变及无offload。受控响应不证明真实模型识图或token费用下降；比较像素和编码字节时分别记录格式变化，不把较小分辨率当成较小传输。缺少图片模态声明时保留unsupported元数据；只有用户明确确认路由后才允许allow_undeclared_image_input单次尝试，通道/查询失败与实际保存失败分别处理。记录实际Node/DSH/运行修复身份，标准preset通过不扩大为Houdini preset、GUI或正式发行验证。实际模型的预算对照仍沿下述授权试验入口。
 
 任务拆分与完整源组件的方法改动，先用[skill审计](../skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs)、preset组合与下述`--context-loop`验证注册、资料路由和实际模型输入。自然采用另用同模型、同要求、同预算的独立工程对照：观察源组件的局部检查是否影响后续构建，再执行换源、改布局、局部细化或共享尺寸变化，检查最终消费者与修改范围；用另一类任务验证领域外适用性。源本来应为Box、共享连续表面和先代理后细化都是合法反例，不按节点数、截图数或技能关键词评分。审查需包含能推翻自报成功的情况，例如实际开口被封堵但模板未变、同包围范围的错误形状和局部遮挡；模板或生成公式通过不能升级为最终实体关系通过。trace的原生图片与显式读图记录通过nextToolStep定位观察返回后提交的下一动作，引用原时间线而不推断修改、因果或成功；并发中先提交后返回的动作不算后续决策。受控模型能取到技能不证明自主分治或质量提升，保留质量、返工及计算成本的实际证据，过程产物留会话/临时目录。
 
@@ -205,6 +213,8 @@ npm test
 默认能力还需验证实际组合。[HDA生命周期](../tools/tests/dsh-hda-lifecycle.test.py)在H21/H22将原生COP预览与普通源共同封装，核对公共参数、新实例几何、保存/锁定/解锁、失败Undo和完整内部identity；锁定嵌套定义不计作者工作量，但解锁内部后仍受同一工作量边界约束。foreign实例或后代不因组合测试获得豁免。这类检查不证明预览图像外观或任意大型HDA兼容。
 
 原生USD退出问题用[reproduce-usd-exit](../tools/reproduce-usd-exit.py)在指定`--hython`中运行独立的导入、内存stage和LOP对照，可重复传版本路径并用`--repeat`检查复现率。每次使用新偏好/package目录和明确HFS，不加载用户HIP或DSH插件；保留脚本主体完成标记、真实退出码与stdout/stderr。主体完成但进程非零退出仍属异常；相同退出码不能证明同一根因，headless结果不能外推GUI行为。证据写到新临时目录，不修改系统崩溃报告或用户配置。
+
+受管隔离检查在 worker 写完报告后收窄 USD Work 的清理并发，再用 `hou.exit` 原样传出 worker 退出码。计算阶段的并发由原环境决定，监督器以实际进程退出结果判定。使用[隔离检查回归](../tools/tests/dsh-isolated-houdini.test.py)同时核对 USD 成功退出和原始失败仍为非零。
 
 重复细节的代码生成方法在[SOP建模资料](../skills/houdini-sop-workflow/references/modeling-methods.md#重复规律与代码生成)维护。[重复布局检查](../tools/tests/dsh-repeated-layout.test.py)在隔离H21/H22通过Bridge执行随包示例，核对模板位置与ID、Sweep后的字符串属性、参数修改、空输出回滚和foreign边界。[VEX代码生成诊断](../tools/reproduce-vex-codegen.py)以`--hython <明确版本> --form both`在各自原生新进程对照展开语句与循环，保留源计算、下游计算和进程退出事实；展开形式可能崩溃，厂商修复后也可以成功，不把旧崩溃或字符数设为永久测试预期。默认`--form loop`。示例与诊断通过不代替真实模型采用、全部资产安全或GUI观察。
 

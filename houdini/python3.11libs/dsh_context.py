@@ -69,12 +69,23 @@ def scene_context(runtime_id, owner_thread):
         'ui_available': ui, 'dirty_reliable': ui,
         'has_unsaved_changes': bool(hou.hipFile.hasUnsavedChanges()) if ui else None,
         'selection': [], 'selection_count': 0, 'panes': [],
+        'selected_editor_items': [], 'selected_editor_items_count': 0,
         'focus': 'unknown', 'geometry_selection': {'status': 'not_observed',
             'reason': 'metadata snapshot does not evaluate geometry or enter viewer selection'},
         'scope': 'metadata only; observation is not a scene lock or mutation authorization',
     }
     if ui:
-        selected = hou.selectedNodes()
+        # One native selection snapshot. Notes and boxes need their own exact
+        # parent/name for the editor verbs; they are not nodes or write grants.
+        items = hou.selectedItems()
+        selected = [item for item in items if isinstance(item, hou.OpNode)]
+        editor_items = [item for item in items if isinstance(item, (hou.StickyNote, hou.NetworkBox))]
+        result['selected_editor_items_count'] = len(editor_items)
+        result['selected_editor_items_truncated'] = len(editor_items) > 8
+        result['selected_editor_items'] = [
+            {'type': 'sticky_note' if isinstance(item, hou.StickyNote) else 'network_box',
+             'parent': item.parent().path(), 'name': item.name()}
+            for item in editor_items[:8]]
         result['selection_count'] = len(selected)
         result['selection_truncated'] = len(selected) > 16
         for n in selected[:16]:

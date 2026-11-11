@@ -375,3 +375,13 @@ from dsh_usd_inspection import (
 from dsh_viewport import (
     viewport_screenshot,
 )
+
+# Wrapping the public facade here also covers aliases imported before a
+# request starts. Implementation modules keep their ordinary internal calls;
+# no private module functions are replaced or patched by the dispatcher.
+from dsh_verb_dispatch import public_verb as _public_verb
+for _public_name, _public_function in tuple(globals().items()):
+    if (not _public_name.startswith('_') and callable(_public_function)
+            and _public_name not in ('context_name', 'report_image')):
+        globals()[_public_name] = _public_verb(_public_name, _public_function)
+del _public_name, _public_function, _public_verb

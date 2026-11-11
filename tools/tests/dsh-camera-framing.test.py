@@ -72,7 +72,7 @@ try:
         projected=bridge.run_code(
             f'__result__=camera_fit({cam.path()!r},{box.path()!r},dry_run=True)',
             owner_session='framing-test',owner_call='camera-plan')
-        assert projected['ok'] and projected['transaction']['status']=='no_scene_change',projected
+        assert projected['ok'] and projected['transaction']['status']=='effects_unverified' and projected['transaction']['source_executed'] is True,projected
         assert projected['execution']['impact']['attempted'] is False,projected
         result=h.camera_fit(cam,box)
         assert result['ok'] and cam.evalParm('focal')==50
@@ -335,9 +335,14 @@ real_reload=importlib.reload
 real_stop,real_start=bridge.stop,bridge.start
 expected_wrangle_card=cards.operation_card('attribwrangle')
 started=[]
+def fake_start(*args, **kwargs):
+    from types import SimpleNamespace
+    started.append((args, kwargs))
+    return SimpleNamespace(server_port=args[0])
+
 try:
     bridge.stop=lambda:None
-    bridge.start=lambda *a,**kw:started.append((a,kw))
+    bridge.start=fake_start
     importlib.reload=lambda m:m if m is bridge else real_reload(m)
     f.solve=None
     observation.attribute_uniqueness=None

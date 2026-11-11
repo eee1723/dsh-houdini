@@ -83,7 +83,7 @@ try:
                   "except Exception:\n pass")
     assert receipt['ok'] and receipt['verbs'][0]['summary']['restored'] is True, receipt
     assert channels(root) == before, (before, channels(root))
-    assert receipt['transaction']['status'] == 'no_scene_change', receipt
+    assert receipt['transaction']['status'] == 'effects_unverified' and receipt['transaction']['source_executed'] is True, receipt
     nested = run(f"try:\n set_parms({root.path()!r},{{'items1':0,'tx':[1]}})\n"
                  "except Exception:\n pass")
     assert nested['ok'] and channels(root) == before, nested

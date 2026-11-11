@@ -32,6 +32,7 @@ try:
     assert query['execution']['runtime_id']==observation['runtime_id']
     assert query['execution']['sequence']>observation['sequence']
     assert not query['execution']['impact']['attempted'] and not query['execution']['impact']['nodes']
+    assert query['transaction']['status']=='effects_unverified' and query['execution']['impact']['unavailable']
     assert query['transaction']['nodes'][0]['identity']==ctrl.sessionId()
     assert query['execution']['hip_dir'] is None, 'new scene has no meaningful project directory'
     # A legitimately saved untitled.hip is a project too. No extra Host query
@@ -53,8 +54,9 @@ try:
     mixed=run(f'verify_network({root.path()!r},output={out.path()!r})\nset_parm({ctrl.path()!r},"width",3)')
     assert mixed['execution']['impact']['last_edit_ledger_index']==2
     invalid=run(f'set_parm({ctrl.path()!r},"width",4,unexpected=True)')
-    assert invalid['transaction']['status']=='no_scene_change'
+    assert invalid['transaction']['status']=='effects_unverified'
     assert invalid['execution']['impact']['nodes']==[]
+    assert invalid['execution']['impact']['unavailable']
     unit=root.node('unit');identity=unit.sessionId()
     deleted=run(f'delete_node({unit.path()!r})')
     assert any(n['identity']==identity and n['exists'] is False for n in deleted['transaction']['nodes'])

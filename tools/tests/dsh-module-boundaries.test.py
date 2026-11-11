@@ -21,7 +21,7 @@ try:
     identity=original.sessionId()
     points=len(original.geometry().points())
     bad_query=run(f'list_parms({original.path()!r},filter="size")',read_only=True)
-    assert not bad_query['ok'] and bad_query['transaction']['status']=='no_scene_change',bad_query
+    assert not bad_query['ok'] and bad_query['transaction']['status']=='effects_unverified' and bad_query['transaction']['source_executed'] is True,bad_query
     assert bad_query['evidence'][0]['phase']=='argument_binding' and 'signature' in bad_query['evidence'][0]
     assert root.node('module_a').sessionId()==identity
     bad_module=f'build_module({root.path()!r},[{{"name":"bad","type":"attribwrangle","inputs":["module_a"],"parms":{{"snippet":"unknown_boundary_probe();"}}}}],output="bad")'
@@ -41,11 +41,12 @@ try:
     assert joined['ok'] and len(root.node('join').geometry().prims())==12,joined
     # Binding errors are detected before dispatch; implementation TypeErrors
     # retain their actual traceback and are never labelled zero-write binding.
+    # The submitted Python still runs before its verb arguments are bound.
     for name, call in [('set_parms',f'set_parms({original.path()!r},{{"sizex":4}},filter="wrong")'),
                        ('node_info','node_info(type="box",context="sop")')]:
         failed=run(call)
         assert not failed['ok'] and failed['evidence'][0]['phase']=='argument_binding',failed
-        assert failed['transaction']['status']=='no_scene_change',failed
+        assert failed['transaction']['status']=='effects_unverified' and failed['transaction']['source_executed'] is True,failed
     def internal_error(value):
         raise TypeError('inside implementation')
     ledger=[]

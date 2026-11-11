@@ -25,6 +25,7 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
   ctx.on('llm/adapters-updated', () => { visionGeneration++ })
   ctx.on('agent/inbox/inserted', ({agent,message}) => provider.receive(agent as unknown as AgentView,message))
   ctx.on('agent/inbox/claimed', ({agent,message}) => provider.claim(agent,message))
+  ctx.on('agent/inbox/discarded', ({agent,message}) => provider.discard(agent,message))
   for (const [name,order] of [[SCENE,150],[EXECUTION,151],[VISION,152]] as const)
     ctx.systemPrompt.context({name,order,text:context => {
       const agent = (context as typeof context & {agent?:AgentView}).agent

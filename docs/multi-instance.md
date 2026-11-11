@@ -91,7 +91,9 @@
 
 连接现场和恢复原节点修改资格分开。选择任何明确现场不要求它先证明是旧工程；没有可信恢复材料时仍可连接、查看和讨论，具体修改按ownership规则判断。
 
-原session重开已保存工程后，可用可信保存点映射原节点。恢复必须核对实际HIP字节、加载基线、唯一节点标记、创建来源和原运行生命周期。节点路径、复制标签、scene ID或用户说“已恢复”均不能代替这些事实。恢复不授予别的对话节点，也不自动接管整场景。
+原session重开已保存工程后，可用可信保存点映射原节点、Sticky Note与Network Box。恢复必须核对实际HIP字节、加载基线、唯一标记、创建来源和原运行生命周期。节点路径、复制标签、scene ID或用户说“已恢复”均不能代替这些事实。三类对象各自保留独立归属，恢复不授予别的对话对象，也不自动接管整场景。
+
+H21/H22的便签和网络框没有自身userData，父网络metadata仅保存其定位标记；修改资格来自外部可信保存点和加载时记录的实际原生对象身份。整网络复制、同名重建、标记复制和锁定HDA定义重建不取得原对象权限。节点、便签和网络框的激活共同复核，任一准备对象被替换时恢复原权限状态。旧保存点缺少编辑项记录时保持未恢复，不按父节点补造；仅创建了便签或网络框的任务也沿同一保存点接续。
 
 恢复材料由成功保存产生，HIP内保存scene/checkpoint和节点定位标记，本机材料在安装根recovery/checkpoints，源码默认在本机应用数据目录。HIP保存成功但恢复材料提交失败时如实报告；未保存修改不在恢复保证中。只复制HIP到其他机器不携带完整恢复材料。
 
@@ -113,6 +115,6 @@
 
 实现：[选择控制器](../src/executor-controller.ts)、[路由](../src/executor-routing.ts)、[原生选择投影](../src/executor-identity-projection.ts)、[调用级目标及历史查回](../src/tool-runtime.ts)、[权限恢复](../src/scene-recovery.ts)、[Bridge](../houdini/python3.11libs/dsh_bridge.py)、[登记与写预留](../houdini/python3.11libs/dsh_executor_registry.py)、[节点归属](../houdini/python3.11libs/dsh_ownership.py)。
 
-直接回归：[选择投影](../tools/tests/executor-identity-projection.test.mjs)、[路由](../tools/tests/executor-routing.test.mjs)、[工作台入口](../tools/tests/workbench-association.test.mjs)、[工程组件](../tools/tests/executor-picker.test.mjs)、[请求查回](../tools/tests/request-recovery.test.mjs)、[现场代际](../tools/tests/dsh-binding-loop.test.py)。真实组合入口见[开发规范](development.md)。
+直接回归：[选择投影](../tools/tests/executor-identity-projection.test.mjs)、[路由](../tools/tests/executor-routing.test.mjs)、[工作台入口](../tools/tests/workbench-association.test.mjs)、[工程组件](../tools/tests/executor-picker.test.mjs)、[请求查回](../tools/tests/request-recovery.test.mjs)、[现场代际](../tools/tests/dsh-binding-loop.test.py)、[编辑项保存恢复](../tools/tests/dsh-note-recovery.test.py)。真实组合入口见[开发规范](development.md)。
 
 验收覆盖多窗口先登记、未绑定新对话、明确选择/取消、已执行对话换目标、切换侧栏保持各自目标、只读不抢作者、写入忙碌拒绝、同路径重载及排队期间切HIP、另存、断开重开和旧请求查回。H21/H22隔离运行、真实DSH前端选中任务、原生/嵌套回执和UI颜色分别核对；源码、构建、发行包和用户live不能互相代替。

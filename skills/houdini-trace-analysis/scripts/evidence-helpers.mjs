@@ -476,6 +476,8 @@ export function classifyVisionEvidence(step) {
 /** Metrics that separate vocabulary breadth from actual execution adoption. */
 export function isStructuredHoudiniCall(step) {
   return houdiniToolKind(step.tool)==='ui'
+    || step.tool==='houdini_inspect' && (step.canonical?.execution?.source_kind==='structured_query'
+      || Array.isArray(step.args?.queries))
     || step.tool==='houdini_exec' && !step.code && Boolean(step.args?.delivery || step.args?.review || step.args?.review_test)
 }
 
@@ -511,6 +513,7 @@ export function classifyRawEffect(step) {
   // Python itself failed or that the operation used no verbs.
   if (step.canonical?.requestReceipt?.status === 'unknown_transport') return 'unknown';
   if (failed) return 'failed';
+  if ((step.canonical?.transaction ?? step.transaction)?.status === 'effects_unverified') return 'unknown';
   if (['houdini_inspect', 'houdini_query'].includes(step.tool) && step.canonical?.execution?.read_only !== false) return 'read_only_query';
   return 'unknown';
 }
@@ -1078,7 +1081,10 @@ export function collectQualityLoopEvidence({
   const checkpoints = new Map();
   for (const step of indexed) {
     if (step.transaction?.status === 'rolled_back' || step.rollback?.applied === true) continue;
-    for (const node of step.transaction?.nodes || []) {
+    // Bounded receipts may replace node entries with {count, detail_pointer}.
+    // The summary retains its locator but cannot establish per-node removal.
+    const transactionNodes = Array.isArray(step.transaction?.nodes) ? step.transaction.nodes : [];
+    for (const node of transactionNodes) {
       if (node.exists === false && node.prior_path && step.transaction.status === 'committed') {
         for (const value of checkpoints.values()) if (value.output === node.prior_path) {
           value.lifecycle = 'removed'; value.removedAt = step.index;

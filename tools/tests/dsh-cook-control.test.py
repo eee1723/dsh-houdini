@@ -10,7 +10,7 @@ import dsh_ownership
 import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
-import dsh_quality_contracts as q
+import dsh_geometry_observation as observation
 import dsh_cook_control as cook_control
 from dsh_cook_control import validate_vex
 
@@ -212,7 +212,7 @@ with dsh_ownership.execution_owner('cook-test','setup'):
     # A successful control test reads baseline, perturbation and restored data.
     # A failed restoration cook must stop before the third geometry read: HOM
     # geometry() could otherwise retry the failed/interrupted computation.
-    with patch.object(q,'_geometry',wraps=q._geometry) as geometry_reads:
+    with patch.object(observation,'geometry',wraps=observation.geometry) as geometry_reads:
         control_result=h.test_controls(n,n,controls)
     assert control_result['ok'] and control_result['restored'],control_result
     assert geometry_reads.call_count==3,geometry_reads.call_count
@@ -225,7 +225,7 @@ with dsh_ownership.execution_owner('cook-test','setup'):
         # inject the fault only at the subsequent restoration boundary.
         return real_cook(*args,**kwargs) if len(cook_calls)<=2 else failure
     with patch.object(dsh_node_operations,'cook_node',side_effect=fail_restoration), \
-         patch.object(q,'_geometry',wraps=q._geometry) as geometry_reads:
+         patch.object(observation,'geometry',wraps=observation.geometry) as geometry_reads:
         try:h.test_controls(n,n,controls)
         except dsh_errors.CheckpointError as error:
             evidence=error.evidence

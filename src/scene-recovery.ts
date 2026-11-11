@@ -24,9 +24,9 @@ declare module '@deepseek-ai/cordis' {interface Context {houdiniRecovery:SceneRe
 
 export function recoveryMessage(value:RecoveryBinding) {
   return houdiniSnapshot({name:'dsh-houdini:executor-binding',text:
-    'Verified saved provenance for the original task nodes has been recorded in the explicitly selected scene. Matching Bridge activation must succeed before those nodes become writable. Historical results are not current scene state. '
+    'Verified saved provenance for the original task nodes, Sticky Notes and Network Boxes has been recorded in the explicitly selected scene. Matching Bridge activation must succeed before those items become writable. Historical results are not current scene state. '
     +'Inspect the actual scene and external outputs before repeating interrupted operations. Retrieve each request or job only at its recorded original runtime. '
-    +'Unrestored nodes remain foreign. No user confirmation of technical success is needed. '
+    +'Unrestored nodes, Sticky Notes and Network Boxes remain foreign. No user confirmation of technical success is needed. '
     +'Load warnings must be checked against affected nodes and dependencies; reconnection does not certify cross-version compatibility. '
     +(value.load_warning_details?'Warning previews may omit the middle. If stored, read the original using houdini_resource(kind="result", ref=load_warning_details.sha256, pointer="/result/load_warnings"). If unavailable, missing detail remains unverified. ':'')+'\n'
     +literalData(JSON.stringify(value))})
@@ -169,10 +169,13 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
         // settle without a new scene epoch. Do not permanently cache them.
         if(assessment.status!=='ready')return
         if(assessment.requires_reload===true) {attempted.set(agent,attempt);return}
-        if(!Number.isInteger(assessment.owned_nodes)||assessment.owned_nodes<0
+        const ownedNotes=assessment.owned_notes??0
+        const ownedBoxes=assessment.owned_boxes??0
+        if(!Number.isInteger(assessment.owned_nodes)||assessment.owned_nodes<0||!Number.isInteger(ownedNotes)||ownedNotes<0
+          ||!Number.isInteger(ownedBoxes)||ownedBoxes<0
           ||typeof assessment.checkpoint_id!=='string'||typeof assessment.scene_id!=='string'
           ||typeof assessment.scene_epoch!=='string')return
-        if(assessment.owned_nodes===0||assessment.checkpoint_id!==saved.checkpoint_id
+        if(assessment.owned_nodes+ownedNotes+ownedBoxes===0||assessment.checkpoint_id!==saved.checkpoint_id
           ||assessment.scene_id!==selected.scene_id||assessment.scene_epoch!==selected.scene_epoch) {
           attempted.set(agent,attempt)
           return
@@ -274,6 +277,8 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
           scene_id:prepared.scene_id,scene_epoch:prepared.scene_epoch,runtime_id:prepared.runtime_id,
           hip_path:plan.facts.hip_path,restored_nodes:prepared.restored_nodes,
           unrestored_nodes:prepared.unrestored_nodes??[],
+          restored_notes:prepared.restored_notes??0,unrestored_notes:prepared.unrestored_notes??[],
+          restored_boxes:prepared.restored_boxes??0,unrestored_boxes:prepared.unrestored_boxes??[],
           load_warnings:prepared.load_warnings??[],
           ...(prepared.load_warning_details?{load_warning_details:prepared.load_warning_details}:{}),
           ...(plan.facts.user_choice?{user_choice:plan.facts.user_choice}:{}),
@@ -293,8 +298,9 @@ function createSceneRecovery(ctx:Context,connection:HoudiniBridge):SceneRecovery
           throw new Error('权限恢复事实尚未进入 DSH 持久记录，本轮未激活原节点权限。')
         await service.ensure(agent,signal)
         plans.delete(agent)
-        return {status:'active',restored_nodes:value.restored_nodes,
-          message:'当前工程的原节点归属已恢复，恢复 '+value.restored_nodes+' 个节点的修改归属；本轮继续核对实际工程。'}
+        return {status:'active',restored_nodes:value.restored_nodes,restored_notes:value.restored_notes,restored_boxes:value.restored_boxes,
+          message:'当前工程的原修改归属已恢复，恢复 '+value.restored_nodes+' 个节点'+(value.restored_notes?'、'+value.restored_notes+' 个便签':'')
+            +(value.restored_boxes?'、'+value.restored_boxes+' 个网络框':'')+'；本轮继续核对实际工程。'}
       } finally {running.delete(agent)}
     },
   }

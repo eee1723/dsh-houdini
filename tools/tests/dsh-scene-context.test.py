@@ -127,6 +127,26 @@ handler._route({'schema_version':True})
 assert responses[-1][0]==400
 handler._route({'schema_version':1,'code':'raise RuntimeError()'})
 assert responses[-1][0]==400,'context is a fixed metadata endpoint, not another code execution route'
+
+# Real HOM reports nodes, Sticky Notes and Network Boxes in one native
+# selection. Only the headless UI availability flag and panes are substituted.
+network=hou.node('/obj').createNode('geo','selected_editor_network')
+selected=network.createNode('null','selected_node')
+note=network.createStickyNote('note')
+box=network.createNetworkBox('box')
+hou.clearAllSelected()
+for item in (selected,note,box):
+    item.setSelected(True)
+with patch.object(hou,'isUIAvailable',return_value=True), \
+     patch.object(hou,'ui',types.SimpleNamespace(paneTabs=lambda: []),create=True):
+    mixed=c.scene_context('mixed-selection',threading.get_ident())
+assert [row['path'] for row in mixed['selection']]==[selected.path()]
+assert mixed['selected_editor_items_count']==2
+assert {(row['type'],row['parent'],row['name']) for row in mixed['selected_editor_items']}=={
+    ('sticky_note',network.path(),note.name()),('network_box',network.path(),box.name())}
+assert selected.isSelected() and note.isSelected() and box.isSelected()
+network.destroy()
+
 class Node:
     def path(self):return '/obj/g'
     def type(self):return types.SimpleNamespace(name=lambda:'geo')
@@ -141,11 +161,18 @@ class Pane:
     def type(self):return 'network'
     def pwd(self):return Node()
     def currentNode(self):return Node()
+class Note:
+    def parent(self):return Node()
+    def name(self):return 'selected_note'
+class Box:
+    def parent(self):return Node()
+    def name(self):return 'selected_box'
 real=c.hou
 c.hou=types.SimpleNamespace(isUIAvailable=lambda:True,
     applicationVersionString=lambda:'fixture',hipFile=types.SimpleNamespace(path=lambda:'x.hip',isNewFile=lambda:False,hasUnsavedChanges=lambda:True),
     hscript=lambda command:('Unit Length: 0.01 meters\n',''),
-    frame=lambda:10,selectedNodes=lambda:[Node()]*20,playbar=types.SimpleNamespace(isPlaying=lambda:False),
+    frame=lambda:10,selectedItems=lambda:[Node()]*20+[Note(),Box()]+[Note()]*9+[object()],
+    OpNode=Node,StickyNote=Note,NetworkBox=Box,playbar=types.SimpleNamespace(isPlaying=lambda:False),
     ui=types.SimpleNamespace(paneTabs=lambda:[Pane(),Pane()]),
     updateMode=hou.updateMode,updateModeSetting=lambda:hou.updateMode.Manual,
     paneTabType=types.SimpleNamespace(NetworkEditor='network',SceneViewer='viewer'),sopNodeTypeCategory=lambda:'sop',Error=Exception)
@@ -153,6 +180,11 @@ try:
     result=c.scene_context('fixture',threading.get_ident())
     assert result['selection_count']==20 and len(result['selection'])==16
     assert result['selection_truncated'] and result['focus']=='unknown'
+    assert result['selected_editor_items_count']==11 and result['selected_editor_items_truncated']
+    assert len(result['selected_editor_items'])==8
+    assert result['selected_editor_items'][:2]==[
+        {'type':'sticky_note','parent':'/obj/g','name':'selected_note'},
+        {'type':'network_box','parent':'/obj/g','name':'selected_box'}]
     assert result['update_mode']=='manual'
     assert result['unit_length_meters']==.01
     assert len(result['panes'])==2 and result['panes'][0]['display']=='/obj/g'

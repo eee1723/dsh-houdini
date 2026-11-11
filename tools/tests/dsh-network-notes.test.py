@@ -6,6 +6,8 @@ import json
 import sys
 import tempfile
 import uuid
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
@@ -41,7 +43,8 @@ source = ok(f"__result__=tab_create({parent!r},'box',name='source').path()")['re
 before = {'frame': hou.frame(), 'selection': tuple(hou.selectedNodes()),
           'position': tuple(hou.node(source).position()), 'flags': (hou.node(source).isDisplayFlagSet(), hou.node(source).isRenderFlagSet())}
 empty = ok(f'__result__=network_notes({parent!r})')
-assert empty['result']['notes'] == [] and empty['transaction']['status'] == 'no_scene_change', empty
+assert empty['result']['notes'] == [] and empty['result']['scene_writes'] == 0, empty
+assert empty['transaction']['status'] == 'effects_unverified' and empty['transaction']['source_executed'], empty
 blocked = call(f'network_notes({parent!r})', read_only=True)
 assert not blocked['ok'] and 'read-only' in blocked['error'], blocked
 
@@ -61,8 +64,59 @@ identity = int(a.sessionId())
 updated = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text':'中文使用入口与依赖','position':[-12,4],'size':[8,4],'color':[0.2,0.3,0.25]}}])")
 assert updated['result']['updated'] == ['README'] and int(a.sessionId()) == identity, updated
 unchanged = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text':'中文使用入口与依赖'}}])")
-assert unchanged['result']['unchanged'] == ['README'] and unchanged['transaction']['status'] == 'no_scene_change', unchanged
+assert unchanged['result']['unchanged'] == ['README'] and unchanged['transaction']['status'] == 'effects_unverified', unchanged
 assert unchanged['result']['scene_writes'] == 0
+
+# Native 0 means the graph font default, not zero-height text. Headless
+# observation leaves the effective UI default unknown rather than guessing it.
+initial_font = next(row for row in created['result']['notes'] if row['name'] == 'README')
+assert initial_font['text_size'] == 0
+assert initial_font['effective_text_size'] == (float(hou.ui.resourceValueFromName('GraphStickyNoteSize')) if hou.isUIAvailable() else None)
+font_before = state(a)
+styled = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text_size':0.3}}])")
+font_row = next(row for row in styled['result']['notes'] if row['name'] == 'README')
+assert styled['result']['scene_writes'] == 1 and abs(font_row['text_size'] - .3) < 1e-6
+assert font_row['effective_text_size'] == a.textSize()
+assert {k:v for k,v in state(a).items() if k != 'text_size'} == {k:v for k,v in font_before.items() if k != 'text_size'}, 'font-only edits do not resize/move/rewrite the note'
+same_font = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text_size':0.3}}])")
+assert same_font['result']['scene_writes'] == 0 and same_font['result']['unchanged'] == ['README'], same_font
+ok(f"network_notes({parent!r},[{{'name':'README','text':'更新正文保持字号'}}])")
+assert a.textSize() == font_row['text_size'], 'text-only edits preserve explicit font height'
+ok(f"network_notes({parent!r},[{{'name':'README','text':{font_before['text']!r}}}])")
+reset_font = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text_size':0}}])")
+assert a.textSize() == 0 and state(a) == font_before
+resources=[]
+with patch.object(hou, 'isUIAvailable', return_value=True), patch.object(hou, 'ui', SimpleNamespace(
+        resourceValueFromName=lambda name: resources.append(name) or '0.225'), create=True):
+    assert notes._row(a, session)['effective_text_size'] == .225
+assert resources == ['GraphStickyNoteSize']
+with patch.object(hou, 'isUIAvailable', return_value=True), patch.object(hou, 'ui', SimpleNamespace(
+        resourceValueFromName=lambda _name: 'nan'), create=True):
+    assert notes._row(a, session)['effective_text_size'] is None
+for invalid_size in (True, None, '0.3', -.1, float('nan'), float('inf'), 1e300, 1e-50):
+    original_font = state(a)
+    try:
+        notes.apply_network_notes(p, [{'name':'README','text_size':.6}, {'name':'INPUTS','text_size':invalid_size}],
+                                  active_owner_session=session, active_owner_call='invalid-font')
+        raise AssertionError('invalid text_size accepted')
+    except notes.NetworkNoteOperationError as error:
+        assert error.evidence['phase'] == 'preflight' and error.evidence['scene_writes'] == 0
+    assert state(a) == original_font
+missing_text = call(f"network_notes({parent!r},[{{'name':'NEW_FONT','text_size':0.5}}])")
+assert not missing_text['ok'] and p.findStickyNote('NEW_FONT') is None and 'new notes require text' in missing_text['error']
+new_font = ok(f"__result__=network_notes({parent!r},[{{'name':'NEW_FONT','text':'Explicit font','text_size':0.55}}])")
+assert abs(p.findStickyNote('NEW_FONT').textSize() - .55) < 1e-6
+ok(f"network_notes({parent!r},remove=['NEW_FONT'])")
+font_setter = notes._set_value
+def fail_font(note, field, value):
+    if note.name() == 'FONT_FAIL' and field == 'text_size':
+        raise RuntimeError('injected second font write failure')
+    return font_setter(note, field, value)
+with patch.object(notes, '_set_value', side_effect=fail_font):
+    font_failed = call(f"network_notes({parent!r},[{{'name':'README','text_size':.7}},{{'name':'FONT_FAIL','text':'new','text_size':.5}}])")
+assert not font_failed['ok'] and p.findStickyNote('FONT_FAIL') is None and state(a) == font_before, font_failed
+font_undo = call(f"network_notes({parent!r},[{{'name':'README','text_size':.8}}])\nraise RuntimeError('after font change')")
+assert not font_undo['ok'] and font_undo['rollback']['network_notes']['ok'] and state(a) == font_before, font_undo
 
 # Entire batch preflights before updating an earlier valid target.
 original = state(a)
@@ -73,10 +127,14 @@ foreign = p.createStickyNote('user_note'); foreign.setText('User content')
 rejected = call(f"network_notes({parent!r},[{{'name':'user_note','text':'unauthorized'}}])")
 assert not rejected['ok'] and 'ownership guard' in rejected['error'], rejected
 assert foreign.text() == 'User content'
+font_foreign = call(f"network_notes({parent!r},[{{'name':'user_note','text_size':.7}}])")
+assert not font_foreign['ok'] and foreign.textSize() == 0 and 'ownership guard' in font_foreign['error']
 other_session = call(f"network_notes({parent!r},[{{'name':'README','text':'other session'}}])", owner='other-task')
 assert not other_session['ok'] and a.text() == original['text'], other_session
 ok(f"network_notes({parent!r},[{{'name':'user_note','text':'authorized update'}}],allow_foreign='User explicitly requested this note update')")
 assert notes.note_provenance(foreign, session)['status'] == 'foreign'
+ok(f"network_notes({parent!r},[{{'name':'user_note','text_size':.5}}],allow_foreign='User explicitly requested this note font update')")
+assert foreign.textSize() == .5 and notes.note_provenance(foreign, session)['status'] == 'foreign'
 
 # Deleting an owned containing node cannot bypass independent note authority.
 delete_parent = ok("__result__=tab_create('/obj','geo',name='notes_delete_parent').path()")['result']
@@ -152,12 +210,15 @@ original = state(a); identity = int(a.sessionId())
 box = p.createNetworkBox('artist_group'); box.addItem(foreign)
 boxed = call(f"network_notes({parent!r},remove=['user_note'],allow_foreign='User requested this note')")
 assert not boxed['ok'] and 'inside a Network Box' in boxed['error'], boxed
+boxed_font = call(f"network_notes({parent!r},[{{'name':'user_note','text_size':.8}}],allow_foreign='User requested this note font')")
+assert not boxed_font['ok'] and 'inside a Network Box' in boxed_font['error'] and foreign.textSize() == .5, boxed_font
 assert foreign.parentNetworkBox() == box
 box.removeItem(foreign)
 
 service = p.createNode('subnet', 'service_fixture'); service.setUserData('dsh_houdini_owner', 'render_view_v2')
 service_note = service.createStickyNote('service_note'); service_note.setText('service')
 for code in (f"network_notes({service.path()!r},[{{'name':'new','text':'x'}}])",
+             f"network_notes({service.path()!r},[{{'name':'service_note','text_size':.5}}],allow_foreign='even explicit service change')",
              f"network_notes({service.path()!r},remove=['service_note'],allow_foreign='even explicit service change')"):
     response = call(code)
     assert not response['ok'] and 'render service' in response['error'], response
@@ -167,6 +228,7 @@ assert service_note.text() == 'service'
 raw_cases = [
     f"hou.node({parent!r}).createStickyNote('RAW')",
     f"n=hou.node({parent!r}).findStickyNote('README'); n.setText('RAW')",
+    f"n=hou.node({parent!r}).findStickyNote('README'); n.setTextSize(.6)",
     f"n=hou.node({parent!r}).findStickyNote('README'); alias=n; write=alias.setText; write('RAW')",
     f"n=hou.node({parent!r}).findStickyNote('README'); getattr(n,'setColor')(hou.Color((1,0,0)))",
     f"n=hou.node({parent!r}).stickyNotes()[0]; n.setPosition(hou.Vector2(0,0))",

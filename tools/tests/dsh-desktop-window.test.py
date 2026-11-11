@@ -23,7 +23,7 @@ import winreg
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'))
-from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli
+from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli,read_desktop_debug_port
 reexec_unpacked_test_cli()
 sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
 from dsh_deployment import _process_started
@@ -31,18 +31,25 @@ from dsh_deployment import _process_started
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--artifact',required=True,type=Path)
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
+parser.add_argument('--output-dir',type=Path,help='New evidence subdirectory; otherwise use a fresh temporary directory')
 parser.add_argument('--lifetime-hfs',type=Path,help='Explicit installation for an empty disposable real GUI scene')
 parser.add_argument('--pending-launch',action='store_true',help='Test-only native pythonrc barrier: quit before first Bridge admission')
 parser.add_argument('--expected-integrity',help='Expected frozen package sha512 integrity')
 parser.add_argument('--timeout',type=int,default=180)
-parser.add_argument('--second-quit-timeout',type=int,default=20,help='Optional ready-state quit observation; does not replace required pending quit')
+parser.add_argument('--second-quit-timeout',type=int,help='Budget for the normal quit after reopen; defaults to --timeout')
+quit_scope=parser.add_mutually_exclusive_group()
+quit_scope.add_argument('--require-normal-quits',dest='require_normal_quits',action='store_true',default=True,
+    help='Require every requested normal quit, including after reopen (default)')
+quit_scope.add_argument('--allow-incomplete-second-quit',dest='require_normal_quits',action='store_false',
+    help='Narrow lifecycle diagnosis only: retain an incomplete second quit without qualifying the full user exit path')
 args=parser.parse_args()
 assert not args.pending_launch or args.lifetime_hfs,'--pending-launch requires --lifetime-hfs'
 artifact=args.artifact.resolve(strict=True)
 desktop=args.desktop_root.resolve(strict=True)
 electron=desktop/'DeepSeek Harness.exe'
 cli=desktop/'resources/runtime/cli/bin/dsh.cmd'
-fixture=Path(tempfile.mkdtemp(prefix='dsh-desktop-window-'))
+fixture=args.output_dir.resolve() if args.output_dir else Path(tempfile.mkdtemp(prefix='dsh-desktop-window-'))
+if args.output_dir:fixture.mkdir(parents=True,exist_ok=False)
 env=isolated_environment(fixture,gui=True)
 for name,relative in {'APPDATA':'appdata','LOCALAPPDATA':'localappdata','TEMP':'temp','TMP':'temp',
         'npm_config_cache':'npm-cache','npm_config_store_dir':'store','PNPM_HOME':'package-manager',
@@ -112,6 +119,16 @@ def registry_tree(key):
 
 
 def protocol_baseline():
+    def tree(root,path):
+        try:
+            with winreg.OpenKey(root,path) as key:return registry_tree(key)
+        except FileNotFoundError:return None
+    choice_tree=tree(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\dsh\UserChoice')
+    user_tree=tree(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh')
+    effective_tree=tree(winreg.HKEY_CLASSES_ROOT,'dsh')
+    snapshot={'user':user_tree,'effective':effective_tree,'choice':choice_tree}
+    # Preserve the exact observation even when admission/post-check refuses it.
+    (fixture/'protocol-current.json').write_text(json.dumps(snapshot,ensure_ascii=False,indent=2),encoding='utf-8')
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\dsh\UserChoice') as key:
             choice=winreg.QueryValueEx(key,'ProgId')[0]
@@ -123,9 +140,7 @@ def protocol_baseline():
     # handler. Require an existing physical per-user registration as well.
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh\shell\open\command') as key:user_command=winreg.QueryValueEx(key,'')[0]
     assert user_command==command,'Refusing native launch without the same existing per-user dsh command'
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Classes\dsh') as key:user_tree=registry_tree(key)
-    with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,'dsh') as key:effective_tree=registry_tree(key)
-    return hashlib.sha256(json.dumps({'user':user_tree,'effective':effective_tree},sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(snapshot,sort_keys=True).encode()).hexdigest()
 
 
 def run(command,**kwargs):
@@ -161,10 +176,9 @@ def debugging_endpoints(process,log):
         assert process.poll() is None,'Owned Electron exited; inspect its fixture log'
         if (fixture/'desktop-startup-error.txt').exists():raise AssertionError((fixture/'desktop-startup-error.txt').read_text(encoding='utf-8'))
         text=log.read_text(encoding='utf-8',errors='replace')
-        browser=re.search(r'DevTools listening on ws://127\.0\.0\.1:(\d+)/',text)
         main=re.search(r'Debugger listening on (ws://127\.0\.0\.1:\d+/[^\s]+)',text)
         port_file=user_data/'DevToolsActivePort'
-        port=int(port_file.read_text().splitlines()[0]) if port_file.exists() else int(browser.group(1)) if browser else None
+        port=read_desktop_debug_port(port_file,text)
         if port and main:return {'port':port,'mainInspector':main.group(1)}
     return wait_until(read,args.timeout,'owned native Electron browser and main inspectors')
 
@@ -239,14 +253,16 @@ def owned_houdini_pids(hosts):
 
 
 immutable={str(file):digest(file) for file in [electron,desktop/'resources/app.asar',desktop/'resources/runtime/versions.json']}
-report={'fixture':str(fixture),'artifact':str(artifact),'artifactSha256':digest(artifact),'nativeElectronWindowTested':False,
+report={'ok':False,'fixture':str(fixture),'artifact':str(artifact),'artifactSha256':digest(artifact),'nativeElectronWindowTested':False,
         'externalDesktopActivationStubbed':False,'nativeProfile':'desktop','fixtureDocumentsOverride':True,
         'isolatedDshHome':str(home),'isolatedUserData':str(user_data),'desktopInstallationSha256':immutable,
-        'pendingLaunchWithOwnedStartupBarrier':args.pending_launch}
+        'pendingLaunchWithOwnedStartupBarrier':args.pending_launch,
+        'requireNormalQuits':args.require_normal_quits,'qualificationReduced':not args.require_normal_quits}
 process=None;output=None
 try:
     before_protocol=protocol_baseline()
     report['protocolSha256Before']=before_protocol
+    shutil.copy2(fixture/'protocol-current.json',fixture/'protocol-before.json')
     with artifact.open('rb') as stream:report['artifactIntegrity']='sha512-'+base64.b64encode(hashlib.file_digest(stream,'sha512').digest()).decode('ascii')
     if args.expected_integrity:assert report['artifactIntegrity']==args.expected_integrity,'Frozen artifact integrity mismatch'
     chat=http.server.ThreadingHTTPServer(('127.0.0.1',0),FixtureChat)
@@ -305,13 +321,18 @@ try:
             report['secondQuitObservation']={'normalExitVerified':False,'error':repr(error),
                 'inspectionOrNativeDialogReached':'Not observed; no quit-requested event alone cannot distinguish them.',
                 'cleanup':'Only owned fixture processes will be terminated in finally; that is not a normal exit.'}
+            if args.require_normal_quits:
+                raise AssertionError('The reopened Desktop did not complete its required normal exit') from error
             print('Core resume passed; optional second normal quit was not completed. It will be recorded separately from exact fixture cleanup.',flush=True)
     assert protocol_baseline()==before_protocol,'Global dsh protocol values changed'
     assert {file:digest(Path(file)) for file in immutable}==immutable,'Official Desktop installation changed'
     report['desktopInstallationAndProtocolUnchanged']=True
+    report['allRequestedNormalQuitsVerified']=bool(report.get('firstDesktopQuitNormally') and
+        (not args.lifetime_hfs or report.get('secondQuitObservation',{}).get('normalExitVerified')))
     report['ok']=True
     print('PASS required native desktop assertions'+(' including original pending launch/session/process recovery' if args.pending_launch else '')+': '+str(fixture),flush=True)
 except BaseException as error:
+    report['ok']=False
     report['error']=repr(error)
     raise
 finally:
@@ -342,5 +363,10 @@ finally:
         try:
             report['protocolUnchangedAfterCleanup']=protocol_baseline()==before_protocol
             report['desktopInstallationUnchangedAfterCleanup']={file:digest(Path(file)) for file in immutable}==immutable
-        except Exception as error:report['isolationVerificationError']=repr(error)
+            assert report['protocolUnchangedAfterCleanup'],'Global dsh protocol values changed during cleanup'
+            assert report['desktopInstallationUnchangedAfterCleanup'],'Official Desktop installation changed during cleanup'
+        except Exception as error:report['isolationVerificationError']=repr(error);report['ok']=False
+        finally:
+            if (fixture/'protocol-current.json').exists():shutil.copy2(fixture/'protocol-current.json',fixture/'protocol-after.json')
     (fixture/'result.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    assert 'isolationVerificationError' not in report,report.get('isolationVerificationError')

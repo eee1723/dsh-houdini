@@ -252,9 +252,14 @@ def network_boxes(parent, groups, *, remove=None, dry_run=False,
 def network_notes(parent, notes=None, *, remove=None, allow_foreign=None) -> dict:
     """Read or locally maintain named Sticky Notes without changing nodes.
 
-    With no notes/remove, return actual text/position/size/color/provenance.
-    notes=[{name,text,position?:[x,y],size?:[w,h],color?:[r,g,b]}] upserts only
-    explicit notes. New notes default beside existing network content. remove
+    With no notes/remove, return actual text/position/size/color/text_size/provenance.
+    notes=[{name,text?,position?:[x,y],size?:[w,h],color?:[r,g,b],text_size?:number}]
+    updates only explicit notes. New notes require text; existing notes permit
+    style-only changes without resending text. text_size is a finite nonnegative
+    font height in network units; 0 uses the native graph default. It does not
+    resize the note or change GUI preferences. effective_text_size resolves the
+    default through the current GUI graph resource, or is null when unavailable.
+    New notes default beside existing network content. remove
     names are explicit; a name or owned parent never grants note ownership.
     Notes remain standalone fixed layout obstacles, not implicit Box members.
     """

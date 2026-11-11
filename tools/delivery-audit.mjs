@@ -60,7 +60,7 @@ export function projectDeliveryAudit(events, options = {}, history = executionHi
             lineage.add(transitions[i].from);
     const ordered = runtimeRows.filter(row => lineage.has(normalizedPath(row.execution.hip_path)));
     const checks = new Map(), failures = [], saves = [];
-    let lastEditSequence = 0;
+    let lastEditSequence = 0, lastUnknownEffectSequence = 0;
     for (const row of ordered) {
         const { callId, eventSeq, value, execution } = row;
         const path = normalizedPath(execution.hip_path);
@@ -73,21 +73,23 @@ export function projectDeliveryAudit(events, options = {}, history = executionHi
                         check.validity = 'needs_recheck_after_save_as';
         }
         const impact = execution.impact || {};
+        const effectsUnverified = value.transaction?.status === 'effects_unverified';
         const mayHaveEdited = impact.attempted === true && value.transaction?.status !== 'no_scene_change';
-        if (mayHaveEdited) {
+        if (effectsUnverified || mayHaveEdited) {
             const changed = new Set((impact.nodes || []).map((node) => node.identity));
             for (const check of checks.values()) {
                 if (check.validity !== 'historical_observation_only')
                     continue;
-                if (impact.global || impact.truncated || impact.unavailable || check.identity === null || changed.has(check.identity)
+                if (effectsUnverified || impact.global || impact.truncated || impact.unavailable || check.identity === null || changed.has(check.identity)
                     || check.dependency_identities.some(identity => changed.has(identity))) {
-                    check.validity = 'stale_after_recorded_change';
+                    check.validity = effectsUnverified ? 'unverified_after_unknown_execution' : 'stale_after_recorded_change';
                     check.invalidated_by = callId;
                 }
             }
             // Save As itself is a global operation, but it does not dirty the newly
             // saved target unless a later verb in the same call changes the scene.
-            lastEditSequence = execution.sequence;
+            if (effectsUnverified) lastUnknownEffectSequence = execution.sequence;
+            else lastEditSequence = execution.sequence;
         }
         const outputs = new Map((execution.outputs || []).map((output) => [output.ledger_index, output]));
         for (const item of value.evidence || []) {
@@ -108,7 +110,7 @@ export function projectDeliveryAudit(events, options = {}, history = executionHi
             const sameCallEdit = (impact.last_edit_ledger_index ?? 0) > item.ledgerIndex;
             const validity = value.transaction?.status === 'rolled_back' || value.transaction?.status === 'recovery_unverified'
                 ? 'not_current_after_failed_transaction'
-                : value.rawUsage?.coveredMutations?.length || value.rawUsage?.suspectedMutations?.length
+                : effectsUnverified || value.rawUsage?.coveredMutations?.length || value.rawUsage?.suspectedMutations?.length
                     ? 'unverified_change_order_in_call'
                     : sameCallEdit ? 'stale_after_later_edit_in_same_call' : 'historical_observation_only';
             checks.delete(key);
@@ -142,10 +144,12 @@ export function projectDeliveryAudit(events, options = {}, history = executionHi
     const matchingSaves = saves.filter(save => save.normalized_path === (expected ?? currentHip));
     const lastSave = matchingSaves.at(-1) ?? null;
     const savedBeforeEdit = !!lastSave && (lastSave.edit_after_save_in_call || lastEditSequence > lastSave.sequence);
+    const savedBeforeUnknown = !!lastSave && lastUnknownEffectSequence > lastSave.sequence;
     const deliveryStatus = expected && !lastSave ? 'final_not_saved'
         : !lastSave ? 'no_current_save_receipt'
             : savedBeforeEdit ? 'save_precedes_recorded_edit'
-                : expected ? 'save_receipt_reopen_unverified' : 'candidate_save_reopen_unverified';
+                : savedBeforeUnknown ? 'save_precedes_unverified_effects'
+                    : expected ? 'save_receipt_reopen_unverified' : 'candidate_save_reopen_unverified';
     const allChecks = [...checks.values()];
     const attention = allChecks.filter(check => check.status !== 'pass' || check.validity !== 'historical_observation_only');
     // A passing measurement-only control test cannot certify the mechanical
@@ -157,7 +161,7 @@ export function projectDeliveryAudit(events, options = {}, history = executionHi
         source_call: check.source_call, contract_sha256: check.contract_sha256,
         validity: check.validity, declared_interfaces: check.declared_interfaces }));
     const result = { status: attention.length || failures.length || unresolvedRequests.length || pendingCalls.length || unresolvedCalls.length || activeJobs.length
-            || coverageLimits.length || deliveryStatus === 'final_not_saved' || deliveryStatus === 'save_precedes_recorded_edit'
+            || coverageLimits.length || deliveryStatus === 'final_not_saved' || savedBeforeEdit || savedBeforeUnknown
             ? 'delivery_audit_attention' : 'delivery_audit_observed',
         runtime_id: runtime, current_hip: anchor.execution.hip_path ?? null,
         delivery: { status: deliveryStatus, expected_final_path: options.expectedFinalPath ?? null,

@@ -36,11 +36,13 @@ JSON Schema是描述字段结构的格式。这里维护可序列化输入与成
 - [cook_node](#cook_node)
 - [sop_recipe](#sop_recipe)
 - [geo_curve_clearance](#geo_curve_clearance)
+- [geo_frame_diff](#geo_frame_diff)
 - [geo_piece_stats](#geo_piece_stats)
 - [create_spare_parms](#create_spare_parms)
 - [set_display_node](#set_display_node)
 - [sop_set_output](#sop_set_output)
 - [render_view](#render_view)
+- [render_frame](#render_frame)
 - [scene_save](#scene_save)
 - [tool_catalog](#tool_catalog)
 - [tool_inspect](#tool_inspect)
@@ -890,6 +892,13 @@ Apply a strict parameter batch to one node, preserving actual errors and restori
     "evaluations": {
       "type": "object"
     },
+    "readback_timing": {
+      "type": "string",
+      "enum": [
+        "after_batch_writes",
+        "after_each_write"
+      ]
+    },
     "effect_status": {
       "type": "string"
     },
@@ -917,7 +926,7 @@ __result__ = set_parms('/obj/example_geo/box1', {
 })
 ```
 
-Read set/evaluations. A parameter write does not itself certify downstream geometry; cook or verify that output when needed.
+Read set/evaluations and readback_timing. The strict batch reads values after all its writes. Check the intended output separately when downstream geometry matters.
 
 ### Synchronize file-maintained source without overwriting a changed scene
 
@@ -936,7 +945,7 @@ Read patch.before_sha256/after_sha256 and changed. Verify the affected final out
 
 - Parameter names and menu set_value come from node_info/list_parms/read_parms. Numeric tuple literals use full components; tuple expressions use individual component names.
 - Toggle button/icon strips accept an exact integer bitmask: 0 clears all, combine declared set_value bits for multiple choices. A token selects only that entry's bit, not an incremental toggle. Writing a conditional parameter does not automatically enable its controlling mode or prove an output effect.
-- strict defaults to True. strict=False allows explicit partial diagnostic success and returns failed; it is not required for ordinary editing. Restoration covers parameter values/expressions/keys, not external callback effects.
+- strict defaults to True. Normal value and expression readback follows all writes in the batch. Patch hashes describe the source patch operation. strict=False allows explicit partial success and reads after each write. Restoration covers parameter values/expressions/keys, not external callback effects.
 - Complete source synchronization uses the same atomic preflight as literal patches. Stale source rejects the entire batch before writing; equal source is a no-op. The source file remains managed by ordinary file tools.
 
 ## connect
@@ -1905,6 +1914,126 @@ Read status, coverage.curves/self_exclusion, measured_pairs and worst_pairs. Pas
 
 - Read-only, SOP-local, no scene nodes or viewport changes. No local curvature, connector contact, obstacle, smooth-curve or final swept Polygon mesh certification. Radius is constant per selected curve. Loop endpoints must be exactly equal; near-equal endpoints are not inferred as a seam.
 
+## geo_frame_diff
+
+Compare sampled numeric SOP point attributes against one baseline frame without moving the playbar.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string",
+      "description": "Existing SOP node path."
+    },
+    "frame_a": {
+      "type": "number",
+      "description": "Finite baseline frame."
+    },
+    "frame_b": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "number"
+          }
+        }
+      ],
+      "description": "A target frame or an ordered series against the same baseline."
+    },
+    "attrib": {
+      "type": "string",
+      "default": "P"
+    },
+    "sample": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000,
+      "default": 4096
+    },
+    "tolerance": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0.000001
+    }
+  },
+  "required": [
+    "node",
+    "frame_a",
+    "frame_b"
+  ]
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "node": {
+      "type": "string"
+    },
+    "frame_a": {
+      "type": "number"
+    },
+    "frame_b": {
+      "type": "number"
+    },
+    "comparable": {
+      "type": "boolean"
+    },
+    "mode": {
+      "const": "baseline_series"
+    },
+    "status": {
+      "enum": [
+        "observed",
+        "partial"
+      ]
+    },
+    "comparisons": {
+      "type": "object",
+      "description": "Counts of compared, not_comparable, and error target frames."
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "One ordered row per requested frame with status and measurements or a reason."
+      }
+    }
+  },
+  "required": [
+    "node",
+    "frame_a"
+  ]
+}
+```
+
+### Compare requested frames with one reference frame
+
+调用工具：`houdini_inspect`。
+
+```python
+__result__ = geo_frame_diff('/obj/example_geo/OUT', 1, [12, 24, 48])
+```
+
+Use comparisons and the status of every result. A comparable row contains mean_delta, max_delta and sampled_points. An incomparable or failed row is not a measured zero.
+
+### 接口边界
+
+- Numeric attributes are compared by point number. Equal point/primitive counts do not verify stable identity or matching primitive topology.
+- A scalar frame_b preserves the original pair shape. In a series the baseline is captured once, failed targets stay in order, and a missing baseline refuses the query.
+- The result describes the sampled attribute data. It does not judge animation or appearance.
+
 ## geo_piece_stats
 
 Observe connected-piece geometry or bounded Polygon surface integrity without modifying the source network.
@@ -2661,6 +2790,153 @@ Read output/artifact and errors, framing, check, stale. The returned image is se
 - Requires the GUI preview service; headless renderer checks use render_frame. Managed checks are under $HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>; delivery images are under $HIP/dsh-artifacts/renders/<HIPNAME>. Both return unique actual paths and reject executable filename expressions; explicit destinations require output_policy=explicit.
 - A/B observations use the same framing_frame, direction, framing.bounds and framing.depth_bounds. Pixels and file delivery do not certify visual semantics.
 - 过程观察、显示故障和A/B诊断保留managed，写入visual_check；明确要给用户保留的成图才选择delivery，进入$HIP/dsh-artifacts/renders/<HIPNAME>，核对artifact.actual_path与精确hip_path后再present。目录不证明已验收或已交付，不自动移动历史图片。
+
+## render_frame
+
+Render one frame through an explicit ROP and verify fresh nonempty output files and renderer errors. The result reports file evidence; it has no top-level ok field and does not certify visual semantics.
+
+### 输入结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "rop": {
+      "type": "string",
+      "description": "Existing executable ROP path. Within the same exec a live hou.RopNode is also accepted; an ordinary LOP is not a ROP."
+    },
+    "picture": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional output path; null preserves the ROP current output. $F variables are resolved by the native output path logic."
+    },
+    "frame": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Finite frame to render; null uses the current frame and restores it afterward."
+    },
+    "timeout": {
+      "type": "number",
+      "default": 110,
+      "description": "Positive file-wait budget in seconds. Native render() itself can take longer; use a DSH job for long rendering."
+    },
+    "framing": {
+      "anyOf": [
+        {
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional USD Render ROP framing preflight with target and coverage. Ordinary renders preserve their existing camera and crop semantics."
+    }
+  },
+  "required": [
+    "rop"
+  ],
+  "additionalProperties": true
+}
+```
+
+### 成功动词回执的返回结构
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string"
+    },
+    "output": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "frame": {
+      "type": "number"
+    },
+    "file_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "preexisting": {
+      "type": "boolean"
+    },
+    "fresh": {
+      "type": "boolean"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "ms": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "path",
+    "output",
+    "frame",
+    "file_bytes",
+    "preexisting",
+    "fresh",
+    "errors",
+    "ms"
+  ],
+  "additionalProperties": true
+}
+```
+
+### Check a render without assuming an ok field
+
+调用工具：`houdini_exec`。
+
+```python
+rendered = render_frame('/out/mantra1', picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/material/check.png', frame=1)
+__result__ = rendered
+```
+
+Do not test rendered['ok']: render_frame returns no ok key. Require fresh is True and errors == [], then inspect output/file_bytes and the actual image. Multi-product USD renders use outputs; output can be null.
+
+### 接口边界
+
+- A fresh file proves output freshness only. Renderer dependency failures such as Unable to load texture belong in errors and cannot be treated as a successful visual check. Visual semantics remain unverified until the image is inspected.
+- Delegate/checkpoint products and visual quality are separate from raster file freshness. Do not turn a passed file check into a material or scene-quality claim.
 
 ## scene_save
 
@@ -3421,7 +3697,13 @@ Read or locally maintain named native Sticky Notes. Notes have their own runtime
               },
               "text": {
                 "type": "string",
-                "maxLength": 4096
+                "maxLength": 4096,
+                "description": "Required for a new note; omit to preserve the text of an existing note."
+              },
+              "text_size": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Font height in network units. Zero uses the native graph default. Omit to preserve the current size. Does not resize the note rectangle."
               },
               "position": {
                 "type": "array",
@@ -3449,9 +3731,9 @@ Read or locally maintain named native Sticky Notes. Notes have their own runtime
               }
             },
             "required": [
-              "name",
-              "text"
+              "name"
             ],
+            "minProperties": 2,
             "additionalProperties": false
           }
         },
@@ -3506,7 +3788,20 @@ Read or locally maintain named native Sticky Notes. Notes have their own runtime
     "notes": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "properties": {
+          "text_size": {
+            "type": "number",
+            "description": "Actual stored native font height."
+          },
+          "effective_text_size": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Current graph font height when observable; null when the default cannot be read."
+          }
+        }
       }
     },
     "scene_writes": {
@@ -3538,6 +3833,16 @@ __result__ = network_notes("/obj/example", [{"name":"start_here", "text":"Start 
 ```
 
 Read actual text, position, size and provenance. Inspect placement when visual clarity matters; notes do not prove functional correctness.
+
+### Change font size without rewriting note text
+
+调用工具：`houdini_exec`。
+
+```python
+__result__ = network_notes("/obj/example", [{"name":"start_here", "text_size":0.3}])
+```
+
+Check text_size and effective_text_size. Font height is separate from the rectangle size.
 
 ### Read actual existing notes
 

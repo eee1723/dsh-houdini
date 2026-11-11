@@ -158,9 +158,16 @@ export function resultTitle(label: string, result: ToolResult): string {
   }
   if (result.isError) return `${label} · 失败`
   const outcome = object(meta?.outcome)
-  if (meta?.ok === true && Number(object(outcome?.operations)?.failed) > 0)
+  const operations = object(outcome?.operations)
+  const failed = Number(operations?.failed)
+  if (meta?.ok === true && failed > 0) {
+    if (object(object(meta.canonical)?.execution)?.source_kind === 'structured_query' && failed === Number(operations?.total))
+      return `${label} · 查询未取得结果`
     return `${label} · 批次完成，部分操作失败`
+  }
   if (meta?.ok === true && meta?.checksPending) return `${label} · 已执行，检查需要关注`
+  if (meta?.ok === true && object(object(meta.canonical)?.transaction)?.status === 'effects_unverified')
+    return `${label} · 已执行，场景影响未核实`
   if (meta?.ok === true) return `${label} · 成功`
   if (meta?.ok === false) return `${label} · 失败`
   return `${label} · 已返回`
@@ -414,8 +421,8 @@ function executionSummary(value: ExecResult): string {
       : 'Executed successfully.'
 }
 
-export function renderExec(value: ExecResult) {
-  return [{ type: 'text' as const, text: observationText([executionSummary(value), ...renderFields(value)].join('\n\n'),MAX_PRESENTATION_BYTES) }, ...imageBlocks(value)]
+export function renderExec(value: ExecResult, maxBytes = MAX_PRESENTATION_BYTES) {
+  return [{ type: 'text' as const, text: observationText([executionSummary(value), ...renderFields(value)].join('\n\n'),maxBytes) }, ...imageBlocks(value)]
 }
 
 export function renderJobStatus(value: JobStatus) {

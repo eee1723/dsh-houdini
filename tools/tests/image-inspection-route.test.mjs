@@ -39,7 +39,11 @@ try{
  }
  assert.equal(sceneCalls,1);
  modalities=['text'];const before=fetched;
- const refused=await attachImages(value,exec,bridge,ctx);assert.equal(fetched,before);assert.equal(imageBlocks(refused).length,0);assert.match(refused.imageAttachments[0].error,/does not declare image input/);
+ const blocked=await attachImages(value,exec,bridge,ctx);assert.equal(fetched,before);assert.equal(imageBlocks(blocked).length,0);
+  const metadataOnly=await attachImages(value,{...exec,allow_undeclared_image_input:true},bridge,ctx);assert.equal(fetched,before+2);assert.equal(imageBlocks(metadataOnly).length,2);
+  assert(metadataOnly.imageAttachments.every(item=>item.capability_status==='unsupported'&&!item.error),
+    'missing image metadata preserves a warning but does not fabricate a provider refusal');
+  assert.equal((await visualCapability(exec,ctx)).status,'unsupported','capability reporting itself remains accurate');
  const missing=await attachImages(value,exec,bridge,{});assert.match(missing.imageAttachments[0].error,/unavailable/);
  modalities=['image'];const failed=await attachImages(value,exec,{fetchMedia:async()=>{throw Error('transport unavailable')}},ctx);
  assert.equal(failed.ok,true,'image failure must not cause scene replay');assert.equal(imageBlocks(failed).length,0);

@@ -60,7 +60,7 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
     assert preview['scene_writes'] == 0 and not preview['applied']
     assert library.read_bytes() == old_bytes and api.parameter_states(n) == before_states[0]
     envelope = b.run_code('__result__=' + call + ', dry_run=True)', owner_session='tool-author')
-    assert envelope['transaction']['status'] == 'no_scene_change', envelope
+    assert envelope['transaction']['status'] == 'effects_unverified' and envelope['transaction']['source_executed'] is True, envelope
     result = run('__result__=' + call + ')')
     assert result['current_state_preserved'] and len(result['affected_instances']) == 2
     for node, state in zip((n, n2), before_states):
@@ -74,7 +74,7 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
     snapshot = library.read_bytes()
     bad = b.run_code(call + ')', owner_session='tool-author')
     assert not bad['ok'] and 'stale interface' in bad['error']
-    assert bad['transaction']['status'] == 'no_scene_change', bad
+    assert bad['transaction']['status'] == 'effects_unverified' and bad['transaction']['source_executed'] is True, bad
     assert library.read_bytes() == snapshot
     revision = api.interface_revision(n)
     with dsh_ownership.execution_owner('tool-author', 'negative'):
@@ -168,7 +168,11 @@ try:
     for module, name in stale_functions:
         setattr(module, name, lambda *args, **kwargs: 'stale domain module')
     b.stop = lambda: events.append('stop')
-    b.start = lambda *args: events.append('start')
+    def fake_start(*args):
+        from types import SimpleNamespace
+        events.append('start')
+        return SimpleNamespace(server_port=args[0])
+    b.start = fake_start
     launcher.importlib.reload = reload_selected
     launcher.restart_bridge()
     for module, name in stale_functions:

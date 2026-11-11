@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {createHash} from 'node:crypto'
 import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary,renderIsolatedResult,isolatedLogValue} from '../../lib/isolated-execution.js'
-import {MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js'
+import {MAX_MODEL_TEXT_BYTES,MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
 
 // DSH resolves local paths to their real spelling, including Windows TEMP aliases.
@@ -117,8 +117,23 @@ try {
   const read=await tool.execute({operation:'read',output_dir:output},exec)
   assert.deepEqual(read.report,JSON.parse(await fs.readFile(path.join(output,'report.json'),'utf8')),
     'native canonical reads preserve every report field; presentation cannot erase execution evidence')
+  const selected=await tool.execute({operation:'read',output_dir:output,pointer:'/result/builder/result'},exec)
+  assert.equal(selected.kind,'isolated-houdini-report-page')
+  assert.deepEqual(JSON.parse(selected.text),{width:5})
+  assert.equal(selected.next_offset,null)
+  assert.deepEqual(selected.imageAttachments,[],'field pages do not resend unrelated report images')
+  const firstPage=await tool.execute({operation:'read',output_dir:output,pointer:'/result/builder/result',offset:0,limit:2},exec)
+  assert.equal(firstPage.text,'{\n');assert.equal(firstPage.next_offset,2)
+  const secondPage=await tool.execute({operation:'read',output_dir:output,pointer:'/result/builder/result',offset:firstPage.next_offset,limit:16000},exec)
+  assert.equal(secondPage.text,selected.text.slice(2));assert.equal(secondPage.next_offset,null)
+  await assert.rejects(tool.execute({operation:'read',output_dir:output,pointer:'/result/missing'},exec),/JSON Pointer field not found/)
   assert.equal(runtimeReads,1,'reading a completed run never resolves the current Houdini')
   assert.equal(tool.output.render({},read).filter(item=>item.type==='image').length,1)
+  ctx.llm.resolveModelInfo=async()=>({inputModalities:['text']})
+  const metadataOnly=await executeIsolated(ctx,exec,{operation:'read',output_dir:output,allow_undeclared_image_input:true},runtimeResolver,runner)
+  assert.equal(metadataOnly.imageAttachments[0].capability_status,'unsupported')
+  assert(metadataOnly.imageAttachments[0].attachment,'metadata refusal must not hide a readable isolated image')
+  ctx.llm.resolveModelInfo=async()=>({inputModalities:['text','image']})
   assert.equal(tool.presentResult({}, {meta:{canonical:read},content:[]}).title,'独立 Houdini · 已完成');
   assert.equal(tool.presentResult({}, {meta:{canonical:{report:{finished:true,ok:false}}},content:[]}).title,'独立 Houdini · 失败');
   assert.deepEqual(JSON.parse(JSON.stringify(read)),read,'public returned values remain lossless JSON')
@@ -153,7 +168,7 @@ try {
   assert.deepEqual(aggregateFacts.checks,{count:6,status_counts:{failed:3,passed:3}})
   assert.deepEqual(aggregateFacts.read,{operation:'read',output_dir:aggregateDir});assert.match(aggregateFacts.next_action,/operation="read"/)
   const aggregateBlocks=renderIsolatedResult(aggregateRead)
-  assert(Buffer.byteLength(aggregateBlocks.filter(block=>block.type==='text').map(block=>block.text).join(''))<=MAX_PRESENTATION_BYTES)
+  assert(Buffer.byteLength(aggregateBlocks.filter(block=>block.type==='text').map(block=>block.text).join(''))<=MAX_MODEL_TEXT_BYTES)
   assert.deepEqual(aggregateBlocks.filter(block=>block.type==='image'),read.imageAttachments.filter(row=>row.attachment).map(row=>({type:'image',attachment:row.attachment})),
     'aggregate text budgeting leaves actual native image blocks intact')
   assert.equal(JSON.stringify(aggregateRead),aggregateOriginal,'budgeting never mutates the complete return or source report')
@@ -168,7 +183,7 @@ try {
   for(const bounded of [isolatedLogValue(pathological),isolatedJobSummary(pathological)])
     assert(Buffer.byteLength(JSON.stringify(bounded))<=MAX_PRESENTATION_BYTES,'even the locator/decision summary has an aggregate bound')
   const pathologicalText=renderIsolatedResult(pathological).filter(block=>block.type==='text').map(block=>block.text).join('')
-  assert(Buffer.byteLength(pathologicalText)<=MAX_PRESENTATION_BYTES);assert(!pathologicalText.includes('\ufffd'))
+  assert(Buffer.byteLength(pathologicalText)<=MAX_MODEL_TEXT_BYTES);assert(!pathologicalText.includes('\ufffd'))
   await fs.writeFile(path.join(output,'artifacts/image/test.png'),'changed after check')
   const changed=await executeIsolated(ctx,exec,{operation:'read',output_dir:output},runtimeResolver,runner)
   assert.equal(changed.imageAttachments[0].attachment,undefined)

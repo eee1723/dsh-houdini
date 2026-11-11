@@ -61,6 +61,11 @@ assert.equal(classifyRawEffect({tool:'houdini_exec',failed:false,mutatingRawMeth
 assert.equal(classifyRawEffect({tool:'houdini_exec',failed:false,mutatingRawMethods:[],
   rawUsage:{gateOutcome:'exempted'}}),'suspected_effect','an exemption with missing effect details is not read-only');
 assert.equal(classifyRawEffect({tool:'houdini_query',failed:false,canonical:{execution:{read_only:false}}}),'unknown');
+assert.equal(classifyRawEffect({tool:'houdini_inspect',failed:false,canonical:{
+  execution:{read_only:true},transaction:{status:'effects_unverified'}}}),'unknown',
+  'an inspect request mode does not establish its effects');
+assert.equal(classifyRawEffect({tool:'houdini_inspect',args:{queries:[{verb:'selection'}]}}),null,
+  'structured observations are not counted as verb-free Python');
 assert.equal(classifyRawEffect({tool:'houdini_exec',rawUsage:{gateOutcome:'read_only'},
   canonical:{rawUsage:{gateOutcome:'blocked'}}}),'gate_blocked','canonical evidence beats stale parsed text');
 for(const ref of ['result_ref','request_ref','source_ref']) {

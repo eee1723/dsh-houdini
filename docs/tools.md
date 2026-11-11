@@ -6,12 +6,12 @@
 
 | 工具 | 为什么存在 | 输入 | 返回 | 执行位置 |
 |---|---|---|---|---|
-| `houdini_inspect` · 观察工程 | 读取真实Houdini场景、节点、参数和能力资料。 | 只读Python代码；hou与动词已导入。 | 读取结果、诊断及本次观察的场景身份。 | Houdini主线程，只读 |
-| `houdini_exec` · 执行操作 | 批量创建、修改、检查、保存或出图。 | Python代码或绝对UTF-8 .py脚本；script可带expected_sha256及code调用尾段，不使用exec(open(...))加载；__result__返回结构数据。 | 结果、真实错误、操作记录、事务状态、脚本版本、图像和文件。 | Houdini主线程，串行 |
+| `houdini_inspect` · 观察工程 | 读取真实Houdini场景、节点、参数和能力资料。 | queries 数据查询批次或 code Python 观察，二选一；常规已归档结果可用 presentation=compact 压缩模型正文。 | 逐项结果、诊断、场景身份及实际影响的验证范围。 | Houdini主线程；固定查询不执行提交的 Python，任意 Python 影响未核实 |
+| `houdini_exec` · 执行操作 | 批量创建、修改、检查、保存或出图。 | Python代码或绝对UTF-8 .py脚本；script可带expected_sha256及code调用尾段，不使用exec(open(...))加载；__result__返回结构数据；常规已归档结果可用 presentation=compact 压缩模型正文。 | 结果、真实错误、操作记录、事务状态、脚本版本、图像和文件。 | Houdini主线程，串行 |
 | `houdini_request` · 查回执行 | 回答某个未知响应的请求是否执行、是否完成；避免重复修改。 | 原请求的request_ref；index仅列当前所选运行实例中本会话的回执。 | 原执行状态与可取得的原始结果；不会重发代码。 | Bridge请求记录，无HOM |
-| `houdini_resource` · 读取资料 | 按需读取原始用户资料、完整历史工具结果及已归档加载警告。 | kind=source/result、ref及可选分页；result用select批读多个JSON Pointer，或pointer/offset分页单字段。 | 原文、完整JSON选值或JSON文本分页；缺失和超预算字段显式返回后续读取入口。 | DSH Host，无HOM |
+| `houdini_resource` · 读取资料 | 按需读取原始用户资料、完整历史结果、加载警告和准确安装版本的 SideFX 官方帮助。 | kind=source/result/help、ref及可选分页；result支持select或pointer。help用hom/hou/Node、vex/functions/noise、nodes/sop/box等精确页名，可选houdini_installation；next携带页摘要防止换源。 | 有界原文与后续读取入口；help包含实际HFS、Houdini构建、archive/member和原页SHA256，多安装未选择时明确返回歧义。 | DSH Host；help经原生subprocess运行随包只读worker，无HOM、socket或模型 |
 | `houdini_capabilities` · 观察通道 | 确认当前模型能否接收图片，以及附件通道是否可用。 | 无需参数。 | 当前模型与附件能力事实；不会渲染或判断画面。 | DSH Host，无HOM |
-| `houdini_isolated` · 独立Houdini执行 | 按需在新hython中执行构建脚本、已保存工程副本及加载后的准备操作，取得真实检查、错误和图片，供当前作者或团队成员自验证。 | operation=run/read、manifest；run可选全新output_dir，默认在当前DSH工作区execution_run角色内分配唯一目录；read传原run路径。使用已选工程登记的安装信息，离线仍可运行；可选houdini_installation显式指定HFS。manifest支持hip+script与input_root；可选background、timeout_seconds、memory_mb。 | 独立运行报告、输入版本、构建结果、检查和原生图片；大型原始回执单份保留并返回details；后台使用DSH job_output/job_kill。 | Host监管的一次性独立hython，不修改当前工程、不自动合并 |
+| `houdini_isolated` · 独立Houdini执行 | 按需在新hython中执行构建脚本、已保存工程副本及加载后的准备操作，取得真实检查、错误和图片，供当前作者或团队成员自验证。 | operation=run/read、manifest；run可选全新output_dir，默认在当前DSH工作区execution_run角色内分配唯一目录；read传原run路径，可用pointer/offset/limit分页读取报告字段。使用已选工程登记的安装信息，离线仍可运行；可选houdini_installation显式指定HFS。manifest支持hip+script与input_root；可选background、timeout_seconds、memory_mb；用户明确确认图片路由后可单次allow_undeclared_image_input。 | 独立运行报告、输入版本、构建结果、检查和原生图片；大型原始回执单份保留并返回details；后台使用DSH job_output/job_kill。 | Host监管的一次性独立hython，不修改当前工程、不自动合并 |
 | `houdini_ui_list` · 发现界面 | 列出当前Houdini中可见的原生pane及Qt窗口/面板，提供明确截图目标和实际支持状态。 | 无需参数；不打开或切换界面。 | 当前runtime目标引用、类型、用途线索、实际区域及支持/未支持原因。 | Bridge主线程队列，只读发现 |
 | `houdini_ui_screenshot` · 观察界面 | 截图明确的当前可见界面；目标须完整在屏内且无遮挡。 | target为houdini_ui_list发现所得引用；可选path/output_policy。不打开或调整界面，不传Python代码。 | 真实PNG附件、准确目标区域、实际尺寸与状态保持事实；识图与捕获分别判断。 | Bridge主线程队列分阶段观察/捕获，不改导航或窗口状态 |
 | `houdini_job_submit` · 提交长任务 | 把渲染、模拟或长计算放入Houdini串行队列，由DSH原生jobs跟踪、通知和收集。 | Python代码或script、expected_sha256及可选code调用尾段；与exec相同的操作能力。 | DSH job_id用于job_output/job_kill，Bridge jobId和原request_ref用于真实结果及恢复；houdini_request查回原结果和图片。 | DSH jobs观察；Houdini主线程串行执行 |

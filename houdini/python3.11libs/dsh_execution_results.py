@@ -374,6 +374,7 @@ def project_result(*, ledger, images, stdout, stderr, error, rollback, raw_usage
         or gate_outcome not in ("not_applicable", "read_only")
     ):
         raw_usage["gateOutcome"] = gate_outcome
+        raw_usage["scope"] = 'Static source classification only; a missed mutation is not proof of read-only execution or zero scene changes'
         if allow_raw:
             raw_usage["exemptionReason"] = allow_raw
         envelope["rawUsage"] = raw_usage

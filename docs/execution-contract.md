@@ -11,17 +11,19 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 | 工具 | 执行范围 |
 |---|---|
 | houdini_exec | 在目标 Houdini 主线程执行修改或验证批次 |
-| houdini_inspect | 只读 Python 与现场查询；不准备编辑 Undo 和创建登记 |
+| houdini_inspect | 现场观察；结构化 queries 只派发固定查询。任意 Python 查询模式拒绝已知修改，不准备编辑 Undo 和创建登记，脚本影响未核实 |
 | houdini_job_submit | 原生DSH jobs准入后提交现场长任务；job_output收集、job_kill请求取消，完成通知送原作者 |
 | houdini_request | 查回原 request_ref 的接收/执行回执、原job结果和图片；活动job可恢复本机观察，不重发代码 |
-| houdini_resource | 在 Host 读取用户来源或已保留结果的分页正文 |
+| houdini_resource | 在 Host 读取用户来源、已保留结果或指定 Houdini 安装自带的帮助页 |
 | houdini_capabilities | 返回当前模型与附件通道的声明能力 |
 | houdini_isolated | 新hython中的builder、HIP副本或副本加载后的受管准备操作；不修改live，不自动合并 |
 | image_models / image_generate | Host读取配置或请求图片API；managed目的地经Bridge只读观察所选HIP，explicit不查询Houdini；不修改场景、不提供几何验证 |
 
-[工具运行层](../src/tool-runtime.ts)负责身份、执行端路由和图像附件；[资源读取](../src/tool-query.ts)只消费历史材料。结果正文或来源不成为新的现场观察、授权或任务指令。DSH 已有的文件、终端、网络与会话工具按其原生职责使用。
+[工具运行层](../src/tool-runtime.ts)负责身份、执行端路由和图像附件。[历史资源](../src/tool-query.ts)按实际留存来源读取，[安装帮助](../src/houdini-help.ts)按实际 Houdini 构建读取。它们都不生成现场观察、授权或任务指令。DSH 已有的文件、终端、网络与会话工具按其原生职责使用。
 
 动词的函数注册、只读/执行准入和内容失效范围在`dsh_execution._VERB_DEFINITIONS`同一处声明；帮助与执行器派生所需视图，不再维护平行名称名单。准入与内容失效是不同维度：会cook、临时改状态或写文件的观察仍可能要求exec；明确UI导航可以不改模型内容。失效范围只是上下文更新提示，不是外部副作用或恢复保证。
+
+任意 Python 的请求模式和现场影响是不同事实。`execution.read_only` 只表示请求了查询模式。提交源码尚未开始执行时可记录 `no_scene_change`。已经运行且没有观测到受管修改或恢复证据时，回执为 `effects_unverified`。受管动词提交和原生 Undo 恢复只覆盖其记录范围，脚本其余效果和外部副作用不由静态扫描证明。
 
 ## 主线程、执行端与归属
 
@@ -72,7 +74,7 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 
 独立执行复用DSH作业与一次性worker。manifest的`hip/script/files`以明确输入根定位，保持相对结构及本次字节版本；HIP和script可以组合，driver先加载副本并登记新identity，再以同一隔离作者运行准备代码和checks。准备代码仍走相同Raw Gate，不允许自行raw load/clear。安装来自当前明确选择的执行端登记，断连记录仍可提供静态安装事实；可显式指定`houdini_installation`，不从Host HFS/PATH或其他现场降级选择。无登记的固定Bridge配置保留在线安装信息入口。安装选择不授现场权限，也不证明原执行结束。默认run目录取当前DSH工作区的共享角色，不为分配目录查询live或自动搬动用户文件。
 
-worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
+worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。每次builder/check单独捕获原生及子进程输出并恢复描述符；完整扫描已确认的Mantra `Unable to load texture`，保留有界首尾文本、实际路径与`native_diagnostics`，计入failed并停止后续checks，不能因envelope.ok或文件fresh形成假绿。warning/unverified及纯几何检查不被该纹理规则一刀切。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
 
 HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
 
@@ -189,6 +191,8 @@ render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复�
 渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`；最终图片可选 delivery，分配到 `$HIP/dsh-artifacts/renders/<HIPNAME>/`。HIPNAME保留版本与原名，只去掉标准HIP扩展；命名组不是工程身份，精确来源由artifact的hip_path记录。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit，裸文件名仍进入visual_check的HIPNAME目录。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，已有含目录的用户路径优先；新建Karma Render Settings（含Karma Setup）默认关闭景深，picture与checkpoint使用同源render目录和原生$HIPNAME。后续渲染不暗改已配置的景深。Save As只影响后续默认输出，不迁移或删除旧图。
 
 USD Render ROP的outputimage留空时，render_frame沿当前ROP的实际输入和RenderSettings观察磁盘raster产品，保留原生多产品设置；多文件逐个保留freshness，output仅单文件时为路径，多文件使用outputs。delegate/deep/checkpoint及非磁盘产品明确保留未验证，不以周期checkpoint缺失判成图失败。Husk文件名使用原生expandHuskFilePath，不二次执行backticks；相对产品位置、未明确的settings选择与RenderPass不推断。显式picture仍为本次覆盖并恢复。用户明确模板先展开；已分配实际路径写入Houdini参数时保留字面美元与反引号，不二次求值。USD预检与渲染期的frame恢复失败同样产生render_restore事实。
+
+`render_frame`结果没有顶层`ok`字段；文件检查以`fresh`和`errors`为准，多产品另读`outputs`。fresh只证明新鲜非空文件，不能覆盖纹理加载失败、视觉语义或整体质量。完整输入/输出说明和反例由`verb-operation-contracts.json`同源生成。
 
 viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
 

@@ -54,7 +54,7 @@ try:
  selected=[row['name'] for row in groups]
  preview=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},dry_run=True)")
  assert preview['ok'] and preview['result']['layout_status']=='planned',preview
- assert preview['transaction']['status']=='no_scene_change' and preview['result']['scene_writes']==0
+ assert preview['transaction']['status']=='effects_unverified' and preview['transaction']['source_executed'] is True and preview['result']['scene_writes']==0
  old_plan=preview['result']['plan_sha256']
  applied=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},expected_plan={old_plan!r})")
  assert applied['ok'] and applied['result']['layout_status']=='passed',applied
@@ -75,7 +75,7 @@ try:
  fresh=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},dry_run=True)")['result']
  noop=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},expected_plan={fresh['plan_sha256']!r})")
  assert noop['ok'] and not noop['result']['applied'] and noop['result']['scene_writes']==0
- assert noop['transaction']['status']=='no_scene_change'
+ assert noop['transaction']['status']=='effects_unverified' and noop['transaction']['source_executed'] is True
  denied=call(f"layout_nodes({parent!r},mode='handoff',boxes=['foreign_box'],dry_run=True)")
  assert not denied['ok'] and 'ownership guard' in denied['error']
  # Apply failure after some node moves restores through the accepted box journal.
@@ -97,7 +97,7 @@ try:
  assert {path:[item.path() if item else None for item in hou.node(path).inputs()] for path in paths}==wires
  assert {path:(hou.node(path).isDisplayFlagSet(),hou.node(path).isRenderFlagSet(),hou.node(path).needsToCook()) for path in paths}==flags
  stable=ok(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},profile='readable')")
- assert not stable['result']['applied'] and stable['transaction']['status']=='no_scene_change',stable
+ assert not stable['result']['applied'] and stable['transaction']['status']=='effects_unverified' and stable['transaction']['source_executed'] is True,stable
  # More than the old 512-node and 512-obstacle thresholds: one explicit owned
  # scope, complete unselected geometry, and a blocker appended after all others.
  large=ok(

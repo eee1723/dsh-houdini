@@ -24,7 +24,11 @@ class Bridge extends HoudiniBridge {
       return {ok:true,status:'active',operation_id:input.operation_id,executor_id:b,checkpoint_id:c}
     }
     const common={executor_id:this.wrong?c:b,checkpoint_id:c,scene_id:d,scene_epoch:e,runtime_id:e,
-      hip_path:'C:/fixture/project.hip',requires_reload:this.needsReload,dirty_reliable:true,dirty:this.dirty,owned_nodes:2,restored_nodes:2}
+      hip_path:'C:/fixture/project.hip',requires_reload:this.needsReload,dirty_reliable:true,dirty:this.dirty,
+      owned_nodes:this.ownedNodes??2,restored_nodes:this.ownedNodes??2,
+      ...(this.ownedNotes!==undefined?{owned_notes:this.ownedNotes,restored_notes:this.ownedNotes,
+        unrestored_notes:[{path:'/obj/artist/removed',reason:'original_sticky_note_missing_or_changed'}]}:{}),
+      ...(this.ownedBoxes!==undefined?{owned_boxes:this.ownedBoxes,restored_boxes:this.ownedBoxes}: {})}
     return action==='assess'?{...common,status:this.assessmentStatus??(this.connected?'connected':'ready')}:{...common,status:'prepared',operation_id:input.operation_id}
   }
 }
@@ -112,6 +116,25 @@ async function selectedFixture({scene=d,reload=false,dirty=false,checkpoint=c,co
 const direct=await selectedFixture()
 await direct.service.beforeWrite(direct.agent,signal)
 assert.deepEqual(direct.connection.requests.map(r=>r.action),['assess','prepare','activate'],'an explicit same-scene selection restores original ownership before its first write without needing a fresh read')
+const onlyNotes=await selectedFixture()
+onlyNotes.connection.ownedNodes=0;onlyNotes.connection.ownedNotes=1
+await onlyNotes.service.beforeWrite(onlyNotes.agent,signal)
+assert.deepEqual(onlyNotes.connection.requests.map(r=>r.action),['assess','prepare','activate'],
+  'a task that created only a Sticky Note in an artist-owned network restores its independent item authority')
+const noteFacts=foldExecutorState(onlyNotes.session.snapshotEvents()).recovery
+assert.equal(noteFacts.restored_nodes,0);assert.equal(noteFacts.restored_notes,1)
+assert.equal(noteFacts.unrestored_notes[0].path,'/obj/artist/removed','native projection preserves unverified note identities')
+const onlyBoxes=await selectedFixture()
+onlyBoxes.connection.ownedNodes=0;onlyBoxes.connection.ownedBoxes=1
+await onlyBoxes.service.beforeWrite(onlyBoxes.agent,signal)
+assert.deepEqual(onlyBoxes.connection.requests.map(r=>r.action),['assess','prepare','activate'])
+assert.equal(foldExecutorState(onlyBoxes.session.snapshotEvents()).recovery.restored_boxes,1,
+  'independent Network Box authority is retained by the same native recovery projection')
+const noNotes=await selectedFixture()
+noNotes.connection.ownedNodes=0
+await noNotes.service.beforeWrite(noNotes.agent,signal)
+assert.deepEqual(noNotes.connection.requests.map(r=>r.action),['assess'],
+  'legacy saved records with no independent notes do not invent item authority')
 for(const collector of ['native-job','nested-job','request-job']) {
   const collected=await selectedFixture({collector})
   await collected.service.beforeWrite(collected.agent,signal)

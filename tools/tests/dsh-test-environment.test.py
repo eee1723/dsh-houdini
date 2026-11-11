@@ -141,6 +141,27 @@ with tempfile.TemporaryDirectory(prefix='dsh-env-中文 空格-') as raw:
 print('GUI policy, license preservation, caller immutability and explicit launch directory passed')
 
 import houdini_test_environment as test_environment
+with patch.object(Path, 'read_text', side_effect=PermissionError('Chrome is writing its port file')) as read_port:
+    assert test_environment.read_desktop_debug_port('owned-port', 'DevTools listening on ws://127.0.0.1:54321/devtools/browser/id') == 54321
+    read_port.assert_not_called()
+    assert test_environment.read_desktop_debug_port('owned-port', '') is None
+for transient in (FileNotFoundError('not written yet'), PermissionError('sharing violation')):
+    with patch.object(Path, 'read_text', side_effect=transient):
+        assert test_environment.read_desktop_debug_port('owned-port', '') is None
+for pending in ('', '\n'):
+    with patch.object(Path, 'read_text', return_value=pending):
+        assert test_environment.read_desktop_debug_port('owned-port', '') is None
+with patch.object(Path, 'read_text', return_value='54322\n/devtools/browser/id\n'):
+    assert test_environment.read_desktop_debug_port('owned-port', '') == 54322
+with patch.object(Path, 'read_text', side_effect=OSError('unexpected storage error')):
+    try:
+        test_environment.read_desktop_debug_port('owned-port', '')
+    except OSError as error:
+        assert str(error) == 'unexpected storage error'
+    else:
+        raise AssertionError('Unexpected port-file errors must not become readiness retries')
+print('owned Desktop port discovery tolerates the observed file-write race and preserves other errors')
+
 with patch.object(test_environment, 'windows_package_name', return_value=None), \
      patch.object(test_environment, '_run_unpacked_test_cli', side_effect=AssertionError('ordinary CLI must stay in place')):
     test_environment.reexec_unpacked_test_cli()

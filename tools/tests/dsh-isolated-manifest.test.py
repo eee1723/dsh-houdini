@@ -1,12 +1,15 @@
 """No Houdini needed: strict inputs, no overwrite, and incomplete result refusal."""
 import importlib.util
+import builtins
 from copy import deepcopy
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +33,17 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     save(valid)
 
     assert runner.load_manifest(file)==valid
+    def chatty_native_call():
+        os.write(1,b'prefix\n'+b'x'*200000+b'\n')
+        os.write(1,b"[12:34:56] mantra: Unable to load texture 'E:/missing.png'\n")
+        os.write(1,b'y'*200000)
+        return {'ok':True,'outcome':{'checks':{'failed':0}}}
+    envelope,native_output,omitted,lines=runner._execute_with_native_output(chatty_native_call)
+    envelope=runner._record_native_diagnostics(envelope,native_output,omitted,lines)
+    assert omitted>0 and len(native_output)<300000
+    assert envelope['native_diagnostics'][0]['path']=='E:/missing.png'
+    assert envelope['outcome']['checks']['failed']==1
+    assert envelope['native_output_omitted_bytes']==omitted
     cases=json.loads((ROOT/'tools/tests/fixtures/isolated-file-sequences.json').read_text(encoding='utf-8'))
     for case in cases['valid']:
         assert runner.manifest_inputs({'script':'build.py','files':case['files']})==case['expected']
@@ -269,6 +283,9 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
             result=runner.check(file,Path(sys.executable),directory,trusted=True)
         assert result['ok'] is (mode=='valid'),(mode,result)
         assert runner.read_json(directory/'report.json')['ok'] is (mode=='valid')
+        if mode=='wrong-exit':
+            assert result['result']['ok'] is True and 'process did not exit cleanly' in result['error']
+            assert 'returncode=1' in result['error'], result
         assert result['runtime_environment']['cleaned']
         assert not Path(result['runtime_environment']['path']).exists()
         assert not (directory/'runtime').exists()
@@ -401,4 +418,48 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     assert runner.status(staging)['phase']=='staging'
     runner.write_json(staging/'request.json',{'run_id':'b'*32,'inputs':[]})
     rejects(lambda:runner.status(staging))
-print('isolated manifest, trust, path aliases, result completeness/runtime and packaging contracts passed')
+# Only the released one-shot worker enters native shutdown. Ordinary CLI and
+# pure manifest planning must remain usable without Houdini/USD installed.
+original_import=builtins.__import__
+def without_hom(name,*args,**kwargs):
+    if name=='hou' or name=='pxr' or name.startswith('pxr.'):
+        raise AssertionError('ordinary CLI imported native Houdini/USD')
+    return original_import(name,*args,**kwargs)
+with patch.object(sys,'argv',['checker','--worker','unused-request.json']), \
+     patch.object(sys,'stdin',io.StringIO('NOT_GO\n')), \
+     patch.object(runner,'worker',side_effect=AssertionError('unreleased worker executed')), \
+     patch.object(builtins,'__import__',side_effect=without_hom):
+    assert runner.main()==2
+with patch.object(sys,'argv',['checker','--plan']), \
+     patch.object(sys,'stdin',io.TextIOWrapper(io.BytesIO(b'{"script":"build.py"}'),encoding='utf-8')), \
+     patch.object(sys,'stdout',io.StringIO()) as output, \
+     patch.object(builtins,'__import__',side_effect=without_hom):
+    assert runner.main()==0 and json.loads(output.getvalue())['ok']
+events=[]
+def native_exit(*,exit_code,suppress_save_prompt):
+    events.append(('exit',exit_code,suppress_save_prompt))
+    raise SystemExit(exit_code)
+work=SimpleNamespace(SetConcurrencyLimit=lambda count:events.append(('limit',count)))
+native=SimpleNamespace(isUIAvailable=lambda:False,exit=native_exit)
+with patch.dict(sys.modules,{'hou':native,'pxr':SimpleNamespace(Work=work)}):
+    for expected in (0,1,17):
+        events.clear()
+        def completed(_request):
+            events.append('work-and-report-completed')
+            return expected
+        with patch.object(sys,'argv',['checker','--worker','owned-request.json']), \
+             patch.object(sys,'stdin',io.StringIO('GO\n')), patch.object(runner,'worker',side_effect=completed):
+            try:runner.main()
+            except SystemExit as exited:assert exited.code==expected
+            else:raise AssertionError('native worker exit returned')
+        assert events==['work-and-report-completed',('limit',1),('exit',expected,True)]
+    for target,name in ((work,'SetConcurrencyLimit'),(native,'exit')):
+        with patch.object(target,name,side_effect=RuntimeError('EXPECTED_SHUTDOWN_FAILURE')):
+            try:runner._exit_worker(0)
+            except RuntimeError as error:assert str(error)=='EXPECTED_SHUTDOWN_FAILURE'
+            else:raise AssertionError('shutdown failure was ignored')
+    with patch.object(native,'isUIAvailable',return_value=True):
+        try:runner._exit_worker(0)
+        except RuntimeError as error:assert 'headless' in str(error)
+        else:raise AssertionError('a GUI process was accepted for disposable shutdown')
+print('isolated manifest, trust, path aliases, result completeness/runtime, native shutdown and packaging contracts passed')

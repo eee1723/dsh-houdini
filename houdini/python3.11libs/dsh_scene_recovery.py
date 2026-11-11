@@ -12,6 +12,8 @@ import time
 import uuid
 import hou
 import dsh_ownership
+import dsh_network_notes
+import dsh_network_boxes
 import dsh_recovery_store as store
 from dsh_load_warnings import LoadWarning
 from dsh_managed_runtime import executor_identity
@@ -30,6 +32,8 @@ if globals().get('_PID') != os.getpid():
     _LOADED = None
     _LOADED_STAMP = None
     _LOADED_NODES = {}
+    _LOADED_NOTES = {}
+    _LOADED_BOXES = {}
     _PROVEN = None
     _SAVE_SERIAL = 0
     _BINDINGS = {}
@@ -44,6 +48,10 @@ if '_PROVEN' not in globals():
     _PROVEN = None
 if '_SAVE_SERIAL' not in globals():
     _SAVE_SERIAL = 0
+if '_LOADED_NOTES' not in globals():
+    _LOADED_NOTES = {}
+if '_LOADED_BOXES' not in globals():
+    _LOADED_BOXES = {}
 if '_LOAD_WARNINGS' not in globals():
     _LOAD_WARNINGS = None
 elif isinstance(_LOAD_WARNINGS, list):
@@ -101,7 +109,7 @@ def before_save():
     inherited, _ = _live_mapping(proven['record'], proven['nodes']) if proven else ([], [])
     inherited = dict(inherited)
     bound_here = any(binding['scene_epoch'] == _EPOCH for binding in _BINDINGS.values())
-    if not records and not proven and (_LOADED or not bound_here):
+    if not records and not dsh_network_notes.ownership_snapshot() and not dsh_network_boxes.ownership_snapshot() and not proven and (_LOADED or not bound_here):
         _PREPARED = None
         if _LOADED:
             _STATUS = {'status': 'checkpoint_unavailable',
@@ -131,6 +139,10 @@ def before_save():
         rows.append({'node_id': token, 'path': node.path(), 'type': node.type().name(),
                      'category': node.type().category().name(), 'owner': dict(owner), 'source_executor': source})
         baseline[identity] = (token, node.type().category().name(), node.type().name())
+    note_rows, note_baseline = dsh_network_notes.prepare_checkpoint(
+        proven['record'].get('notes', []) if proven else [], proven.get('notes', {}) if proven else {}, executor_identity())
+    box_rows, box_baseline = dsh_network_boxes.prepare_checkpoint(
+        proven['record'].get('boxes', []) if proven else [], proven.get('boxes', {}) if proven else {}, executor_identity())
     parent = _checkpoint()
     if _STATUS.get('status') == 'save_failed' and _PREPARED and parent == _PREPARED['checkpoint_id']:
         parent = _PREPARED['parent_checkpoint']  # A confirmed failed attempt is not a saved ancestor.
@@ -139,7 +151,8 @@ def before_save():
     _PREPARED = {'checkpoint_id': checkpoint, 'parent_checkpoint': parent, 'scene_id': _SCENE,
                  'executor_id': executor_identity(), 'hou_version': hou.applicationVersionString(),
                  'source_executors': sorted(set([executor_identity(), *(store.sources(proven['record']) if proven else [])])),
-                 'saved_at': time.time(), 'nodes': rows, '_baseline': baseline, '_epoch': _EPOCH,
+                 'saved_at': time.time(), 'nodes': rows, 'notes': note_rows, 'boxes': box_rows,
+                 '_baseline': baseline, '_note_baseline': note_baseline, '_box_baseline': box_baseline, '_epoch': _EPOCH,
                  '_serial': _SAVE_SERIAL}
     if _LOADED and not proven:
         _PREPARED['unrestored_provenance'] = 'Loaded checkpoint provenance was unavailable before this save.'
@@ -148,7 +161,7 @@ def before_save():
     # committed record and matching file bytes, and status stays "saving".
     with _WORK:
         _PROVEN = {'record': {key: value for key, value in _PREPARED.items() if not key.startswith('_')},
-                   'nodes': baseline, 'epoch': _EPOCH}
+                   'nodes': baseline, 'notes': note_baseline, 'boxes': box_baseline, 'epoch': _EPOCH}
     _STATUS = {'status': 'saving', 'checkpoint_id': checkpoint}
 
 
@@ -200,7 +213,8 @@ def after_save(path, success):
             if _SAVED == key and _SAVE_SERIAL == pending['_serial']:
                 _STATUS = result
                 if saved and pending['_epoch'] == _EPOCH:
-                    _PROVEN = {'record': saved, 'nodes': pending['_baseline'], 'epoch': _EPOCH}
+                    _PROVEN = {'record': saved, 'nodes': pending['_baseline'],
+                               'notes': pending.get('_note_baseline', {}), 'boxes': pending.get('_box_baseline', {}), 'epoch': _EPOCH}
     threading.Thread(target=persist, daemon=True, name='dsh-checkpoint').start()
 
 
@@ -211,12 +225,15 @@ def save_unverified(reason):
 
 
 def invalidate():
-    global _EPOCH, _SCENE, _LOADED, _LOADED_STAMP, _LOADED_NODES, _PREPARED, _SAVED, _STATUS, _PROVEN
+    global _EPOCH, _SCENE, _LOADED, _LOADED_STAMP, _LOADED_NODES, _LOADED_NOTES, _PREPARED, _SAVED, _STATUS, _PROVEN
     global _LOAD_WARNINGS
+    global _LOADED_BOXES
     _main()
     _LOAD_WARNINGS = None
     _EPOCH, _SCENE = uuid.uuid4().hex, uuid.uuid4().hex
     _LOADED, _LOADED_NODES, _PREPARED, _SAVED = None, {}, None, None
+    _LOADED_NOTES = {}
+    _LOADED_BOXES = {}
     _LOADED_STAMP = None
     _PROVEN = None
     _STATUS = {'status': 'not_observed'}
@@ -224,10 +241,13 @@ def invalidate():
     # Keep old ownership bindings as history. Live request admission is fenced
     # by the explicitly selected scene epoch, independently of these bindings.
     dsh_ownership.clear_for_scene_load()
+    dsh_network_notes.clear_for_scene_load()
+    dsh_network_boxes.clear_for_scene_load()
 
 
 def capture_loaded():
-    global _SCENE, _LOADED, _LOADED_STAMP, _LOADED_NODES, _PROVEN
+    global _SCENE, _LOADED, _LOADED_STAMP, _LOADED_NODES, _LOADED_NOTES, _PROVEN
+    global _LOADED_BOXES
     _main()
     _LOADED = _checkpoint()
     try:
@@ -238,11 +258,17 @@ def capture_loaded():
         _LOADED_STAMP = store.file_stamp(hou.hipFile.path())
     except OSError:
         _LOADED_STAMP = None
+    nodes = _nodes()
     _LOADED_NODES = {int(node.sessionId()): (node.userData(NODE_KEY), node.type().category().name(),
-                                            node.type().name()) for node in _nodes()}
+                                            node.type().name()) for node in nodes}
+    parents = (hou.node('/'), *nodes)
+    _LOADED_NOTES = dsh_network_notes.capture_loaded_notes(parents)
+    _LOADED_BOXES = dsh_network_boxes.capture_loaded_boxes(parents)
     _PROVEN = None
     checkpoint, stamp, path, epoch, serial = _LOADED, _LOADED_STAMP, hou.hipFile.path(), _EPOCH, _SAVE_SERIAL
     baseline = dict(_LOADED_NODES)
+    note_baseline = dict(_LOADED_NOTES)
+    box_baseline = dict(_LOADED_BOXES)
     if not checkpoint or not stamp:
         return
     def verify():
@@ -256,7 +282,8 @@ def capture_loaded():
             return
         with _WORK:
             if epoch == _EPOCH and checkpoint == _LOADED and serial == _SAVE_SERIAL:
-                _PROVEN = {'record': record, 'nodes': baseline, 'epoch': epoch}
+                _PROVEN = {'record': record, 'nodes': baseline, 'notes': note_baseline,
+                           'boxes': box_baseline, 'epoch': epoch}
     threading.Thread(target=verify, daemon=True, name='dsh-load-checkpoint').start()
 
 
@@ -332,14 +359,18 @@ def preview(record, owner, previous, expected_scene=None):
     if record['checkpoint_id'] != current['checkpoint_id']:
         raise RuntimeError('当前工程与保存点不匹配；请打开原任务对应的 HIP。')
     owned = [row for row in record['nodes'] if row['owner']['session'] == owner]
+    owned_notes = [row for row in record.get('notes', []) if row['owner']['session'] == owner]
+    owned_boxes = [row for row in record.get('boxes', []) if row['owner']['session'] == owner]
     if expected_scene is not None and record['scene_id'] != expected_scene:
         raise RuntimeError('当前工程身份与原对话不一致；需要通过对话确认要继续的工程。')
-    if not owned and expected_scene != record['scene_id']:
+    if not owned and not owned_notes and not owned_boxes and expected_scene != record['scene_id']:
         raise RuntimeError('此保存点没有任务节点，且缺少原对话的工程身份，无法自动确认接续关系。')
     verified = _PROVEN and _PROVEN['epoch'] == _EPOCH and _PROVEN['record']['checkpoint_id'] == record['checkpoint_id']
     return {**current, 'scene_id': record['scene_id'], 'saved_at': record['saved_at'],
             'saved_hip': record['hip_path'], 'saved_version': record['hou_version'],
-            'owned_nodes': len(owned), 'requires_reload': not verified and _LOADED != current['checkpoint_id'],
+            'owned_nodes': len(owned), 'owned_notes': len(owned_notes),
+            'owned_boxes': len(owned_boxes),
+            'requires_reload': not verified and _LOADED != current['checkpoint_id'],
             'unrestored_provenance': record.get('unrestored_provenance')}
 
 
@@ -421,8 +452,14 @@ def prepare(record, owner, previous, operation, expected, reload_saved=False, ex
     if not proven and _LOADED != record['checkpoint_id']:
         raise RuntimeError('No observed load of the verified checkpoint')
     mapping, missing = _live_mapping(record, proven['nodes'] if proven else _LOADED_NODES, owner)
+    note_mapping, missing_notes = dsh_network_notes.checkpoint_mapping(record.get('notes', []),
+        proven.get('notes', {}) if proven else _LOADED_NOTES, owner)
+    box_mapping, missing_boxes = dsh_network_boxes.checkpoint_mapping(record.get('boxes', []),
+        proven.get('boxes', {}) if proven else _LOADED_BOXES, owner)
     value = {'owner': owner, 'previous': previous, 'operation': operation,
              'record': record, 'epoch': _EPOCH, 'mapping': mapping, 'missing': missing,
+             'note_mapping': note_mapping, 'missing_notes': missing_notes,
+             'box_mapping': box_mapping, 'missing_boxes': missing_boxes,
              'load_warning': _LOAD_WARNINGS, 'active': False}
     _OPERATIONS[operation] = value
     return public_prepared(value)
@@ -452,6 +489,8 @@ def public_prepared(value):
             'checkpoint_id': value['record']['checkpoint_id'], 'scene_id': value['record']['scene_id'],
             'executor_id': executor_identity(), 'previous_executor': value['previous'],
             'restored_nodes': len(value['mapping']), 'unrestored_nodes': value.get('missing', []),
+            'restored_notes': len(value.get('note_mapping', [])), 'unrestored_notes': value.get('missing_notes', []),
+            'restored_boxes': len(value.get('box_mapping', [])), 'unrestored_boxes': value.get('missing_boxes', []),
             'load_warnings': value['load_warning'].excerpt() if value.get('load_warning') and not value['active'] else [],
             'load_warning_details': value['load_warning'].reference() if value.get('load_warning') else None,
             'status': 'active' if value['active'] else 'prepared'}
@@ -472,7 +511,18 @@ def activate(operation, owner):
     if value is None or value['owner'] != owner or value['epoch'] != _EPOCH:
         raise RuntimeError('Recovery preparation is absent or the scene changed')
     if not value['active']:
-        dsh_ownership.restore_checkpoint(value['mapping'], owner, NODE_KEY)
+        node_ownership = dsh_ownership.snapshot()
+        note_ownership = dsh_network_notes.ownership_snapshot()
+        box_ownership = dsh_network_boxes.ownership_snapshot()
+        try:
+            dsh_ownership.restore_checkpoint(value['mapping'], owner, NODE_KEY)
+            dsh_network_notes.restore_checkpoint(value.get('note_mapping', []), owner)
+            dsh_network_boxes.restore_checkpoint(value.get('box_mapping', []), owner)
+        except BaseException:
+            dsh_ownership.restore(node_ownership)
+            dsh_network_notes.restore_ownership(note_ownership)
+            dsh_network_boxes.restore_ownership(box_ownership)
+            raise
         _SCENE = value['record']['scene_id']
         _BINDINGS[owner] = {'scene_epoch': _EPOCH, 'binding_id': operation}
         value['active'] = True

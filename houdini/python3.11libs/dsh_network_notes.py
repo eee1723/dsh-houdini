@@ -5,10 +5,12 @@ import contextlib
 import math
 import os
 import re
+import struct
 
 import hou
 from dsh_network_boxes import collect_editor_obstacles, _service_node_or_ancestor
 from dsh_network_layout import Rect
+from dsh_editor_checkpoints import EditorCheckpoints
 
 
 class NetworkNoteOperationError(RuntimeError):
@@ -24,6 +26,9 @@ _ACTIVE_JOURNAL = None
 DEFAULT_SIZE = (6.0, 3.0)
 DEFAULT_COLOR = (1.0, 0.97, 0.52)
 SCOPE = 'explicit Sticky Note presentation only; no cooking, wiring or node changes'
+CHECKPOINT_KEY = 'dsh_houdini_checkpoint_notes'
+_CHECKPOINTS = EditorCheckpoints('sticky_note', CHECKPOINT_KEY, 'stickyNotes',
+                                 lambda note: _service_node_or_ancestor(note.parent()))
 
 
 def _key(note):
@@ -35,6 +40,40 @@ def _owner(note):
     if entry is not None and entry['native_object'] == note:
         return entry
     return None
+
+
+def clear_for_scene_load():
+    """A native Open/New ends the causal scope of every live note identity."""
+    _OWNED_NOTES.clear()
+
+
+def ownership_snapshot():
+    return {key: dict(value) for key, value in _OWNED_NOTES.items()}
+
+
+def restore_ownership(snapshot):
+    _OWNED_NOTES.clear()
+    _OWNED_NOTES.update(snapshot)
+
+
+def _checkpoint_tokens(parent):
+    return _CHECKPOINTS.tokens(parent)
+
+
+def capture_loaded_notes(parents):
+    return _CHECKPOINTS.capture(parents)
+
+
+def checkpoint_mapping(rows, baseline, owner=None):
+    return _CHECKPOINTS.mapping(rows, baseline, owner)
+
+
+def prepare_checkpoint(rows, baseline, executor):
+    return _CHECKPOINTS.prepare(rows, baseline, _OWNED_NOTES, executor)
+
+
+def restore_checkpoint(mapping, session):
+    _CHECKPOINTS.restore(mapping, session, _OWNED_NOTES)
 
 
 def note_provenance(note, active_owner_session=None):
@@ -99,8 +138,24 @@ def _state(note):
 
 def _row(note, active_owner_session):
     value = _state(note)
-    return {k: value[k] for k in ('name', 'identity', 'text', 'position', 'size', 'color', 'minimized')} | {
+    return {k: value[k] for k in ('name', 'identity', 'text', 'position', 'size', 'color', 'text_size', 'minimized')} | {
+        'effective_text_size': _effective_text_size(value['text_size']),
         'path': note.path(), 'provenance': note_provenance(note, active_owner_session)}
+
+
+def _effective_text_size(text_size):
+    if math.isfinite(text_size) and text_size > 0:
+        return text_size
+    if text_size == 0 and hou.isUIAvailable():
+        try:
+            # The same resource used by Houdini's nodegraphutils. A headless
+            # process cannot establish the current user's graph font default.
+            value = float(hou.ui.resourceValueFromName('GraphStickyNoteSize'))
+            if math.isfinite(value) and value > 0:
+                return value
+        except (AttributeError, TypeError, ValueError, hou.Error):
+            pass
+    return None
 
 
 def list_notes(parent, active_owner_session=None):
@@ -108,6 +163,8 @@ def list_notes(parent, active_owner_session=None):
 
 
 def _same(left, right):
+    if isinstance(left, float) and isinstance(right, float):
+        return math.isclose(left, right, rel_tol=1e-6)
     if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
         return len(left) == len(right) and all(abs(a - b) <= 1e-5 for a, b in zip(left, right))
     return left == right
@@ -118,6 +175,7 @@ def _set_value(note, field, value):
     elif field == 'position': note.setPosition(hou.Vector2(*value))
     elif field == 'size': note.setSize(hou.Vector2(*value))
     elif field == 'color': note.setColor(hou.Color(value))
+    elif field == 'text_size': note.setTextSize(value)
 
 
 def _restore(snapshot):
@@ -258,6 +316,18 @@ def _name(value):
     return value
 
 
+def _text_size(value):
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise ValueError('text_size must be a finite nonnegative network-unit height; 0 uses the native graph default')
+    try:
+        native = struct.unpack('f', struct.pack('f', value))[0]
+    except (OverflowError, struct.error) as error:
+        raise ValueError('text_size exceeds the native finite float range') from error
+    if not math.isfinite(native) or (value > 0 and native == 0):
+        raise ValueError('text_size is not representable as a positive native float; use explicit 0 only for the graph default')
+    return native
+
+
 def apply_network_notes(parent, notes=None, *, remove=None, active_owner_session=None,
                         active_owner_call=None, allow_foreign=None):
     """List or locally upsert/remove exact notes; no implicit Network Box membership."""
@@ -282,15 +352,18 @@ def apply_network_notes(parent, notes=None, *, remove=None, active_owner_session
         prepared, names, touched = [], set(), []
         obstacles = [Rect(*bounds) for _name_value, bounds in collect_editor_obstacles(parent)]
         for row in notes:
-            if not isinstance(row, dict) or not {'name', 'text'} <= set(row) or set(row) - {'name','text','position','size','color'}:
-                raise ValueError('note entries require name/text and optional position/size/color')
+            if not isinstance(row, dict) or 'name' not in row or len(row) < 2 or set(row) - {'name','text','position','size','color','text_size'}:
+                raise ValueError('note entries require name and one or more of text/position/size/color/text_size')
             name = _name(row['name'])
             if name in names: raise ValueError(f'duplicate note target: {name}')
             names.add(name)
-            text = row['text']
-            if not isinstance(text, str) or not text.strip() or len(text) > 4096 or '\x00' in text:
-                raise ValueError('note text must be nonempty, at most 4096 characters, without NUL')
             note = existing.get(name)
+            if note is None and 'text' not in row:
+                raise ValueError('new notes require text')
+            if 'text' in row:
+                text = row['text']
+                if not isinstance(text, str) or not text.strip() or len(text) > 4096 or '\x00' in text:
+                    raise ValueError('note text must be nonempty, at most 4096 characters, without NUL')
             if note is not None:
                 _require_note(note, active_owner_session, allow_foreign)
                 if note.parentNetworkBox() is not None:
@@ -302,7 +375,10 @@ def apply_network_notes(parent, notes=None, *, remove=None, active_owner_session
                     raise ValueError(f'native item name is already in use: {name}')
                 values = {'size': list(DEFAULT_SIZE), 'color': list(DEFAULT_COLOR)}
             values = {field: values[field] for field in ('position', 'size', 'color') if field in values}
-            values['text'] = text
+            if 'text' in row:
+                values['text'] = text
+            if 'text_size' in row:
+                values['text_size'] = _text_size(row['text_size'])
             for field, length in (('position', 2), ('size', 2), ('color', 3)):
                 if field in row:
                     values[field] = _vector(row[field], length, field, positive=field == 'size', color=field == 'color')

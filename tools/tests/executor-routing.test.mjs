@@ -301,6 +301,25 @@ try {
   const retained=await router.resolve(context(0))
   router.dispose()
   await assert.rejects(retained.inspectExecutor(signal),/unloaded|aborted/)
+  const moving=path.join(endpoints,records[0].executor_id+'.json')
+  const parked=moving+'.tmp'
+  for(const method of ['realpath','readFile']){
+    const original=fs[method]
+    let observed=false
+    fs[method]=async (filename,...args)=>{
+      if(filename!==moving)return original(filename,...args)
+      await fs.rename(moving,parked)
+      observed=true
+      try{return await original(filename,...args)}
+      finally{await fs.rename(parked,moving)}
+    }
+    try{
+      const snapshot=await router.directory.list()
+      assert(observed,'the record disappeared after its initial directory/stat observation')
+      assert.deepEqual(snapshot.map(row=>row.executor_id),[records[1].executor_id])
+    }finally{fs[method]=original}
+    assert.equal((await router.directory.find(records[0].executor_id)).executor_id,records[0].executor_id)
+  }
   // Normal process retirement preserves recovery evidence without exhausting
   // discovery or making each bound tool enumerate the entire registry history.
   const retired=Array.from({length:256},(_,index)=>({...records[1],
