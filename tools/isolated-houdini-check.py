@@ -28,7 +28,7 @@ DETAIL_THRESHOLD = DETAIL_POLICY['detailThresholdChars']
 MAX_ARCHIVE_BYTES = DETAIL_POLICY['maxArchiveBytes']
 INPUT_POLICY = json.loads((ROOT / 'houdini/isolated-execution-policy.json').read_text(encoding='utf-8'))
 if INPUT_POLICY.get('schemaVersion') != 1 or any(type(INPUT_POLICY.get(key)) is not int or INPUT_POLICY[key] <= 0
-        for key in ('maxFiles', 'maxInputBytes', 'maxFrame', 'maxPadding')):
+        for key in ('maxFiles', 'maxInputBytes', 'maxInlineCodeBytes', 'maxFrame', 'maxPadding')):
     raise ValueError('Unsupported isolated input policy')
 
 SCOPE = ('Disposable process; trusted builder or exact copied saved HIP; optional explicit output checks. '
@@ -69,6 +69,9 @@ def _observe_source_inputs(input_root, inputs, declared_inputs):
 
 
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+# Manifest-declared inline builder source. The generated file is ordinary run
+# evidence under inputs/; it never aliases a declared source file.
+INLINE_SCRIPT = '__inline_builder__.py'
 
 
 def decode_json(data, max_bytes=MAX_MANIFEST_BYTES, *, expected_sha256=None):
@@ -357,16 +360,19 @@ def visual_artifacts(directory, executions, checks):
     return rows
 
 
-def manifest_input_root(path, manifest):
+def manifest_input_root(path, manifest, base=None):
     value = manifest.get('input_root')
+    # Inline manifests have no durable source directory: their anchor is the
+    # DSH workspace supplied by the Host. File manifests keep their own folder.
+    anchor = Path(base).resolve() if base is not None else Path(path).parent
     if value is None:
-        root = path.parent
+        root = anchor
     else:
         if not isinstance(value, str) or not value or '\x00' in value:
             raise ValueError('input_root must be an explicit directory path')
         root = Path(value)
         if not root.is_absolute():
-            root = path.parent / root
+            root = anchor / root
     # An explicitly selected root may itself use a junction or filesystem alias.
     # After resolving that root, regular_file checks every child against it.
     root = root.resolve()
@@ -409,16 +415,39 @@ def manifest_inputs(manifest):
     return inputs
 
 
+def inline_code_bytes(manifest):
+    """The declared inline builder source, or None. Never executed here."""
+    if 'code' not in manifest:
+        return None
+    value = manifest['code']
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('code must be a nonempty Python source string')
+    try:
+        data = value.encode('utf-8')
+    except UnicodeEncodeError:
+        raise ValueError('code must be valid UTF-8 text') from None
+    if b'\x00' in data:
+        raise ValueError('code must not contain NUL characters')
+    if len(data) > INPUT_POLICY['maxInlineCodeBytes']:
+        raise ValueError('code exceeds %d bytes' % INPUT_POLICY['maxInlineCodeBytes'])
+    return data
+
+
 def validate_manifest(data):
     """The sole syntax, sequence and check contract. No filesystem/HOM access."""
-    if not isinstance(data, dict) or set(data) - {'script', 'hip', 'input_root', 'files', 'checks'} or not ({'script', 'hip'} & set(data)):
-        raise ValueError('manifest requires script and/or hip, plus optional input_root/files/checks')
+    if not isinstance(data, dict) or set(data) - {'script', 'hip', 'code', 'input_root', 'files', 'checks'} \
+            or not ({'script', 'hip', 'code'} & set(data)):
+        raise ValueError('manifest requires script, hip and/or inline code, plus optional input_root/files/checks')
+    if {'script', 'code'} <= set(data):
+        raise ValueError('manifest selects script or inline code, not both')
     if 'script' in data and not relative_file(data['script']).endswith('.py'):
         raise ValueError('script must be a trusted .py builder, not a HIP')
     if 'hip' in data and not relative_file(data['hip']).lower().endswith(('.hip','.hiplc','.hipnc')):
         raise ValueError('hip must be an explicit saved HIP file')
     if 'input_root' in data and (not isinstance(data['input_root'], str) or not data['input_root'].strip()):
         raise ValueError('input_root must be an explicit nonempty directory path')
+    if inline_code_bytes(data) is not None and INLINE_SCRIPT in {name.casefold() for name in manifest_inputs(data)}:
+        raise ValueError('declared inputs cannot reuse the inline script name ' + INLINE_SCRIPT)
     manifest_inputs(data)
     checks = data.get('checks', [])
     if not isinstance(checks, list) or len(checks) > 16:
@@ -479,9 +508,9 @@ def plan_manifest_bytes(data, *, timeout=INPUT_POLICY['defaultTimeoutSeconds'], 
             'budgets': {'timeout_seconds': timeout, 'memory_mb': memory_mb}}
 
 
-def load_manifest(path, *, expected_sha256=None):
+def load_manifest(path, *, expected_sha256=None, base=None):
     manifest = validate_manifest(read_json(path, expected_sha256=expected_sha256))
-    input_root = manifest_input_root(path, manifest)
+    input_root = manifest_input_root(path, manifest, base)
     size = 0
     for requirement in manifest_requirements(manifest):
         name = requirement['path']
@@ -716,20 +745,29 @@ def worker(request_file):
     return 0 if result['ok'] else 1
 
 
-def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POLICY['defaultTimeoutSeconds'], memory_mb=INPUT_POLICY['defaultMemoryMb'], cancel_file=None, manifest_sha256=None):
+def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POLICY['defaultTimeoutSeconds'], memory_mb=INPUT_POLICY['defaultMemoryMb'], cancel_file=None, manifest_sha256=None, manifest_base=None, reserved_output=False):
     if trusted is not True:
         raise ValueError('explicit trusted=True/--trusted authorization is required to execute the builder and dependencies')
     manifest_path, hython, output_dir = Path(manifest_path).resolve(), Path(hython).resolve(), Path(output_dir).resolve()
-    manifest = load_manifest(manifest_path, expected_sha256=manifest_sha256)
-    input_root = manifest_input_root(manifest_path, manifest)
-    output_dir.mkdir()  # exclusive run directory; never overwrite prior evidence
+    manifest = load_manifest(manifest_path, expected_sha256=manifest_sha256, base=manifest_base)
+    input_root = manifest_input_root(manifest_path, manifest, manifest_base)
+    declared_inputs = manifest_inputs(manifest)
+    inline = inline_code_bytes(manifest)
+    if reserved_output:
+        # The Host created this exact directory exclusively before spawning.
+        # Accept only that empty reservation; prior evidence is never overwritten.
+        if not output_dir.is_dir() or is_reparse(output_dir):
+            raise ValueError('reserved run directory is missing or is a link')
+        if any(output_dir.iterdir()):
+            raise ValueError('reserved run directory is not empty')
+    else:
+        output_dir.mkdir()  # exclusive run directory; never overwrite prior evidence
     cancel_file = Path(cancel_file).resolve() if cancel_file is not None else output_dir / 'cancel.request'
     run_id = uuid.uuid4().hex
     report = {'ok': False, 'run_id': run_id, 'phase': 'staging', 'finished':False,
               'cancel_file': str(cancel_file), 'scope': SCOPE}
     write_json(output_dir / 'report.json',report)
     inputs = []
-    declared_inputs = manifest_inputs(manifest)
     runtime_directory = None
     runtime_identity = None
     process = None
@@ -743,7 +781,27 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POL
             if digest(target) != before:
                 raise ValueError('input changed during staging')
             inputs.append({'file': name, 'sha256': before, 'bytes': target.stat().st_size})
-        request = {'run_id': run_id, 'manifest': manifest, 'input_root': str(input_root), 'inputs': inputs}
+        request_manifest = manifest
+        original_manifest = None
+        if inline is not None:
+            # Declared inline source becomes the same staged script a manifest
+            # file would declare, and remains ordinary run evidence under
+            # inputs/. The executed manifest never carries both script and code;
+            # request.json keeps the original manifest (including code) beside it.
+            target = output_dir / 'inputs' / INLINE_SCRIPT
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(inline)
+            inputs.append({'file': INLINE_SCRIPT, 'sha256': hashlib.sha256(inline).hexdigest(),
+                           'bytes': len(inline), 'origin': 'inline-code'})
+            report['inline_source'] = {'file': INLINE_SCRIPT, 'sha256': hashlib.sha256(inline).hexdigest(),
+                                       'bytes': len(inline),
+                                       'scope': 'Declared inline code authorized from the manifest bytes; there is no separate source file.'}
+            original_manifest = manifest
+            request_manifest = {key: value for key, value in manifest.items() if key != 'code'}
+            request_manifest['script'] = INLINE_SCRIPT
+        request = {'run_id': run_id, 'manifest': request_manifest, 'input_root': str(input_root), 'inputs': inputs}
+        if original_manifest is not None:
+            request['original_manifest'] = original_manifest
         request_file = output_dir / 'request.json'
         write_json(request_file, request)
         runtime_parent = Path(tempfile.gettempdir()).resolve()
@@ -838,7 +896,11 @@ def check(manifest_path, hython, output_dir, *, trusted=False, timeout=INPUT_POL
                 environment['retained_reason'] = 'owned worker tree exit was not confirmed'
     observations = _observe_source_inputs(input_root, inputs, declared_inputs)
     statuses = {row['status'] for row in observations}
-    unchanged = (False if 'changed' in statuses else
+    # Inline code has no separate source file: its bytes were authorized by the
+    # Host-supplied manifest hash before staging, so a code-only run has no
+    # external source that can drift. Declared inputs keep their own observation.
+    unchanged = (True if not declared_inputs else
+                 False if 'changed' in statuses else
                  None if 'unavailable' in statuses or not observations else True)
     # The worker consumed the verified staged bytes. A source can subsequently
     # change, including an authorized save by this script; that is separate
@@ -923,6 +985,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path)
     parser.add_argument('--manifest-sha256', help='Host-authorized manifest bytes; reject edits before staging')
+    parser.add_argument('--manifest-base', type=Path,
+                        help='Base directory for a relative/absent input_root; default the manifest directory')
+    parser.add_argument('--reserved-output', action='store_true',
+                        help='The caller created this empty run directory exclusively before spawning')
     parser.add_argument('--hython', type=Path)
     parser.add_argument('--output-dir', required=True, type=Path)
     parser.add_argument('--trusted', action='store_true')
@@ -939,7 +1005,8 @@ def main():
     try:
         result = check(args.manifest, args.hython, args.output_dir, trusted=args.trusted,
                        timeout=args.timeout, memory_mb=args.memory_mb, cancel_file=args.cancel_file,
-                       manifest_sha256=args.manifest_sha256)
+                       manifest_sha256=args.manifest_sha256, manifest_base=args.manifest_base,
+                       reserved_output=args.reserved_output)
     except Exception as error:
         result = {'ok': False, 'phase': 'preflight', 'error': str(error) or type(error).__name__}
     print(json.dumps(status(args.output_dir) if result.get('run_id') else result, ensure_ascii=False, separators=(',',':')))

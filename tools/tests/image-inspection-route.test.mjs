@@ -30,6 +30,8 @@ try{
  assert.equal(result.media,undefined);assert.equal(imageBlocks(result).length,2);assert.deepEqual(fs.readdirSync(cwd),[],'no workspace media copy');
  assert.deepEqual(imageBlocks(result).map(b=>b.attachment),refs);
  assert(result.imageAttachments.every(i=>i.semantic_status==='unverified'),'transport is not semantic verification');
+ assert(result.imageAttachments.every(i=>i.image?.width===1&&i.image?.height===1&&/re-encode/.test(i.image.preview_policy)&&/1:1/.test(i.image.scope)),
+   'attachment facts name stored dimensions and warn that the request preview may be rescaled');
  await attachImages(value,{...exec,parent:{},deferContext:m=>deferred.push(m)},bridge,ctx);
  assert.equal(deferred.length,0,'DSH owns nested image forwarding');
  const defs=new Map();registerHoudiniTools({...ctx,tools:{register:d=>defs.set(d.name,d)}},bridge);
@@ -44,6 +46,11 @@ try{
   assert(metadataOnly.imageAttachments.every(item=>item.capability_status==='unsupported'&&!item.error),
     'missing image metadata preserves a warning but does not fabricate a provider refusal');
   assert.equal((await visualCapability(exec,ctx)).status,'unsupported','capability reporting itself remains accurate');
+  const unsupported=await visualCapability(exec,ctx);
+  assert.deepEqual(unsupported.recovery.map(step=>step.kind),['ask_user','probe','config'],
+    'metadata refusal carries executable recovery steps instead of a dead end');
+  assert.match(unsupported.next_action,/Ask the user once/);
+  assert.match(unsupported.recovery[1].action,/allow_undeclared_image_input/);
  const missing=await attachImages(value,exec,bridge,{});assert.match(missing.imageAttachments[0].error,/unavailable/);
  modalities=['image'];const failed=await attachImages(value,exec,{fetchMedia:async()=>{throw Error('transport unavailable')}},ctx);
  assert.equal(failed.ok,true,'image failure must not cause scene replay');assert.equal(imageBlocks(failed).length,0);
@@ -77,6 +84,10 @@ async function prepare(modelSelection){
 }
 let prepared=await prepare();
 assert(prepared.contexts.some(b=>b.text?.includes('"status":"unsupported"')));
+const visionSection=prepared.contexts.find(b=>b.name==='dsh-houdini:visual-capability').text;
+assert(visionSection.length<600,'per-step capability context stays a short projection, not the full recovery answer');
+assert(visionSection.includes('"recovery":["ask_user","probe","config"]'));
+assert(!visionSection.includes('"kind":"ask_user"'),'recovery details stay in the on-demand tool answer');
 const lookedUp=lookups;await prepare();assert.equal(lookups,lookedUp,'unchanged route metadata is cached');
 model='vision';prepared=await prepare();
 assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')));

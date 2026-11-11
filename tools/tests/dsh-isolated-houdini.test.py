@@ -1,4 +1,5 @@
 """Real bounded worker cook/cache/ROP checks; only authored disposable fixtures."""
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -65,6 +66,32 @@ set_parms(r,{'soppath':n.path()})
     except FileExistsError:pass
     else:raise AssertionError('existing evidence was overwritten')
     assert (root/'success/report.json').read_bytes()==original_report
+
+    # Inline builder in a Host-reserved run directory: one call, same evidence
+    # contract, and the executed source stays in the run.
+    inline_code='g=tab_create("/obj","geo",name="inline")\n__result__={"inline":True}\n'
+    manifest_path.write_text(json.dumps({'code':inline_code,'checks':[]}),encoding='utf-8')
+    reserved_run=root/'inline-reserved';reserved_run.mkdir()
+    inline=runner.check(manifest_path,hython,reserved_run,trusted=True,reserved_output=True)
+    assert runner.read_json(reserved_run/'report.json')==inline
+    assert inline['ok'],inline
+    assert inline['result']['builder']['result']=={'inline':True}
+    assert inline['result']['builder']['transaction']['status']=='committed'
+    assert inline['inputs_unchanged'] is True and inline['input_observations']==[]
+    inline_bytes=inline_code.encode('utf-8')
+    assert inline['inline_source']['file']==runner.INLINE_SCRIPT
+    assert inline['inline_source']['sha256']==hashlib.sha256(inline_bytes).hexdigest()
+    assert inline['inline_source']['bytes']==len(inline_bytes)
+    assert inline['inline_source']['scope']
+    assert inline['inputs']==[{'file':runner.INLINE_SCRIPT,'sha256':hashlib.sha256(inline_bytes).hexdigest(),
+        'bytes':len(inline_bytes),'origin':'inline-code'}]
+    assert (reserved_run/'inputs'/runner.INLINE_SCRIPT).read_text(encoding='utf-8')==inline_code
+    inline_request=runner.read_json(reserved_run/'request.json')
+    assert inline_request['manifest']['script']==runner.INLINE_SCRIPT
+    assert 'code' not in inline_request['manifest'], 'the executed manifest never mixes script and inline code'
+    assert inline_request['original_manifest']['code']==inline_code
+    assert inline_request['original_manifest']=={'code':inline_code,'checks':[]}
+    assert inline['result']['runtime']['owner_session'].startswith('isolated-')
 
     # A developer workspace may be the checkout. Cook/cache evidence can use
     # its new run directory; renderer output keeps its own repository boundary.

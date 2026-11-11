@@ -24,6 +24,18 @@ registerHoudiniTools(await fixtureProjectionContext(ctx), {});
 assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
   transaction:{status:'effects_unverified'}})}),'观察工程 · 已执行，场景影响未核实');
 assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
+  transaction:{status:'no_scene_change',effects:'none'}})}),'观察工程 · 成功',
+  'an instrumented zero-write receipt is not an unknown scene effect');
+assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
+  transaction:{status:'committed',effects:'registered'}})}),'观察工程 · 成功',
+  'a registered managed write set is not an unknown scene effect');
+assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
+  transaction:{status:'committed',effects:'registered',native_evaluation:true}})}),'观察工程 · 已执行，原生求值影响未核实');
+assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
+  transaction:{status:'committed',effects:'registered'},
+  execution:{impact:{unavailable:true}}})}),'观察工程 · 已执行，存在未观察的影响',
+  'a registered write set with an unobserved remainder is not plain success');
+assert.equal(resultTitle('观察工程',{meta:execPresentationMeta({ok:true,stdout:'',stderr:'',
   execution:{source_kind:'structured_query'},outcome:{operations:{total:2,failed:2}}})}),
   '观察工程 · 查询未取得结果');
 await assert.rejects(definitions.get('houdini_inspect').execute({
@@ -340,6 +352,11 @@ assert.equal(flushed, 0, 'identity failures must precede writer claims');
 assert.equal(sent, 0, 'identity failures must precede any Houdini request');
 await assert.rejects(strictDefs.get('houdini_resource').execute({kind:'result',ref:'f'.repeat(64)},identity(undefined,'c')),
   /workspace/, 'historical result reads keep their local boundary and need no bridge identity');
+// Empty optional strings and an empty select array carry no request. A model
+// echoing unused optional parameters must not fail a valid read as help-only.
+await assert.rejects(strictDefs.get('houdini_resource').execute({kind:'result',ref:'f'.repeat(64),
+  houdini_installation:'',expected_sha256:'',select:[]},identity(undefined,'c')),/workspace/,
+  'empty optional parameters are treated as absent');
 assert.equal(resolved, 0, 'result_ref still never resolves an executor');
 // A valid identity flows verbatim through every code/job branch — no coercion,
 // no trimming — and shared tool instances never borrow another session's identity.

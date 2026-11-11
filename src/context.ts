@@ -1,7 +1,7 @@
 /** Houdini observations contributed through DSH's native context channel. */
 import type { Context } from '@deepseek-ai/cordis'
 import { executionNoticeFromFacts } from './execution-state.js'
-import { visualCapability } from './image-output.js'
+import { visualCapability, visualCapabilityBrief } from './image-output.js'
 import { SceneContextProvider, type AgentView, type SceneBridge } from './scene-context.js'
 import { literalData } from './prompt-data.js'
 import {projectedExecutorState,projectedExecutionFacts} from './executor-identity-projection.js'
@@ -66,7 +66,7 @@ export function installSceneContext(ctx: Context, bridge: SceneBridge): void {
         cached = {key,generation:visionGeneration,llm,attachments,value:await visualCapability({agent,route,signal:context.signal},ctx)}
         visionCache.set(agent,cached)
       }
-      texts[VISION] = vision.text = 'Houdini image input capability (declared metadata).\n'+literalData(JSON.stringify(cached.value))
+      texts[VISION] = vision.text = 'Houdini image input capability (declared metadata).\n'+literalData(JSON.stringify(visualCapabilityBrief(cached.value)))
     }
     prepared.set(agent,texts)
     return result

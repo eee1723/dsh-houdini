@@ -66,7 +66,7 @@ Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js)
 - `processOutcome` 区分送达结果与子进程真实退出；stdout 的错误字样不是退出事实，没有退出证据保持 unknown。
 - 模型 usage 按请求去重；同请求的多个工具不重复累计输入/输出，缺失用量不补零。缓存及推理字段按提供方定义，不重复相加。
 - 原始 provider/model/reasoningEffort/maxTokens、实际 HTTP 字段、模型报告用量和语义效果分别判断；缺少推理档保持未知，不回填为 off。
-- `rawUsage` 区分 Gate 拦截、只读候选、疑似/未知副作用和成功裸修改；`no_scene_change` 不排除文件或 Python 外部副作用。`exec` 含动词率不是修改意图覆盖率。
+- `rawUsage` 区分 Gate 拦截、只读候选、疑似/未知副作用和成功裸修改；`no_scene_change` 只覆盖受管写与已检出的 HOM 通道，不排除文件或 Python 外部副作用；`transaction.effects`（none/registered/unverified）与 `native_evaluation` 分开读，`exec` 含动词率不是修改意图覆盖率。
 - 工具种类消费`src/tool-catalog.ts`；现场job提交是准入回执，不是已完成Python执行。`houdini_isolated`的提交与报告读取分别计数，不进入现场Python的动词采用率或无动词副作用统计。没有顶层verb ledger不证明builder没有使用动词；实际执行看原run的builder/check回执，不把再次read当作重新执行。
 - 历史结果、图片和关系检查不扩大语义范围。新图只替代已知同视图记录；图像传输、像素变化、模型自述和最终视觉通过分别保留，未成功语义识图就是未验证。
 - 重试分析只比较去重后的失败调用和回滚工作量；正常重复生成不算失败重试，字符数不冒充 token 或费用。

@@ -60,7 +60,7 @@ render_view与viewport_screenshot默认把验证图分配到同源`visual_check`
 
 工具注册在[src/tools.ts](../src/tools.ts)，结果展示在[src/tool-output.ts](../src/tool-output.ts)，来源/历史结果与查回在[src/tool-query.ts](../src/tool-query.ts)。保存与渲染使用执行工具中的动词，不额外提供产品计划或完成认证工具。
 
-同一现场的关联查询优先使用 `houdini_inspect` 的 `queries`，每项包含 `verb`，可选 `id`、`args` 和 `kwargs`。目前支持 selection、scene_info、node_info、read_parms、tool_catalog、usd_prim_info、verb_help。按输入顺序返回逐项结果，局部错误不丢掉其他查询。native 参数或 USD 求值的影响范围随回执说明。下例同时读取当前帧和指定 Box SOP 的尺寸参数。
+同一现场的关联查询优先使用 `houdini_inspect` 的 `queries`，每项包含 `verb`，可选 `id`、`args` 和 `kwargs`。允许目录与执行合同同源：`VerbDefinition` 声明为 `query_or_exec` 且无场景影响（`content_impact='none'`）的动词全部可用，另含 `selection`；显式导航 `focus_node` 只走 exec，查询批次不移动用户视图。可能触发原生求值/cook 的元数据读取（`describe`、`geo_*`、`usd_*`、`read_parms`、`control_test_plan` 等）在回执中记为 `native_evaluation=true`/`effects_unverified`，其影响不冒充零写入；显式 `cook_node`/`verify_network`/`render_*`/`test_controls` 的求值是受管操作本身，事实在其结果字段中，不重复标记。dry_run、预检失败与受管零写回执为`no_scene_change`/`effects=none`；执行过但没有任何受管动词记录的任意 Python（import helper/动态属性）保持未观察。写操作与控制实验仍必须走 `houdini_exec`。按输入顺序返回逐项结果，局部错误不丢掉其他查询。native 参数或 USD 求值的影响范围随回执说明。下例同时读取当前帧和指定 Box SOP 的尺寸参数。
 
 ```json
 {"queries":[
@@ -116,7 +116,7 @@ strict set_parms同时恢复本批前序参数和动画。failure_stage区分写
 
 工作区归档可通过`houdini_resource(kind="result", ref=hash,pointer='/evidence/0',offset=0,limit=6000)`分页返回选中字段的JSON文本，limit为1..16000字符，offset为非负整数；pointer遵守JSON Pointer，不是任意路径或代码。原生opaque结果返回后端实际locator/读取指导，明确没有应用JSON Pointer；原值不可用时返回明确缺口与原request_ref。
 
-通用展示直接消费Bridge的outcome/checks/evidence/execution，不另推导控制、Polygon或接口结论。outcome区分批次是否完成、动词异常与验证结果，已捕获查询异常不改变合法fallback。执行回执的持久canonical与文字正文各受64KiB预算约束，外层outcome元数据另受4KiB预算；独立run的多执行聚合也受同一总预算，超限回到既有作业摘要，保留真实状态、检查数及原run读取入口，当前结构返回不变。省略明确标注，并保留原值或恢复入口，不把省略当作没有诊断。等价JSON子树与稳定审计清单可引用原详情，verb_help默认简明、完整契约按需读取。预算与阈值由[结果政策](../houdini/result-detail-policy.json)维护，UTF-8裁剪复用DSH TextRetainer。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)与[留存读取](../tools/tests/result-details.test.mjs)。
+通用展示直接消费Bridge的outcome/checks/evidence/execution，不另推导控制、Polygon或接口结论。outcome区分批次是否完成、动词异常与验证结果，已捕获查询异常不改变合法fallback。执行回执的持久canonical与文字正文各受64KiB预算约束，外层outcome元数据另受4KiB预算；独立run/read的模型正文默认是紧凑摘要（builder `__result__`键级事实、check事实、输入版本与失败文本），execution块留在report与归档中按`detail_pointer`、`select`或JSON Pointer分页取回；摘要超限或无结构时回到既有作业摘要，保留真实状态、检查数及原run读取入口。省略明确标注，并保留原值或恢复入口，不把省略当作没有诊断。等价JSON子树与稳定审计清单可引用原详情，verb_help默认简明、完整契约按需读取。预算与阈值由[结果政策](../houdini/result-detail-policy.json)维护，UTF-8裁剪复用DSH TextRetainer。对应回归见[结果投影](../tools/tests/compact-results.test.mjs)、[留存读取](../tools/tests/result-details.test.mjs)与[独立执行](../tools/tests/isolated-execution.test.mjs)。
 
 PTC当前调用按Host协议返回完整结构值，供程序即时消费；会话只持有恢复、事务、执行身份与节点交付所需的有界事实，原生及嵌套结果共用留存/读取规则。存储失败不回填完整正文与canonical，也不新增原值内存缓存；取消等无execution字段的回执不补造HOM执行。
 
@@ -128,7 +128,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `verb_help(name, detail='brief')` | 按需发现动词。默认brief返回准确signature、return_type、call_mode与简短用途，并明确full_help入口；detail='full'返回完整doc及已有operation_contract（input_schema/output_schema/examples/notes），说明不参与执行校验。name可为1..16项唯一名称列表，批量返回items/count；未知名列相似项，任一未知整次明确失败。Bridge签名绑定错误给真实signature与零派发事实，内部TypeError保留真实原因 | dict |
+| `verb_help(name=None, detail='brief')` | 按需发现动词。省略name返回有界目录：每个动词的name、call_mode、content_invalidation（声明的内容影响提示，非权限）、inspect_query（能否作为结构化查询行，导航类仅exec）与一句用途，用于按意图选动词；默认brief返回准确signature、return_type、call_mode与简短用途，并明确full_help入口；detail='full'返回完整doc及已有operation_contract（input_schema/output_schema/examples/notes），说明不参与执行校验且必须指定name。name可为1..16项唯一名称列表，批量返回items/count；未知名列相似项，任一未知整次明确失败。Bridge签名绑定错误给真实signature与零派发事实，内部TypeError保留真实原因 | dict |
 
 ### 类型目录（回答「能建什么」）
 
@@ -148,7 +148,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, *, output=0, allow_foreign=None)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label。COP相同Mono/UV/RGB/RGBA图像类型直接按实际signature核对，动态undef由原生setInput判定，其余走原生兼容查询；均回读实际连线，不按节点名叠加例外，不推断隐式通道转换。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位 | dict |
+| `connect(src, dst, index=0, *, output=0, allow_foreign=None, preserve_position=False)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label。COP相同Mono/UV/RGB/RGBA图像类型直接按实际signature核对，动态undef由原生setInput判定，其余走原生兼容查询；均回读实际连线，不按节点名叠加例外，不推断隐式通道转换。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位。preserve_position=True跳过纠流、绝不移动dst（用于既有布局增量接入），placement_status='preserved' | dict |
 | `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；parm_filter只作字面子串筛选。按钮条另给menu_kind与赋值语义，conditionals保留参数自身的原生条件，不推断当前启用状态或父folder条件。operation_card含决策/版本，operation_parameters保留不受筛选/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
 | `modeling_dimensions(quantities, require_meter_scene=True)` | 只读源单位换算：quantities={name:{value,unit,min?,max?,source?}}，最多64项；长度m/cm/mm/um/in/ft转米，面积/体积按平方/立方换算，rad转deg、count/ratio不按长度缩放。默认要求当前HIP=1m且不改单位；旧工程须显式False并消费scene_values。返回原始依据、canonical_values、scene_values及米制CTRL spec；不证明最终尺寸 | dict |
 | `sop_recipe(kind, spec=None)` | 只读普通SOP配方，catalog给schema，kind单独调用给结构模板示例；hinge/slider/repeat共享origin/axis及CTRL标量，Merge源与附件→FRAME→Copy；curve_path把具名锚点position/对称handle交给原生Add→三次Bezier Curve 2.0→Resample，返回锚点与原生编辑点映射，复用既有CTRL标量引用，不自动避障；sweep_tube/profile_shell为单中心线/平面薄片成形；guided_slider用真实source/guide投影推导位置并拒绝越界，surface_attach在指定面组投影并取法线frame；gusset/fastener提供带厚度肋板与头杆源。返回nodes/output/required_outputs交给build_module，不创建/cook；不猜坐标、不认领输入、不保证接合。字段、适用前提和反例见SOP配方reference | dict |
@@ -165,7 +165,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 | `set_object_visible(node, visible=True, allow_foreign=None)` | 设置单个 OBJ 的 viewport visibility（OBJ 没有 SOP 式 render flag） | dict |
 | `set_display_node(node, allow_foreign=None)` | 选择SOP/LOP/COP/CHOP等网络的活动显示输出；返回原显示节点与当前旗标。不动render旗标、公共端口、视口或选择；OBJ布尔可见性仍用set_object_visible，SOP发布用sop_set_output | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
-| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；已有成员Network Box时，两者无显式nodes的整网重排写前拒绝，明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器，需显式boxes；可直接应用，也可dry_run取得plan_sha256，提供expected_plan时才检查计划仍新鲜。重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
+| `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；已有成员Network Box时，两者无显式nodes的整网重排写前拒绝，明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器，需显式boxes；可直接应用，也可dry_run取得plan_sha256，提供expected_plan时才检查计划仍新鲜。重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际移动节点数（`scene_writes`/`moved_node_count`）、节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
 | `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 按显式groups整理Network Box：每项需要name，可选label/role/members/boxes/color；label默认name，role只提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。可直接应用，dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对实际受影响的来源框和目标框权限；Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
 | `network_controls(parent, controls=None, *, remove=None, allow_foreign=None)` | 明确声明实际控制入口：controls为node/label对象列表，remove为显式节点列表，目标须在parent范围内且遵守ownership。声明保存在节点userData，随HIP保存、改名保留；省略controls/remove只读列出parent内的已声明入口，不按名字或参数数量猜角色、不cook。节点交付卡片复用同一控制声明；不证明联动或正确性 | dict |
 | `network_notes(parent, notes=None, *, remove=None, allow_foreign=None)` | 局部维护明确名称的独立 Sticky Note，返回原生正文、位置、矩形、颜色、字号和归属。已有项只传 name 与要改的字段，新建项另需 text。`text_size` 为网络单位的字高，0 使用原生默认值，`effective_text_size` 在实际可读取时返回。改变字号保持矩形与正文，除非同时明确修改。省略 notes/remove 只读。便签有独立 identity，写前校验，失败保留恢复事实 | dict |

@@ -45,7 +45,8 @@ try:
     missing = dsh_bridge.run_code(
         f"tab_create({parent.path()!r}, 'null', inputs=['missing'])",
         owner_session="tab-create-failure-test", owner_call="call-preflight")
-    assert not missing['ok'] and missing['transaction']['status']=='effects_unverified' and missing['transaction']['source_executed'] is True, missing
+    assert not missing['ok'] and missing['transaction']['status']=='no_scene_change' and missing['transaction']['source_executed'] is True, missing
+    assert missing['transaction']['effects']=='none', missing
     assert missing['verbs'][0]['summary']['phase']=='preflight', missing
     assert missing['verbs'][0]['summary']['scene_writes']==0, missing
     dsh_node_creation._run_shelf_tool = original
@@ -81,7 +82,8 @@ try:
         f"build_module({parent.path()!r},[{{'name':'static_large','type':'add','parms':{{'points':65}}}}],output='static_large',dry_run=True)",
         owner_session='tab-create-failure-test',owner_call='multiparm-static-budget')
     assert not static['ok'] and 'static multiparm count' in static['error'],static
-    assert set(parent.children())==before and static['transaction']['status']=='effects_unverified' and static['transaction']['source_executed'] is True,static
+    assert set(parent.children())==before and static['transaction']['status']=='no_scene_change' and static['transaction']['source_executed'] is True,static
+    assert static['transaction']['effects']=='none', static
     # Inner counts and leaves precede their absent parents in the input. Each
     # newly materialized native level must be discovered before leaf writes.
     with tempfile.TemporaryDirectory(prefix='dsh-created-multiparm-') as asset_dir:
@@ -116,7 +118,8 @@ try:
     assert 'is not a network that can create nodes' in not_network['error'], not_network
     assert repr(parent.path()) in not_network['error'], not_network
     assert not_network['verbs'][0]['summary']['scene_writes'] == 0, not_network
-    assert not_network['transaction']['status'] == 'effects_unverified' and not_network['transaction']['source_executed'] is True, not_network
+    assert not_network['transaction']['status'] == 'no_scene_change' and not_network['transaction']['source_executed'] is True, not_network
+    assert not_network['transaction']['effects'] == 'none', not_network
     # tab_create/build_module and the multi-node recipe share new-node render
     # defaults. Explicit authored artistic choices are applied afterwards.
     settings = dsh_bridge.run_code(

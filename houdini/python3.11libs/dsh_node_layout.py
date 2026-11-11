@@ -197,6 +197,7 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     if items:
         from dsh_network_boxes import journal_containing_boxes
         journal_containing_boxes(items, 'layout_nodes_before')
+        before_positions = {n: n.position() for n in items}
         if mode == "children":
             p.layoutChildren(
                 items=tuple(items),
@@ -205,9 +206,14 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
             )
         else:
             _layout_flow(items, horizontal_spacing, vertical_spacing)
+        moved = sum(1 for n in items if n.position() != before_positions[n])
+    else:
+        moved = 0
     return {
         "parent": p.path(),
         "mode": mode,
+        "scene_writes": moved,
+        "moved_node_count": moved,
         "nodes": [
             {"path": n.path(), "position": [float(v) for v in n.position()]}
             for n in items

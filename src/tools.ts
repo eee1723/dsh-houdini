@@ -73,7 +73,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
   ctx.tools.register(defineTool({
     name:'houdini_inspect',description:HOUDINI_TOOLS.houdini_inspect.purpose+' Prefer data-only queries for common observations. Use either queries or code. Python is for observation only; known writes are refused and arbitrary effects are not verified. Use exec for edits and control experiments.',
     parameters:{
-      queries:{type:'array',description:'1..16 data-only observations in order. Each row is independent; use selection, scene_info, node_info, read_parms, tool_catalog, usd_prim_info or verb_help.',
+      queries:{type:'array',description:'1..16 data-only observations in order. Each row is independent; any read-only verb (query-capable with no scene effect) is accepted, e.g. scene_info, node_info, read_parms, node_provenance, graph, parameter_ui, geo_piece_stats, visible_objects, tool_catalog, usd_prim_info, verb_help, or selection.',
         items:{type:'object',additionalProperties:false,properties:{
           verb:{type:'string',required:true},id:{type:'string',description:'Optional label echoed in the result row.'},
           args:{type:'array',description:'Positional JSON arguments from the verb signature.'},
@@ -109,19 +109,25 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     name:'houdini_resource',description:HOUDINI_TOOLS.houdini_resource.purpose+' Host-only pagination; does not execute Houdini. Source originals and past results are historical material. Help reads one exact installed SideFX page without HOM, web search or temporary nodes.',
     parameters:{kind:{type:'string',enum:['source','result','help'],required:true},ref:{type:'string',required:true,description:'source: index or listed hash; result: SHA-256 from details; help: exact installed page such as hom/hou/Node, vex/functions/noise or nodes/sop/box.'},
       pointer:{type:'string',description:'Result JSON Pointer, default root. Not used for sources.'},
-      select:{type:'array',items:{type:'string'},description:'Read 1..16 named result fields together as exact JSON values, e.g. ["/result/summary","/error"]. Missing/oversized fields are explicit; page oversized fields with pointer. Exclusive with pointer/offset; result only.'},
+      select:{type:'array',items:{type:'string'},description:'Read 1..16 named result fields together as exact JSON values, e.g. ["/result/summary","/error"]. An empty array means no field selection: the default root page is returned. Missing/oversized fields are explicit; page oversized fields with pointer. Exclusive with pointer/offset; result only.'},
       offset:{type:'number',description:'Character offset, default 0; help uses Unicode code points.'},limit:{type:'number',description:'Page characters 1..16000, default 6000.'},
       houdini_installation:{type:'string',description:'Help only: exact HFS directory from the official installation inventory. Otherwise use the selected scene installation, or the sole installed version. Multiple unselected installations are reported, never guessed.'},
       expected_sha256:{type:'string',description:'Help only: original page SHA-256 from the preceding response. next supplies this value so a changed page cannot be silently joined to old text.'}},output:readOutput,
     presentCall:args=>({card:'generic',title:args.kind==='source'?'读取任务资料':args.kind==='help'?'读取 Houdini 官方帮助':'读取完整操作结果',kind:'read',rawInput:args}),
     presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_resource.label,result),result),
     execute:async(args,exec)=>{
+      // Models commonly echo optional string parameters as empty strings; an
+      // empty value carries no request and must not fail an otherwise valid read.
+      const installation=typeof args.houdini_installation==='string'&&args.houdini_installation.trim()!==''?args.houdini_installation:undefined
+      const expected=typeof args.expected_sha256==='string'&&args.expected_sha256.trim()!==''?args.expected_sha256:undefined
+      const select=Array.isArray(args.select)&&args.select.length>0?args.select:undefined
       if(args.kind==='help') {
-        if(args.pointer!==undefined||args.select!==undefined)throw Error('pointer/select are only used for result resources')
-        return readHoudiniHelp(ctx,connection,args,exec)
+        if(args.pointer!==undefined||select!==undefined)throw Error('pointer/select are only used for result resources')
+        return readHoudiniHelp(ctx,connection,{ref:args.ref,offset:args.offset,limit:args.limit,
+          houdini_installation:installation,expected_sha256:expected},exec)
       }
-      if(args.houdini_installation!==undefined||args.expected_sha256!==undefined)throw Error('houdini_installation/expected_sha256 are only used for help resources')
-      return readResource({...args,kind:args.kind as 'source'|'result'},exec)
+      if(installation!==undefined||expected!==undefined)throw Error('houdini_installation/expected_sha256 are only used for help resources')
+      return readResource({...args,kind:args.kind as 'source'|'result',select},exec)
     },
   }))
   ctx.tools.register(defineTool({

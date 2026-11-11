@@ -73,7 +73,8 @@ try:
     query_blocked=bridge.run_code(f"network_boxes({parent!r},{groups!r},dry_run=True)",read_only=True,owner_session=session)
     assert not query_blocked['ok'] and 'read-only' in query_blocked['error']
     dry_envelope=call(f"__result__=network_boxes({parent!r},{groups!r},dry_run=True)")
-    assert dry_envelope['transaction']['status']=='effects_unverified' and dry_envelope['transaction']['source_executed'] is True,dry_envelope
+    assert dry_envelope['transaction']['status']=='no_scene_change' and dry_envelope['transaction']['source_executed'] is True,dry_envelope
+    assert dry_envelope['transaction']['effects']=='none',dry_envelope
     created=apply(parent,groups,dry['plan_sha256']);assert created['ok'],created
     result=created['result'];assert result['applied'] and set(result['created'])=={g['name'] for g in groups}
     assert result['layout_status']=='not_performed'
@@ -267,10 +268,11 @@ try:
     assert {item.path() for item in hou.node(parent).findNetworkBox('sources').items(recurse=False)}=={
         paths['proto_a'],paths['proto_b']}
 
-    # A fresh repeated plan is a managed no-op; arbitrary Python effects remain unverified.
+    # A fresh repeated plan is a managed no-op and reports no managed scene writes.
     again=preview(parent,groups);no_op=apply(parent,groups,again['plan_sha256'])
     assert no_op['ok'] and not no_op['result']['applied'] and no_op['result']['scene_writes']==0
-    assert no_op['transaction']['status']=='effects_unverified' and no_op['transaction']['source_executed'] is True,no_op
+    assert no_op['transaction']['status']=='no_scene_change' and no_op['transaction']['source_executed'] is True,no_op
+    assert no_op['transaction']['effects']=='none',no_op
 
     # A later failure in the same exec uses native undo, then reconciles typed
     # box provenance/presentation without polluting transaction.nodes.
@@ -376,7 +378,8 @@ try:
     # Apply current intent directly; a preview hash is optional and still checks staleness.
     direct=ok(f"__result__=network_boxes({parent!r},{groups!r})")
     assert not direct['result']['applied'] and direct['result']['scene_writes']==0
-    assert direct['transaction']['status']=='effects_unverified' and direct['transaction']['source_executed'] is True
+    assert direct['transaction']['status']=='no_scene_change' and direct['transaction']['source_executed'] is True
+    assert direct['transaction']['effects']=='none',direct
     annotation=preview(parent,[{**groups[0],'role':'status_green'}])
     assert annotation['boxes'][0]['role']=='status_green'
     optional=preview(parent,[{'name':'plain_group','members':['ctrl']}])

@@ -166,8 +166,14 @@ export function resultTitle(label: string, result: ToolResult): string {
     return `${label} · 批次完成，部分操作失败`
   }
   if (meta?.ok === true && meta?.checksPending) return `${label} · 已执行，检查需要关注`
-  if (meta?.ok === true && object(object(meta.canonical)?.transaction)?.status === 'effects_unverified')
+  const transaction = object(object(meta?.canonical)?.transaction)
+  if (meta?.ok === true && transaction?.status === 'effects_unverified')
     return `${label} · 已执行，场景影响未核实`
+  if (meta?.ok === true && transaction?.native_evaluation === true)
+    return `${label} · 已执行，原生求值影响未核实`
+  const impact = object(object(object(meta?.canonical)?.execution)?.impact)
+  if (meta?.ok === true && impact?.unavailable === true)
+    return `${label} · 已执行，存在未观察的影响`
   if (meta?.ok === true) return `${label} · 成功`
   if (meta?.ok === false) return `${label} · 失败`
   return `${label} · 已返回`

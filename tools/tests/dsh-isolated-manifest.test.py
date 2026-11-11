@@ -113,6 +113,42 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     rejects(lambda:runner.artifact_target(root,{'id':'out','file':'nested/file.bgeo'}))
     assert target.read_bytes()==b'original'
 
+    # Inline builder source is first-class manifest syntax: same pure planner,
+    # same bounded bytes, and it cannot alias a declared input file.
+    save(valid)
+    inline={'code':'__result__={"inline":True}','checks':[]}
+    inline_bytes=json.dumps(inline).encode('utf-8')
+    assert runner.plan_manifest_bytes(inline_bytes)['files']==[]
+    save(inline)
+    assert runner.load_manifest(file)==inline
+    for bad in ({'code':'__result__={}','script':'build.py','checks':[]},
+                {'code':''},{'code':'  \n'},{'code':None},{'code':1},
+                {'code':'__result__={}','files':[runner.INLINE_SCRIPT]},
+                {'code':'y'*(runner.INPUT_POLICY['maxInlineCodeBytes']+1)}):
+        rejects(lambda:runner.plan_manifest_bytes(json.dumps(bad).encode('utf-8')))
+    rejects(lambda:runner.plan_manifest_bytes(b'{"code":"\\ud800","checks":[]}'))
+    comment_only={'code':'# a comment-only plan is not a builder\n','checks':[]}
+    save(comment_only)
+    assert runner.load_manifest(file)==comment_only
+    # A manifest file keeps its own folder as the input anchor; an inline
+    # manifest is anchored by the Host-supplied workspace base instead.
+    bare={'code':'__result__={}','input_root':'.','checks':[]}
+    inline_manifests=root/'inline-manifests';inline_manifests.mkdir()
+    bare_path=inline_manifests/'bare-inline.json'
+    bare_path.write_text(json.dumps(bare),encoding='utf-8')
+    assert runner.manifest_input_root(bare_path,bare,str(root))==root.resolve()
+    assert runner.manifest_input_root(bare_path,bare)==inline_manifests.resolve()
+    assert runner.load_manifest(bare_path,base=str(root))==bare
+    # The Host reserves the run directory atomically; the checker accepts only
+    # that empty reservation and never writes over prior evidence.
+    reserved=root/'reserved';reserved.mkdir()
+    (reserved/'prior.txt').write_text('prior evidence',encoding='utf-8')
+    rejects(lambda:runner.check(file,Path(sys.executable),reserved,trusted=True,reserved_output=True))
+    assert (reserved/'prior.txt').read_text(encoding='utf-8')=='prior evidence'
+    rejects(lambda:runner.check(file,Path(sys.executable),root/'reserved-missing',trusted=True,reserved_output=True))
+    assert not (root/'reserved-missing').exists()
+    save(valid)
+
     preview=root/'checks'/'preview.png';preview.parent.mkdir();preview.write_bytes(b'png fixture')
     candidates=[{'path':str(preview),'role':'visual-check','source':'render_view'},
                 {'path':str(root/'outside.png'),'role':'diagnostic','source':'render_frame'}]

@@ -86,16 +86,64 @@ def _verb_signature(name, fn):
     return signature
 
 
-def _verb_help(name: str | list[str] | tuple[str, ...], detail: str = 'brief') -> dict:
+def _operation_contracts() -> dict:
+    """Load the maintained on-demand verb contracts once per process."""
+    global _VERB_OPERATION_CONTRACTS
+    if _VERB_OPERATION_CONTRACTS is None:
+        source = Path(__file__).resolve().parent.parent / 'verb-operation-contracts.json'
+        _VERB_OPERATION_CONTRACTS = json.loads(source.read_text(encoding='utf8'))
+    return _VERB_OPERATION_CONTRACTS
+
+
+def _verb_index() -> dict:
+    """Bounded verb directory: name, one-line purpose and declared execution mode.
+
+    This is discovery metadata for choosing a verb, not a workflow, permission or
+    callable-detail substitute. Signatures/contracts stay on demand.
+    """
+    contracts = _operation_contracts()['verbs']
+    rows = []
+    for key in sorted(_VERBS):
+        definition = _VERB_DEFINITIONS[key]
+        contract = contracts.get(key)
+        doc = contract['summary'] if contract else (inspect.getdoc(_VERBS[key]) or '').split('\n', 1)[0]
+        purpose = ' '.join(str(doc).split()).replace('**', '').strip('`*"\' ')
+        if len(purpose) > 72:
+            cut = purpose[:72]
+            space = cut.rfind(' ')
+            if space >= 48:
+                cut = cut[:space]
+            purpose = cut.rstrip(' ,;:.`*') + '…'
+        rows.append({'name': key, 'call_mode': definition.access,
+                     'content_invalidation': definition.content_impact,
+                     'inspect_query': key in _STRUCTURED_QUERY_VERBS, 'purpose': purpose})
+    return {'count': len(rows), 'verbs': rows,
+            'note': ('Bounded verb directory only. Call verb_help(name) for the actual '
+                     'signature and verb_help(name, detail="full") for maintained '
+                     'input/output contracts and examples. call_mode=exec runs through '
+                     'houdini_exec or houdini_job_submit; query_or_exec usually also runs '
+                     'through houdini_inspect, except explicit navigation such as '
+                     'focus_node (exec-only) — inspect_query says which. '
+                     'content_invalidation is a declared invalidation hint, not permission '
+                     'and not proof that nothing was written.')}
+
+
+def _verb_help(name: str | list[str] | tuple[str, ...] | None = None, detail: str = 'brief') -> dict:
     """Read callable signatures and brief purpose; detail='full' adds complete docs/contracts.
 
-    name may be one verb or a list of 1..16 unique names. Both forms default to
-    brief help. Full help includes maintained input/output schemas and examples;
-    these are discovery metadata, not execution validation.
+    Omit name for a bounded index of every verb with its one-line purpose and
+    declared execution mode. name may be one verb or a list of 1..16 unique
+    names. Both named forms default to brief help. Full help includes maintained
+    input/output schemas and examples; these are discovery metadata, not
+    execution validation.
     """
     if detail not in ('brief', 'full'):
         raise ValueError("detail must be 'brief' or 'full'; e.g. verb_help('build_module', detail='full')")
     registry = _VERBS
+    if name is None:
+        if detail != 'brief':
+            raise ValueError("verb_help(detail='full') requires one verb name or a list of 1..16 names")
+        return _verb_index()
     if isinstance(name, (list, tuple)):
         if not 1 <= len(name) <= 16:
             raise ValueError("name 列表必须包含 1..16 个动词名")
@@ -106,7 +154,7 @@ def _verb_help(name: str | list[str] | tuple[str, ...], detail: str = 'brief') -
             raise ValueError("name 列表中的动词名必须唯一")
         return {"items": [_verb_help(key, detail=detail) for key in keys], "count": len(keys)}
     if not isinstance(name, str) or not name.strip():
-        raise ValueError("name 必须是非空动词名或 1..16 项名称列表")
+        raise ValueError("name 必须是非空动词名或 1..16 项名称列表；省略 name 返回动词索引")
     key = name.strip()
     fn = registry.get(key)
     if fn is None:
@@ -126,11 +174,7 @@ def _verb_help(name: str | list[str] | tuple[str, ...], detail: str = 'brief') -
         "detail": detail,
         "doc": doc,
     }
-    global _VERB_OPERATION_CONTRACTS
-    if _VERB_OPERATION_CONTRACTS is None:
-        source = Path(__file__).resolve().parent.parent / 'verb-operation-contracts.json'
-        _VERB_OPERATION_CONTRACTS = json.loads(source.read_text(encoding='utf8'))
-    contract = _VERB_OPERATION_CONTRACTS['verbs'].get(key)
+    contract = _operation_contracts()['verbs'].get(key)
     if detail == 'brief':
         # Use the maintained concise purpose where available; keep doc readable
         # for existing consumers that print it, without shipping entire schemas.
@@ -256,6 +300,65 @@ _MUTATING_VERB_NAMES = {name for name, definition in _VERB_DEFINITIONS.items() i
 _OBSERVATION_VERBS = {name for name, definition in _VERB_DEFINITIONS.items()
                       if definition.access == 'exec' and definition.content_impact == 'none'}
 _GLOBAL_EDIT_VERBS = {name for name, definition in _VERB_DEFINITIONS.items() if definition.content_impact == 'global'}
+# Structured queries dispatch the same read-only verbs the execution contract
+# already marks as query-capable; keep one access source instead of a second
+# hand-written allowlist. ``selection`` is the runtime observation entry row.
+# Navigation stays execution-only: a query batch must not move the user's view.
+# Native evaluation covers verbs that read metadata through Houdini evaluation
+# rather than a stored field: they can run expressions/cooks without being a
+# scene edit. One source drives the structured-query receipt and the Python
+# execution receipt; explicit cook/verify verbs remain managed operations.
+_QUERY_NATIVE_EVALUATION_VERBS = frozenset({
+    'read_parms', 'usd_prim_info', 'usd_stage_summary', 'describe',
+    'geo_attrib_stats', 'geo_point_spacing', 'geo_curve_clearance',
+    'geo_check_interfaces', 'geo_piece_stats', 'geo_frame_diff', 'control_test_plan',
+})
+_STRUCTURED_QUERY_VERBS = ({name for name, definition in _VERB_DEFINITIONS.items()
+                           if definition.access == 'query_or_exec' and definition.content_impact == 'none'
+                           } | {'selection'}) - {'focus_node'}
+
+
+def _uninstrumented_hom(raw_usage, gate_outcome):
+    """True when executed source may have used HOM outside the verb tracer.
+
+    ``directCalls`` covers literal hou.* calls; covered/suspected mark flagged
+    mutation candidates; a raw-gate exemption means source could mutate outside
+    the instrumented write set. Callers also treat an empty verb ledger as
+    unobserved source: imports of implementation modules, helper scripts and
+    dynamic attributes can mutate without a literal hou.* token.
+    """
+    usage = raw_usage or {}
+    return bool(usage.get('directCalls') or usage.get('coveredMutations')
+                or usage.get('suspectedMutations') or gate_outcome in ('exempted', 'disabled'))
+
+
+def _managed_scene_write(entry):
+    """Whether one ledger row establishes an instrumented scene write.
+
+    Explicit counters win. A successful dry_run/applied=false/changed=false call
+    writes nothing; an observation verb without a counter (verify/render/cook)
+    is not a write; test controls count only when their state was not restored.
+    Uncounted node/global edit verbs stay conservative because their summary
+    omitted the counter, not because they are known to write.
+    """
+    summary = entry.get('summary') or {}
+    writes = summary.get('scene_writes')
+    if isinstance(writes, int):
+        return writes != 0 and (entry.get('ok') is True or summary.get('restored') is not True)
+    if summary.get('restored') is True:
+        return False
+    if entry.get('ok') is True and (summary.get('dry_run') is True
+                                    or summary.get('applied') is False or summary.get('changed') is False):
+        return False
+    name = entry.get('verb')
+    definition = _VERB_DEFINITIONS.get(name)
+    if definition is None:
+        return False
+    if name in ('test_controls', 'test_cop_controls'):
+        return summary.get('restored') is not True
+    if definition.content_impact == 'none':
+        return False
+    return True
 
 
 def _observe_impact(nodes, impact, descendants=False):
@@ -653,14 +756,14 @@ class ExecutionRuntime:
         rows = []
         counts = {'succeeded': 0, 'rejected': 0, 'failed': 0}
         native_evaluation = {'attempted': False}
-        allowed = {'scene_info', 'node_info', 'read_parms', 'tool_catalog', 'usd_prim_info', 'verb_help', 'selection'}
+        allowed = _STRUCTURED_QUERY_VERBS
 
         def selection():
             from dsh_context import scene_context
             return scene_context(self.runtime_id, self.thread_id)
 
         def before_dispatch(name):
-            if name in ('read_parms', 'usd_prim_info'):
+            if name in _QUERY_NATIVE_EVALUATION_VERBS:
                 native_evaluation['attempted'] = True
 
         dispatch = _request_dispatcher(ledger, observed_nodes, impact, read_only=True,
@@ -701,6 +804,7 @@ class ExecutionRuntime:
         impact['unavailable'] = impact['unavailable'] or evaluated
         envelope['transaction'] = {
             'status': 'effects_unverified' if evaluated else 'no_scene_change', 'source_executed': False,
+            'effects': 'none', 'native_evaluation': evaluated,
             'scope': ('Fixed read operations; native parameter/USD evaluation may invoke existing expressions or cooks; '
                       'their side effects are not observed or restored' if evaluated else
                       'Fixed metadata reads only; no submitted Python or scene-edit operation executed'),
@@ -714,7 +818,7 @@ class ExecutionRuntime:
         envelope['execution']['source_kind'] = 'structured_query'
         envelope['execution']['read_only_scope'] = 'Fixed query dispatch permits no explicit scene-edit operations; native evaluation effects are separate'
         envelope['execution']['impact']['scope'] = (
-            'No explicit scene writes dispatched; native parameter/USD evaluation effects are unverified'
+            'No explicit scene writes dispatched; native parameter/USD evaluation and detected raw HOM remain unverified'
             if evaluated else 'Fixed metadata operations only; no scene writes dispatched')
         envelope['execution']['outputs'] = []
         return envelope
@@ -731,7 +835,7 @@ class ExecutionRuntime:
             'owner_session': owner_session, 'read_only': read_only,
             'impact': {**{k:v for k,v in impact.items() if k != 'nodes'},
                 'nodes': [{'identity': identity, 'path': path} for identity, path in impact['nodes'].items()],
-                'scope': 'bounded native wires and last-cook expression dependents; excludes unobserved GUI, dynamic and external changes'}}
+                'scope': 'bounded native wires and last-cook expression dependents; unavailable marks detected uninstrumented HOM, native evaluation or failed impact observation; excludes unobserved GUI and external changes'}}
 
     def ui_observation_result(self, facts, error=None, owner_session=None, *, operation='ui_capture'):
         """Project one finished staged UI observation using the normal facts.
@@ -751,7 +855,9 @@ class ExecutionRuntime:
             'outcome': {'batch': 'completed' if error is None else 'failed',
                 'operations': {'total': 1, 'failed': int(error is not None)},
                 'checks': {'failed': 0, 'warning': 0, 'unverified': 0}},
-            'transaction': {'status': 'no_scene_change', 'nodes': [], 'nodes_truncated': False,
+            'transaction': {'status': 'no_scene_change', 'source_executed': False,
+                'effects': 'none', 'native_evaluation': False,
+                'nodes': [], 'nodes_truncated': False,
                 'scope': 'native UI observation; no model parameter edits or HIP save'}}
         if images:
             envelope['images'] = images
@@ -784,13 +890,15 @@ class ExecutionRuntime:
             code, script = script_program(code, script)
         except (ValueError, UnicodeError) as source_error:
             return {'ok': False, 'stdout': '', 'stderr': '', 'error': str(source_error),
-                    'transaction': {'status': 'no_scene_change',
+                    'transaction': {'status': 'no_scene_change', 'source_executed': False,
+                                    'effects': 'none', 'native_evaluation': False,
                                     'scope': 'Source rejected before execution; no scene writes'}}
         self.sequence += 1
         execution_sequence = self.sequence
         verb_ledger: list = []
         observed_nodes = {}
         impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
+        native_evaluation = {'attempted': False}
         module = ModuleType('__dsh_builder__' if 'entry' in script else '__main__') if script is not None else None
         namespace = module.__dict__ if module is not None else {}
         namespace['hou'] = hou
@@ -814,7 +922,11 @@ class ExecutionRuntime:
         box_scope = contextlib.nullcontext({'entries': [], 'boxes': 0, 'nodes': 0}) if read_only else dsh_network_boxes.transaction_journal()
         control_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_navigation.transaction_journal()
         note_scope = contextlib.nullcontext({'entries': []}) if read_only else dsh_network_notes.transaction_journal()
-        dispatch = _request_dispatcher(verb_ledger, observed_nodes, impact, read_only=read_only)
+        def before_dispatch(name):
+            if name in _QUERY_NATIVE_EVALUATION_VERBS:
+                native_evaluation['attempted'] = True
+        dispatch = _request_dispatcher(verb_ledger, observed_nodes, impact, read_only=read_only,
+                                       before_dispatch=before_dispatch)
         with (_script_namespace(module, analysis), dsh_ownership.execution_owner(owner_session, owner_call),
               request_dispatch(dispatch),
               creation_scope as created_nodes, box_scope as box_journal,
@@ -865,20 +977,36 @@ class ExecutionRuntime:
         # Static calls may never run, and an unrecognized/imported call can
         # still mutate the scene. Neither absence nor presence in the AST is
         # evidence that arbitrary Python made no changes or committed edits.
-        mutation_attempted = any(v['verb'] in _MUTATING_VERB_NAMES and
-            (v.get('summary') or {}).get('scene_writes') != 0 and
-            (v.get('ok') or (v.get('summary') or {}).get('restored') is not True)
-            for v in verb_ledger)
-        if not source_state['executed']:
+        mutation_attempted = any(_managed_scene_write(v) for v in verb_ledger)
+        # Three orthogonal facts, all from existing receipts: the managed write
+        # set (effects), detected uninstrumented HOM, and native evaluation.
+        # effects="none" means the instrumented channel registered no write; it
+        # is not proof that arbitrary Python or external files changed nothing.
+        executed = source_state['executed']
+        failed = error is not None
+        clean_undo = bool(rollback and rollback.get('applied') and not rollback.get('error'))
+        # "No instrumented evidence" is not a zero-write proof: arbitrary Python
+        # can import implementation modules, helper scripts or build dynamic
+        # attributes without a literal hou.* token. Executed source with an empty
+        # verb ledger therefore keeps the unknown-effects receipt (the legacy
+        # behavior), while managed observation/dry-run verbs establish none.
+        unconservative = _uninstrumented_hom(raw_usage, gate_outcome) or analysis.unresolved_source
+        uninstrumented = executed and (unconservative or not verb_ledger)
+        native = native_evaluation['attempted']
+        effects = ('none' if not executed or clean_undo or not mutation_attempted
+                   else 'registered' if not failed else 'unverified')
+        if not executed:
             transaction_status = 'no_scene_change'
-        elif error is None:
-            transaction_status = 'committed' if mutation_attempted else 'effects_unverified'
-        elif rollback and rollback.get('applied') and not rollback.get('error'):
+        elif clean_undo:
             transaction_status = 'rolled_back'
-        elif not mutation_attempted:
-            transaction_status = 'effects_unverified'
+        elif failed:
+            transaction_status = ('recovery_unverified' if effects == 'unverified'
+                                  else 'effects_unverified' if uninstrumented or native
+                                  else 'no_scene_change')
         else:
-            transaction_status = 'recovery_unverified'
+            transaction_status = ('committed' if effects == 'registered'
+                                  else 'effects_unverified' if uninstrumented or native
+                                  else 'no_scene_change')
         identities = sorted(set(observed_nodes) | created_nodes | set(impact['nodes']))
         states = []
         for identity in identities[:64]:
@@ -886,13 +1014,15 @@ class ExecutionRuntime:
             states.append({'identity': identity, 'prior_path': observed_nodes.get(identity, impact['nodes'].get(identity)),
                            'exists': node is not None, 'path': node.path() if node else None})
         envelope['transaction'] = {'status': transaction_status,
-                                   'source_executed': source_state['executed'],
+                                   'source_executed': executed,
+                                   'effects': effects,
+                                   'native_evaluation': native,
                                    'scope': ('Submitted Python did not execute; no scene writes from this source'
-                                             if not source_state['executed'] else
-                                             'Observed managed operations and native undoable edits only; '
-                                             'arbitrary Python, imported calls and external effects are not fully observed or restored'),
+                                             if not executed else
+                                             'Managed verb writes and detected raw HOM only; arbitrary Python '
+                                             'helpers, external files/services and GUI side effects are outside this record'),
                                    'nodes': states, 'nodes_truncated': len(identities) > 64,
-                                   'coverage': 'Instrumented verb arguments, registered created identities and bounded native dependency cone; not all Python effects or implicit dependencies'}
+                                   'coverage': 'Instrumented verb arguments, registered created identities, detected raw-HOM syntax and bounded native evaluation; not a complete arbitrary-Python effect observer'}
         if box_journal.get('entries'):
             envelope['transaction']['network_boxes'] = {
                 'entry_count': len(box_journal['entries']), 'box_count': box_journal['boxes'],
@@ -909,19 +1039,21 @@ class ExecutionRuntime:
                 'scope': 'explicit Sticky Note presentation snapshots; no node or geometry recovery evidence'}
         if transaction_status != 'no_scene_change':
             _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
-            # Retain real tracer observations without manufacturing a global
-            # edit from a syntactic hint. No complete arbitrary-Python effect
-            # observer exists, including for the requested inspect mode.
-            impact['unavailable'] = True
         else:
             impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
+        # unavailable marks detected evidence gaps, not ordinary registered edits:
+        # uninstrumented HOM, native evaluation, failed impact observation or an
+        # unrecovered managed write; a registered write set stays observable.
+        impact['unavailable'] = bool(impact.get('unavailable') or uninstrumented or native or effects == 'unverified')
         envelope['execution'] = self._execution_snapshot(execution_sequence, owner_session, read_only, impact)
         envelope['execution']['source_kind'] = 'python'
-        envelope['execution']['read_only_scope'] = 'Requested Python entry mode only; not proof of absence of scene or external effects'
+        envelope['execution']['read_only_scope'] = ('Requested Python entry mode only; imported modules and dynamic HOM '
+            'can still write outside static detection, which impact.unavailable marks. This is not a no-write guarantee.')
         envelope['execution']['impact']['scope'] = (
             'No submitted Python executed' if not source_state['executed'] else
-            'Observed instrumented verb edits and bounded native dependencies only; '
-            'arbitrary Python and imported-call effects remain unobserved')
+            'Managed verb edits, registered identities and bounded native dependencies; '
+            'unavailable marks detected raw HOM/native evaluation or failed impact observation; '
+            'external files/services and GUI remain outside')
         bindings = []
         for item in envelope.get('evidence', []):
             if len(bindings) >= 64:

@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "maxFiles": 10000,
   "maxInputBytes": 2147483648,
+  "maxInlineCodeBytes": 1048576,
   "maxFrame": 1000000,
   "maxPadding": 8,
   "defaultTimeoutSeconds": 120,

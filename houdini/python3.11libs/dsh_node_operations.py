@@ -148,7 +148,8 @@ def _resolve_port(node, selector, direction):
     return selector
 
 
-def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_foreign: str | None = None) -> dict:
+def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_foreign: str | None = None,
+            preserve_position: bool = False) -> dict:
     """把 ``src`` 的输出连到 ``dst`` 的第 ``index`` 个输入。
 
     只表达普通网络 dataflow；OBJ→OBJ 是 parenting，明确拒绝并要求
@@ -160,6 +161,8 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     连接成功后做 flow 纠流（``_snap_into_flow``）：dst 不在所有输入下游时，以输入
     正下方为首选并对节点、Box与注释项做有界避障；已在下游的节点绝不动。若没有
     安全落位，接线保留并以``placement_status='blocked'``报告，不移动dst。
+    ``preserve_position=True`` 跳过纠流、绝不移动 dst：用于在既有网络中接线并保持
+    用户可见布局；此时 ``placement_status='preserved'``。
     """
     s = dsh_node_access._resolve(src)
     d = dsh_node_access._resolve(dst)
@@ -201,7 +204,8 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     actual = [c for c in d.inputConnections() if c.inputIndex() == index]
     if len(actual) != 1 or actual[0].inputNode() != s or actual[0].outputIndex() != output:
         raise RuntimeError('connect readback mismatch; transaction must roll back')
-    placement = dsh_node_layout._snap_into_flow(d)
+    placement = ({'adjusted': False, 'status': 'preserved', 'blockers': []}
+                 if preserve_position else dsh_node_layout._snap_into_flow(d))
     return {"node": d.path(), "input": index, "source": s.path(), "source_output": output,
             'source_output_name': s.outputNames()[output] if output < len(s.outputNames()) else None,
             'input_name': d.inputNames()[index] if index < len(d.inputNames()) else None,

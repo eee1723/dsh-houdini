@@ -113,7 +113,8 @@ try:
         assert before=={n.sessionId() for n in root.children()}
         env=b.run_code(f'build_module({root.path()!r},{specs!r},output={output!r})')
         assert not env['ok'] and message in env['error'],env
-        assert env['transaction']['status']=='effects_unverified' and env['transaction']['source_executed'] is True,env
+        assert env['transaction']['status']=='no_scene_change' and env['transaction']['source_executed'] is True,env
+        assert env['transaction']['effects']=='none', env
         evidence=env['evidence'][0]
         assert evidence['phase']=='static_preflight' and evidence['scene_writes']==0,env
         assert before=={n.sessionId() for n in root.children()}
@@ -159,6 +160,7 @@ try:
     env=b.run_code(f'try:\n build_module({root.path()!r},[{{"name":"hidden","type":"partition"}}],output="hidden")\n'
                    f'except ValueError:\n pass\nset_parm({source.path()!r},"sizex",4)')
     assert env['ok'] and env['transaction']['status']=='committed',env
+    assert env['transaction']['effects']=='registered',env
     assert env['verbs'][0]['summary']['scene_writes']==0 and env['verbs'][-1]['ok'],env
     assert source.evalParm('sizex')==4
     # Cook/VEX failure happens AFTER writes and may never acquire zero-write metadata.

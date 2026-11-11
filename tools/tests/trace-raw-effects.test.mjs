@@ -64,6 +64,15 @@ assert.equal(classifyRawEffect({tool:'houdini_query',failed:false,canonical:{exe
 assert.equal(classifyRawEffect({tool:'houdini_inspect',failed:false,canonical:{
   execution:{read_only:true},transaction:{status:'effects_unverified'}}}),'unknown',
   'an inspect request mode does not establish its effects');
+assert.equal(classifyRawEffect({tool:'houdini_inspect',failed:false,canonical:{
+  execution:{read_only:true},transaction:{status:'no_scene_change',effects:'none'}}}),'read_only_query',
+  'a no-write managed receipt is a read-only observation, not unknown effects');
+assert.equal(classifyRawEffect({tool:'houdini_exec',failed:false,canonical:{
+  transaction:{status:'committed',effects:'registered'}}}),'mutation_candidate',
+  'a registered write set is a recorded mutation');
+assert.equal(classifyRawEffect({tool:'houdini_exec',failed:false,canonical:{
+  transaction:{status:'effects_unverified',effects:'none',native_evaluation:true}}}),'unknown',
+  'native evaluation of a zero-write call stays unknown effects');
 assert.equal(classifyRawEffect({tool:'houdini_inspect',args:{queries:[{verb:'selection'}]}}),null,
   'structured observations are not counted as verb-free Python');
 assert.equal(classifyRawEffect({tool:'houdini_exec',rawUsage:{gateOutcome:'read_only'},

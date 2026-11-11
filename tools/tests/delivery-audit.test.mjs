@@ -6,10 +6,12 @@ const contract='a'.repeat(64), otherContract='b'.repeat(64);
 const events=[];
 let sequence=0;
 function record({hip=OLD,tool='houdini_exec',ok=true,evidence=[],outputs=[],verbs=[],
-  impact={attempted:false,nodes:[]},error,transaction='committed'}={}) {
+  impact={attempted:false,nodes:[]},error,transaction='committed',effects,nativeEvaluation}={}) {
   const id=`call-${++sequence}`;
   events.push({seq:events.length+1,type:'tool/call',data:{callId:id,name:tool}});
-  const canonical={ok,verbs,evidence,transaction:{status:transaction},
+  const transactionValue={status:transaction,
+    ...(effects!==undefined?{effects}:{}),...(nativeEvaluation?{native_evaluation:true}:{})};
+  const canonical={ok,verbs,evidence,transaction:transactionValue,
     ...(error?{error}:{}),execution:{runtime_id:'runtime-1',sequence,observed_at:sequence,
       hip_path:hip,impact,outputs}};
   events.push({seq:events.length+1,type:'tool/result',data:{message:{source:{callId:id}},meta:{canonical}}});
@@ -62,6 +64,55 @@ let unknownEffects=projectDeliveryAudit(events);
 assert.equal(unknownEffects.unresolved_checks[0].validity,'unverified_after_unknown_execution');
 assert.equal(unknownEffects.delivery.status,'save_precedes_unverified_effects');
 assert.equal(unknownEffects.delivery.last_save.sequence,1,'the original save remains an actual event');
+events.splice(0);sequence=0;
+
+// An instrumented zero-write receipt no longer invalidates prior checks, but a
+// receipt whose arbitrary source could not be observed keeps the unknown path.
+record({evidence:[declared('pass')],outputs:[binding()],verbs:[save(OLD)]});
+record({tool:'houdini_inspect',transaction:'no_scene_change',effects:'none',impact:{attempted:false,nodes:[]}});
+const zeroWrite=projectDeliveryAudit(events);
+assert.equal(zeroWrite.unresolved_checks.length,0,
+  'an instrumented zero-write receipt does not invalidate prior checks');
+assert.notEqual(zeroWrite.delivery.status,'save_precedes_unverified_effects');
+events.splice(0);sequence=0;
+
+record({evidence:[declared('pass')],outputs:[binding()],verbs:[save(OLD)]});
+record({tool:'houdini_exec',transaction:'effects_unverified',effects:'none',
+  impact:{attempted:false,unavailable:true,nodes:[]}});
+const unobservedSource=projectDeliveryAudit(events);
+assert.equal(unobservedSource.unresolved_checks[0].validity,'unverified_after_unknown_execution',
+  'unobserved arbitrary source keeps the conservative unknown-effects path');
+assert.equal(unobservedSource.delivery.status,'save_precedes_unverified_effects');
+events.splice(0);sequence=0;
+
+record({evidence:[declared('pass')],outputs:[binding()],verbs:[save(OLD)]});
+record({transaction:'committed',effects:'registered',
+  impact:{attempted:true,unavailable:true,nodes:[{identity:10,path:'/obj/product/OUT_ASSET'}]}});
+const mixedUnknown=projectDeliveryAudit(events);
+assert.equal(mixedUnknown.unresolved_checks[0].validity,'unverified_after_unknown_execution',
+  'a registered write with an unobserved remainder cannot keep old checks current');
+events.splice(0);sequence=0;
+
+// Registered managed writes invalidate only the identities actually changed;
+// with no identity information they stay conservative for all historical checks.
+record({evidence:[declared('pass')],outputs:[binding()]});
+record({transaction:'committed',effects:'registered',impact:{attempted:true,nodes:[{identity:10,path:'/obj/product/OUT_ASSET'}]}});
+assert.equal(projectDeliveryAudit(events).unresolved_checks[0].validity,'stale_after_recorded_change');
+events.splice(0);sequence=0;
+
+record({evidence:[declared('pass')],outputs:[binding()]});
+record({transaction:'committed',effects:'registered',impact:{attempted:false,nodes:[]}});
+assert.equal(projectDeliveryAudit(events).unresolved_checks[0].validity,'stale_after_recorded_change',
+  'a registered presentation write without identities still invalidates stale checks');
+events.splice(0);sequence=0;
+
+// Native evaluation of an instrumented zero-write call remains unknown effects.
+record({evidence:[declared('pass')],outputs:[binding()],verbs:[save(OLD)]});
+record({tool:'houdini_inspect',transaction:'effects_unverified',effects:'none',nativeEvaluation:true,
+  impact:{attempted:false,unavailable:true,nodes:[]}});
+const nativeEffects=projectDeliveryAudit(events);
+assert.equal(nativeEffects.unresolved_checks[0].validity,'unverified_after_unknown_execution');
+assert.equal(nativeEffects.delivery.status,'save_precedes_unverified_effects');
 events.splice(0);sequence=0;
 
 // Successful Save As carries old failures forward only as pending rechecks.

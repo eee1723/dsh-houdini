@@ -32,7 +32,8 @@ try:
         env=b.run_code(code,read_only=True)
         assert not env['ok'] and 'node_info(parent, type_name' in env['error'],env
         assert 'existing_geo' in env['error'] and 'houdini_exec' in env['error'],env
-        assert env['transaction']['status']=='effects_unverified' and env['transaction']['source_executed'] is True,env
+        assert env['transaction']['status']=='no_scene_change' and env['transaction']['source_executed'] is True,env
+        assert env['transaction']['effects']=='none',env
     with dsh_ownership.execution_owner('efficiency','test'):
         rejects(lambda:h.set_parm(switch,'input','chi("../CTRL/enabled")'),'Unknown function')
         # Native fault injection still exercises cook error refresh; the public

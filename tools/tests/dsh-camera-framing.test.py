@@ -72,7 +72,8 @@ try:
         projected=bridge.run_code(
             f'__result__=camera_fit({cam.path()!r},{box.path()!r},dry_run=True)',
             owner_session='framing-test',owner_call='camera-plan')
-        assert projected['ok'] and projected['transaction']['status']=='effects_unverified' and projected['transaction']['source_executed'] is True,projected
+        assert projected['ok'] and projected['transaction']['status']=='no_scene_change' and projected['transaction']['source_executed'] is True,projected
+        assert projected['transaction']['effects']=='none',projected
         assert projected['execution']['impact']['attempted'] is False,projected
         result=h.camera_fit(cam,box)
         assert result['ok'] and cam.evalParm('focal')==50

@@ -33,6 +33,7 @@ try:
     assert query['execution']['sequence']>observation['sequence']
     assert not query['execution']['impact']['attempted'] and not query['execution']['impact']['nodes']
     assert query['transaction']['status']=='effects_unverified' and query['execution']['impact']['unavailable']
+    assert query['transaction']['effects']=='none' and query['transaction']['native_evaluation'] is True, query['transaction']
     assert query['transaction']['nodes'][0]['identity']==ctrl.sessionId()
     assert query['execution']['hip_dir'] is None, 'new scene has no meaningful project directory'
     # A legitimately saved untitled.hip is a project too. No extra Host query
@@ -54,9 +55,19 @@ try:
     mixed=run(f'verify_network({root.path()!r},output={out.path()!r})\nset_parm({ctrl.path()!r},"width",3)')
     assert mixed['execution']['impact']['last_edit_ledger_index']==2
     invalid=run(f'set_parm({ctrl.path()!r},"width",4,unexpected=True)')
-    assert invalid['transaction']['status']=='effects_unverified'
+    assert invalid['transaction']['status']=='no_scene_change'
+    assert invalid['transaction']['effects']=='none'
     assert invalid['execution']['impact']['nodes']==[]
-    assert invalid['execution']['impact']['unavailable']
+    assert not invalid['execution']['impact']['unavailable']
+    # Presentation layout moves nodes and must report its actual writes, not
+    # hide them behind the read-only access contract.
+    layout_code=f'__result__=layout_nodes({root.path()!r},nodes=[{out.path()!r},{other.path()!r}],mode="flow",horizontal_spacing=1.0,vertical_spacing=1.0)'
+    layout_once=run(layout_code)
+    assert layout_once['ok'] and layout_once['result']['scene_writes']>0,layout_once
+    assert layout_once['transaction']['status']=='committed' and layout_once['transaction']['effects']=='registered',layout_once
+    layout_repeat=run(layout_code)
+    assert layout_repeat['ok'] and layout_repeat['result']['scene_writes']==0,layout_repeat
+    assert layout_repeat['transaction']['status']=='no_scene_change' and layout_repeat['transaction']['effects']=='none',layout_repeat
     unit=root.node('unit');identity=unit.sessionId()
     deleted=run(f'delete_node({unit.path()!r})')
     assert any(n['identity']==identity and n['exists'] is False for n in deleted['transaction']['nodes'])

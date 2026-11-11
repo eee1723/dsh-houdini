@@ -23,7 +23,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-node-delivery-') as directory:
     assert first['nodes'][0]['description']=='调整尺寸和重复数量' and first['nodes'][0]['context']=='Sop'
     assert before=={n.path():(n.isDisplayFlagSet(),n.isRenderFlagSet(),[(p.name(),p.rawValue()) for p in n.parms()]) for n in hou.node(obj).children()}
     again=ok(code);assert again['result']['scene_writes']==0 and not again['result']['requires_save']
-    assert again['transaction']['status']=='effects_unverified' and again['transaction']['source_executed'] is True
+    assert again['transaction']['status']=='no_scene_change' and again['transaction']['source_executed'] is True
+    assert again['transaction']['effects']=='none',again
     assert [n['id'] for n in first['nodes']]==[n['id'] for n in again['result']['nodes']]
     reference={'id':first['nodes'][0]['id']}
     old=reference['id']

@@ -58,7 +58,8 @@ try:
     assert set(root.children())==before
     envelope=bridge.run_code(f'build_module({root.path()!r},{spec!r},output="bad_tube")')
     assert envelope['evidence'][0]['phase']=='static_preflight' and envelope['evidence'][0]['error_count']==5
-    assert envelope['transaction']['status']=='effects_unverified' and envelope['transaction']['source_executed'] is True,envelope
+    assert envelope['transaction']['status']=='no_scene_change' and envelope['transaction']['source_executed'] is True,envelope
+    assert envelope['transaction']['effects']=='none',envelope
     card=bridge.run_code(f'r=node_info({root.path()!r},"circle"); __result__={{"type":r["type"]}}',read_only=True)
     assert any(c['components']==['radx','rady'] for c in card['evidence'][0]['tuple_components'])
 

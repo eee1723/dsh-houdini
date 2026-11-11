@@ -27,13 +27,13 @@ description: 用houdini_isolated在一次性独立hython中构建或检查明确
 
 ## 调用入口
 
-`operation="run"`（默认）需要绝对`manifest`路径；省略`output_dir`时，工具在当前DSH工作区的`execution_run`目录中分配唯一运行目录，不查询现场HIP来决定目录。可显式指定新的绝对`output_dir`，已有位置不会被搬动或覆盖。
+`operation="run"`（默认）需要`manifest`：可直接给内联对象，也可给绝对文件路径。内联对象适合一次实验——`code`是内联Python builder（与`script`互斥），可加`hip`/`input_root`/`files`/`checks`；Host把这次调用序列化为授权字节，检查器按同一清单合同校验后执行，源码与清单原字节留在run的`request.json`和`inputs/`。文件清单适合跨run复用的脚本与多文件依赖，路径规则不变。省略`output_dir`时，工具在当前DSH工作区的`execution_run`目录中分配唯一运行目录，不查询现场HIP来决定目录。可显式指定新的绝对`output_dir`；目录在启动前被原子预留，已存在或并发占用的目录直接拒绝，不搬动、不覆盖、不复用。
 
 默认消费当前明确选择的Houdini所登记的安装信息，现场离线仍可运行。也可用`houdini_installation`指定绝对安装根目录（HFS），用于未选现场或旧登记缺少安装信息的情况；不按PATH或Host环境猜版本。无登记的固定Bridge配置仍需在线读取安装信息，离线时使用显式HFS。安装选择不修改现场目标、节点归属或旧请求状态。
 
 `timeout_seconds`默认120，`memory_mb`默认4096；依据本次计算选择，内存上限不约束GPU或外部服务。`background=true`沿DSH原生作业运行，适合超过一轮交互等待的计算。
 
-manifest至少声明`script`或`hip`之一。两者同时存在时，driver先加载声明的HIP副本并登记该次节点身份，再以同一隔离作者执行脚本作为准备操作，最后运行checks；脚本不自行load/clear。`hip/script/files`是输入根下的安全相对路径；输入根默认manifest目录，也可用`input_root`明确指定绝对目录或相对manifest的目录。这样HIP可留在工程根，准备脚本和manifest留在源码目录；不必为路径绕行复制源文件或把控制文件散放工程根。
+manifest至少声明`script`、`hip`或内联`code`之一，`script`与`code`不能同时出现。HIP与准备脚本（或内联`code`）同时存在时，driver先加载声明的HIP副本并登记该次节点身份，再以同一隔离作者执行准备操作，最后运行checks；脚本不自行load/clear。文件清单的`hip/script/files`是输入根下的安全相对路径；输入根默认清单目录，也可用`input_root`明确指定绝对目录或相对清单的目录。内联清单的相对路径（含相对`input_root`）锚当前DSH工作区。这样HIP可留在工程根，准备脚本和清单留在源码目录；不必为路径绕行复制源文件或把控制文件散放工程根。
 
 `files`列出额外输入并保留相对结构；帧序列用`{"pattern":"cache/points.$F4.bgeo.sc","start":1,"end":240}`，可加正整数`step`，端点包含在范围内。每项可以是文件名或序列对象，不需枚举几百个路径；仅展开一个`$F`或`$F1..$F8`，不执行变量、表达式或通配扫描。所有展开文件都须存在并通过DSH读取政策，重复/别名拒绝；上限为10000项输入（含HIP/script）、共2 GiB。清单语法、序列和checks由同一纯规划入口在作业准入前检查，不执行Houdini或打开依赖；每个依赖仍由Host按DSH政策读取。Host授权的manifest原字节在执行前再核对，提交后改清单会在执行前拒绝，不能悄悄换一批依赖。
 
@@ -53,21 +53,17 @@ if abs(width - 2.0) > 1e-5:
 __result__ = {'output': out.path(), 'width_m': width}
 ```
 
-相邻`check.json`：
+一次实验可直接把同一源码内联，不必先写脚本或清单文件：
 
 ```json
-{"script":"build.py","checks":[{"id":"part","kind":"cook","node":"/obj/part/OUT","frame":1}]}
+{"operation":"run","manifest":{"code":"<上面的build.py源码>","checks":[{"id":"part","kind":"cook","node":"/obj/part/OUT","frame":1}]}}
 ```
 
-调用Host工具：
+需要跨run复用同一脚本，或带贴图/HIP/缓存等依赖时，改用文件清单`{"script":"build.py","input_root":"...","files":[...]}`并把`manifest`设为它的绝对路径。内联源码与授权清单原字节保留在run的`request.json`，执行脚本在`inputs/`。
 
-```json
-{"operation":"run","manifest":"D:/project/dsh-artifacts/scripts/part/check.json"}
-```
+检查已有工程时使用`hip`并列出所需依赖；这是保存版本的副本，不会复制未保存现场。需调整副本的参数、相机或渲染设置时，同时声明准备`script`或内联`code`，沿原动词修改。运行器先复制并校验实际输入字节，不自动回写源HIP。需要工程文件或实际节点快照时，在builder中用相应保存/导出动词明确生成，并消费其返回路径；只声明cook不产生可编辑工程文件。保存仍遵从原任务授权与`scene_save_as`的目标、当前HIP和覆盖合同；已授权保存回本轮源文件无需另绕行scratch副本。独立执行不回滚文件副作用。团队交付可直接提供已检查的builder，由主作者在当前工程执行后产生真实节点。
 
-检查已有工程时使用`hip`并列出所需依赖；这是保存版本的副本，不会复制未保存现场。需调整副本的参数、相机或渲染设置时，同时声明准备`script`，沿原动词修改。运行器先复制并校验实际输入字节，不自动回写源HIP。需要工程文件或实际节点快照时，在builder中用相应保存/导出动词明确生成，并消费其返回路径；只声明cook不产生可编辑工程文件。保存仍遵从原任务授权与`scene_save_as`的目标、当前HIP和覆盖合同；已授权保存回本轮源文件无需另绕行scratch副本。独立执行不回滚文件副作用。团队交付可直接提供已检查的builder，由主作者在当前工程执行后产生真实节点。
-
-只需独立查询接口时可以使用`{"script":"inspect_api.py","checks":[]}`，在builder的`__result__`返回需要的事实。builder成功只证明该脚本完成；未执行的几何、控制和视觉检查仍未验证。
+只需独立查询接口时可用内联`{"code":"...","checks":[]}`或文件清单`{"script":"inspect_api.py","checks":[]}`，在builder的`__result__`返回需要的事实。builder成功只证明该脚本完成；未执行的几何、控制和视觉检查仍未验证。
 
 ## 执行与自验证
 
@@ -75,13 +71,13 @@ __result__ = {'output': out.path(), 'width_m': width}
 
 worker没有用户视窗；`render_view`与viewport截图要求GUI，不能用于无头检查。需要图像时，在输入工程或builder中建立所需相机、灯光、材质和ROP，由render检查调用`render_frame`产图并查看返回的原生附件。需要直接查看时输出PNG/JPEG；EXR保留为原始产物，另生成合适的本地预览。正式渲染方法按需加载Solaris/Karma工作流；低成本观察只覆盖本次画幅能看清的范围。
 
-后台提交返回`job_id`、`run_directory`和`report_path`，用DSH原生`job_output`等待、`job_kill`取消；提交成功不等于执行结束，执行超时不等于取消。read必须使用原调用返回的`run_directory`作为`output_dir`，读取已有报告/进度并附上可用图片，不连接live、不猜最新run、不重新计算。大执行详情使用builder或check的`details.sha256`调用`houdini_resource(kind="result", ref=..., pointer="/result", offset=0, limit=6000)`，分页读取该次执行的原结果；其他会话消费时先read原run以取得同源引用。`details.path`也可用通用文件工具读取。详情不可用、归档失败与原执行结论分别报告，不因摘要没有展开字段而重跑探针。进度文件可变，不证明进程当前存活。消费原任务的结果，不通过重复提交未知计算探测状态。
+后台提交返回`job_id`、`run_directory`和`report_path`，用DSH原生`job_output`等待、`job_kill`取消；提交成功不等于执行结束，执行超时不等于取消。read必须使用原调用返回的`run_directory`作为`output_dir`，读取已有报告/进度并附上可用图片，不连接live、不猜最新run、不重新计算。默认run/read只返回紧凑摘要：builder的`__result__`键级事实、每个check的`id/status/geometry`、输入版本、失败文本和`detail_pointer`；execution渲染块留在report与归档中，需要时按指针读取。大执行详情优先用原回执的`details.sha256`调用`houdini_resource(kind="result", select=[...])`多选，或用`houdini_isolated(operation="read", select=[...])`直接读报告；单个大字段才用`pointer/offset/limit`分页。其他会话消费时先read原run以取得同源引用。详情不可用、归档失败与原执行结论分别报告，不因摘要没有展开字段而重跑探针。进度文件可变，不证明进程当前存活。消费原任务的结果，不通过重复提交未知计算探测状态。
 
 需要并行继续迭代时，保持已提交脚本和声明依赖的版本稳定，在下一版文件中修改后续方案。运行器会核对源输入变化；worker完成而源已改并不能证明当前源码通过，也不表示本次几何一定失败。读取原run的输入与执行事实后再决定下一次计算，不为这种版本错位重复重渲染未受影响的内容。
 
 把源码和原始资产作为后续迭代的维护源，不把上一次run里保存的HIP连同其`inputs/`再次作为下一轮输入；否则会形成`run/inputs/旧run/inputs/...`的深嵌套、重复资产和失效绝对引用。修改builder后从原始输入重跑必要范围，未受影响的检查不重跑。`__file__`只用于定位本次只读输入；worker初始`hou.hipFile.path()`是run根下的`scene.hip`，在另存前记录其父目录即可取得run输出根。不要把`Path(__file__).parents[N]`当作输出目录协议。
 
-builder和manifest checks返回的run内图片会沿同一`houdini_isolated`结果作为原生附件提供，并用记录的bytes/SHA256复核。先用这些附件判断当前问题；`operation="read"`读取原run，不为查看已有图片、裁图或整理文本启动新worker。图片传输失败、文件改变与执行结果分别报告。
+builder和manifest checks返回的run内图片会沿同一`houdini_isolated`结果作为原生附件提供，并用记录的bytes/SHA256复核。附件元数据给出存储尺寸，并标明请求预览可能被缩放或转码；不要从缩放预览推断几何或细节。先用这些附件判断当前问题；像素级/关系判断用`render_check`的数值或按源取景重新渲染，而不是重新截图猜。`operation="read"`读取原run，不为查看已有图片、裁图或整理文本启动新worker。图片传输失败、文件改变与执行结果分别报告。
 
 运行器的`released`仅表示已发送GO执行信号；`tree_reaped`才表示该次拥有的进程树已确认退出。独立prefs位于运行器独占临时目录，确认退出后仅清理本次临时环境；不清理工程、输入快照、报告或产物。未确认退出或清理失败时保留临时路径和原因。工具返回的进程退出、执行结果、检查与文件事实分别判断；没有完成回执保留未知。
 
@@ -91,7 +87,7 @@ builder和manifest checks返回的run内图片会沿同一`houdini_isolated`结�
 
 报告本次输入版本、运行环境、实际输出路径、执行与检查结果，以及仍未观察的部分。结果属于这次builder/HIP副本和依赖；输入变化后，旧结果不能证明新状态。文件、像素或附件送达不证明语义正确；没有实际看图时明确视觉未验证。
 
-大型报告不要反复整份送入上下文。用`houdini_isolated(operation='read',output_dir=...,pointer='/result/builder/result',limit=6000)`按JSON Pointer读取当前需要的字段；返回`next_offset`时以同一`pointer`和`offset=next_offset`续页。省略`pointer`才读取聚合报告与原生图片。
+大型报告不要反复整份送入上下文。read默认摘要；需要具体字段时优先用`select=['/result/builder/result','/result/checks/0/execution',...]`一次取1..16个JSON Pointer，单个大字段再用`pointer='/result/builder/result'`和`limit=6000`分页，返回`next_offset`时以同一pointer和`offset=next_offset`续页。省略select/pointer才是摘要加原生图片；摘要未展开的字段不等于不存在。
 
 `inputs`和snapshot hash记录开始执行时逐文件复制并校验的版本，不是原子化的整工程快照；未归档或绝对引用依赖不在该保证内。`inputs_unchanged`单独观察运行后的原来源：true表示各声明来源两次观测均可读且同hash，不证明期间从未改变；false表示至少一项确认改变；null表示没有已确认改变但有来源不可读、未完整staging或未能观察。逐文件的`input_observations`保留source_path、before/after hash及changed/unchanged/unavailable与原错误；未完成复制的项没有已核对before hash，不可读不冒充已改变。
 

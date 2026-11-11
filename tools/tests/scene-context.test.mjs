@@ -52,18 +52,33 @@ session.append('user/message',user('selected','检查选中节点'),{surfaceOp:'
 session.append('user/message',{role:'user',content:[{type:'text',text:first[0].text}],
   source:{kind:'runtime-context',form:'snapshot',sections:first}},{surfaceOp:'append'})
 const resumed=new SceneContextProvider(bridge,agent=>projectedExecutorState(projectionCtx,agent.session).sceneObservation)
-assert.equal(await resumed.observe({session}),first[0].text)
+const resumedText=await resumed.observe({session})
+assert.notEqual(resumedText,first[0].text,'the persisted full observation is not re-injected')
+const resumedData=data({text:resumedText})
+assert.equal(resumedData.historical,true)
+assert.equal(resumedData.user_message_id,'selected')
+assert.equal(resumedData.observation.result.hip_path,'{{scene}}.hip')
+assert.equal(resumedData.age_seconds,undefined,'the summary must stay byte-stable, not carry a live-computed age')
+assert(!resumedText.includes('{{'),'compact summary cannot interpolate prompt variables')
 assert.equal(calls,2,'resume reuses the original selection observation')
 const reclaimed={session}
 resumed.claim(reclaimed,user('selected','检查选中节点'))
-assert.equal(await resumed.observe(reclaimed),first[0].text,
-  'a claim without a new insertion reuses an exactly matching persisted observation')
+assert.equal(data({text:await resumed.observe(reclaimed)}).historical,true,
+  'a claim without a new insertion only reuses the persisted historical summary')
 assert.equal(calls,2,'reclaiming a persisted observation never samples the new live selection')
 session.append('tool/call',{turn:1,step:1,callId:'bad',name:'houdini_exec',arguments:'{}'})
 session.append('tool/result',{turn:1,step:1,message:{role:'tool',source:{kind:'tool',callId:'bad'},content:[]},meta:{canonical:{ok:false,error:'Bad parm',execution:{runtime_id:'r',sequence:1,observed_at:1}}}},{surfaceOp:'append'})
 const notice=(await assemble()).find(c=>c.name===STATE)
 assert.equal(notice,undefined,'settled failure does not append the same scene and capability again')
-assert.equal((await assemble())[0].text,first[0].text)
+assert.equal(data((await assemble())[0]).historical,true,
+  'after the full observation is persisted, later steps carry only its historical summary')
+// Persisting the compact summary itself must not flip the section back to the
+// full payload; keying on the persisted message identity keeps it stable.
+session.append('user/message',{role:'user',content:[{type:'text',text:resumedText}],
+  source:{kind:'runtime-context',form:'snapshot',sections:[{name:SCENE,text:resumedText}]}},{surfaceOp:'append'})
+assert.equal(data((await assemble())[0]).historical,true,'a persisted compact summary stays compact')
+assert.equal(data({text:await resumed.observe({session})}).historical,true)
+assert.equal(calls,2,'stable deduplication never recaptures the scene')
 session.append('tool/call',{turn:1,step:2,callId:'unknown',name:'houdini_exec',arguments:'{}'})
 session.append('tool/result',{turn:1,step:2,message:{role:'tool',source:{kind:'tool',callId:'unknown'},content:[]},meta:{canonical:{ok:false,requestReceipt:{request_ref:'r.request',status:'unknown_transport'}}}},{surfaceOp:'append'})
 const recovery=(await assemble()).find(c=>c.name===STATE)
@@ -83,6 +98,18 @@ frame=40
 const replaced=await assemble({...removed,content:[{type:'text',text:'replacement selection'}]})
 assert.equal(data(replaced.find(c=>c.name===SCENE)).observation.result.frame,40,
   'the installed context consumer releases native discarded messages before replacement')
+
+// A newly claimed user message still receives its own complete observation;
+// deduplication only applies after that exact full text is persisted, and a
+// not-yet-persisted observation repeats in full on every assembly.
+const freshAgent={session:Session.create('scene-fresh-observation')}
+const fresh=new SceneContextProvider(bridge,()=>({}))
+const freshMessage=user('fresh-request','新请求的现场')
+fresh.receive(freshAgent,freshMessage);fresh.claim(freshAgent,freshMessage)
+const freshText=await fresh.observe(freshAgent)
+assert.equal(data({text:freshText}).user_message_id,'fresh-request')
+assert.equal(data({text:freshText}).historical,undefined,'a new user message gets the full observation')
+assert.equal(await fresh.observe(freshAgent),freshText,'without a persisted snapshot the full observation repeats')
 console.log('scene context: message-time observation, resume, native DSH context and actual errors passed')
 
 // A queued message keeps the selection observed at arrival, even when newer

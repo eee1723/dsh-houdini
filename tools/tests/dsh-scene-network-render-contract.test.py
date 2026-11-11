@@ -63,7 +63,8 @@ try:
          patch.object(dsh_geometry_queries, '_geometry_fingerprint', side_effect=AssertionError('preflight cooked geometry')):
         preview = f"render_view({target_path!r}, picture='nested/preview.png')"
         rejected = dsh_bridge.run_code(preview, owner_session=session, owner_call='preview-path-only')
-        assert not rejected['ok'] and rejected['transaction']['status'] == 'effects_unverified' and rejected['transaction']['source_executed'] is True, rejected
+        assert not rejected['ok'] and rejected['transaction']['status'] == 'no_scene_change' and rejected['transaction']['source_executed'] is True, rejected
+        assert rejected['transaction']['effects'] == 'none', rejected
         assert rejected['verbs'][0]['summary']['phase'] == 'output_path_preflight', rejected
         assert rejected['verbs'][0]['summary']['scene_writes'] == 0, rejected
         assert not rejected['execution']['impact']['attempted'], rejected
@@ -72,7 +73,8 @@ try:
                 allocated = dsh_bridge.run_code(
                     f"render_view({target_path!r}, picture={filename!r}, output_policy={policy!r})",
                     owner_session=session, owner_call='allocated-path-preflight')
-                assert not allocated['ok'] and allocated['transaction']['status'] == 'effects_unverified' and allocated['transaction']['source_executed'] is True, allocated
+                assert not allocated['ok'] and allocated['transaction']['status'] == 'no_scene_change' and allocated['transaction']['source_executed'] is True, allocated
+                assert allocated['transaction']['effects'] == 'none', allocated
                 assert allocated['verbs'][0]['summary']['phase'] == 'output_path_preflight', allocated
                 assert allocated['verbs'][0]['kwargs']['output_policy'] == policy, allocated
                 assert not allocated['execution']['impact']['attempted'], allocated
@@ -97,7 +99,8 @@ try:
         'set_timeline(fps=60, frame_range=[20, 10])',
         owner_session=session, owner_call='timeline-preflight')
     assert invalid_timeline['ok'] is False, invalid_timeline
-    assert invalid_timeline['transaction']['status'] == 'effects_unverified' and invalid_timeline['transaction']['source_executed'] is True, invalid_timeline
+    assert invalid_timeline['transaction']['status'] == 'no_scene_change' and invalid_timeline['transaction']['source_executed'] is True, invalid_timeline
+    assert invalid_timeline['transaction']['effects'] == 'none', invalid_timeline
     assert hou.fps() == timeline['fps'], invalid_timeline
     updated = dsh_hou_helpers.set_timeline(fps=timeline['fps'] + 6,
                                          current_frame=timeline['frame'] + 1)
@@ -149,7 +152,8 @@ try:
         f'set_keyframes({target_path!r}, {{"tx":[{{"frame":1,"value":0}}], "ty":[{{"frame":1,"value":1}}]}})',
         owner_session=session, owner_call='keyframes-preflight')
     assert preflight['ok'] is False, preflight
-    assert preflight['transaction']['status'] == 'effects_unverified' and preflight['transaction']['source_executed'] is True, preflight
+    assert preflight['transaction']['status'] == 'no_scene_change' and preflight['transaction']['source_executed'] is True, preflight
+    assert preflight['transaction']['effects'] == 'none', preflight
     assert animated.parm('tx').eval() == 5 and animated.parm('ty').isLocked()
     animated.parm('ty').lock(False)
     keyed = dsh_hou_helpers.set_keyframes(animated, {'tx': [
@@ -168,7 +172,8 @@ try:
     dry = dsh_bridge.run_code(
         f'__result__ = build_module({parent_path!r}, [{{"name":"dry_source","type":"box"}}], "dry_source", True)',
         owner_session=session, owner_call='module-dry-run')
-    assert dry['ok'] is True and dry['transaction']['status'] == 'effects_unverified' and dry['transaction']['source_executed'] is True, dry
+    assert dry['ok'] is True and dry['transaction']['status'] == 'no_scene_change' and dry['transaction']['source_executed'] is True, dry
+    assert dry['transaction']['effects'] == 'none', dry
     assert dry['execution']['impact']['attempted'] is False, dry
     assert hou.node(parent_path + '/dry_source') is None
 

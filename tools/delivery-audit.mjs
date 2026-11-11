@@ -73,15 +73,25 @@ export function projectDeliveryAudit(events, options = {}, history = executionHi
                         check.validity = 'needs_recheck_after_save_as';
         }
         const impact = execution.impact || {};
-        const effectsUnverified = value.transaction?.status === 'effects_unverified';
-        const mayHaveEdited = impact.attempted === true && value.transaction?.status !== 'no_scene_change';
+        const transaction = value.transaction || {};
+        // Prefer the managed-write fact; legacy receipts without `effects` keep
+        // the status-based behavior and stay conservative.
+        const effectsUnverified = transaction.effects === undefined
+            ? transaction.status === 'effects_unverified'
+            : transaction.effects === 'unverified' || transaction.native_evaluation === true
+                || ((transaction.effects === 'none' || transaction.effects === 'registered')
+                    && impact.unavailable === true);
+        const recordedChange = transaction.effects === 'registered';
+        const mayHaveEdited = recordedChange || (impact.attempted === true && (transaction.effects === undefined
+            ? transaction.status !== 'no_scene_change' : transaction.effects !== 'none'));
         if (effectsUnverified || mayHaveEdited) {
             const changed = new Set((impact.nodes || []).map((node) => node.identity));
             for (const check of checks.values()) {
                 if (check.validity !== 'historical_observation_only')
                     continue;
                 if (effectsUnverified || impact.global || impact.truncated || impact.unavailable || check.identity === null || changed.has(check.identity)
-                    || check.dependency_identities.some(identity => changed.has(identity))) {
+                    || check.dependency_identities.some(identity => changed.has(identity))
+                    || (recordedChange && changed.size === 0)) {
                     check.validity = effectsUnverified ? 'unverified_after_unknown_execution' : 'stale_after_recorded_change';
                     check.invalidated_by = callId;
                 }

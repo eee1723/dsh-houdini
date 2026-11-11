@@ -513,7 +513,10 @@ export function classifyRawEffect(step) {
   // Python itself failed or that the operation used no verbs.
   if (step.canonical?.requestReceipt?.status === 'unknown_transport') return 'unknown';
   if (failed) return 'failed';
-  if ((step.canonical?.transaction ?? step.transaction)?.status === 'effects_unverified') return 'unknown';
+  const transaction = step.canonical?.transaction ?? step.transaction;
+  if (transaction?.effects === 'registered') return 'mutation_candidate';
+  if (transaction?.effects === 'unverified' || transaction?.native_evaluation === true) return 'unknown';
+  if (transaction?.effects === undefined && transaction?.status === 'effects_unverified') return 'unknown';
   if (['houdini_inspect', 'houdini_query'].includes(step.tool) && step.canonical?.execution?.read_only !== false) return 'read_only_query';
   return 'unknown';
 }
@@ -631,6 +634,9 @@ function stepIndex(step, fallback) {
 function sceneMutation(step) {
   if (step.recoveredExecution || step.executionReplay || step.canonical?.requestReceipt?.retrieved) return false;
   if (step.failed) return false;
+  const transaction = step.canonical?.transaction ?? step.transaction;
+  if (transaction?.effects === 'none') return false;
+  if (transaction?.effects === 'registered') return true;
   if ((step.verbs || []).some((verb) => verb.verb === 'build_module' && parseLedgerArgs(verb.args ?? verb.argsText).kwargs.dry_run !== true)) return true;
   if ((step.verbs || []).some((verb) => MUTATING_VERBS.has(verb.verb)
       && !(verb.verb === 'hda_edit' && (verb.result?.scene_writes === 0
@@ -756,7 +762,8 @@ function visualFreshness(indexed, assistantMessages) {
         changedAt:[]};
       if(image&&vision.accessOk&&!image.invalidTransaction)for(const later of indexed.filter(s=>s.index>image.index)) {
         const uncertain=later.transaction?.status==='recovery_unverified'||later.rollback?.error
-          || (later.failed&&later.rollback?.supported===false);
+          || (later.failed&&later.rollback?.supported===false)
+          || (later.transaction?.effects==='none'&&later.transaction?.status==='effects_unverified');
         if(!sceneMutation(later)&&!uncertain)continue;
         if(uncertain) {
           if(row.status!=='stale_after_recorded_target_change')row.status='freshness_unverified_after_failed_execution';

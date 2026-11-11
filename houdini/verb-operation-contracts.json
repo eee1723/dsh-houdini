@@ -4,11 +4,12 @@
   "execution_scope": "All Python examples run inside one Houdini exec/inspect request. Live hou.Node values and Python locals are scoped to that request. Persist explicit path strings in __result__ and use those strings in later requests; ledger {node:path} snapshots are observations, not callable Node objects.",
   "verbs": {
     "verb_help": {
-      "summary": "Read actual callable signatures and brief purpose; detail='full' adds complete documentation, argument/result schemas and examples.",
+      "summary": "Read actual callable signatures and brief purpose; omit name for a bounded verb index, detail='full' adds complete documentation, argument/result schemas and examples.",
       "input_schema": {
         "type": "object",
         "properties": {
           "name": {
+            "description": "One verb, or a list of 1..16 unique names. Omit to list every verb with its one-line purpose and declared execution mode.",
             "anyOf": [
               {
                 "type": "string"
@@ -21,6 +22,9 @@
                 "minItems": 1,
                 "maxItems": 16,
                 "uniqueItems": true
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -31,12 +35,9 @@
               "full"
             ],
             "default": "brief",
-            "description": "Brief returns callable facts and concise purpose. Full adds complete doc and maintained operation_contract; applies to one name or every item in a batch."
+            "description": "Brief returns callable facts and concise purpose (or the bounded index when name is omitted). Full adds complete doc and maintained operation_contract; requires a name or name list."
           }
         },
-        "required": [
-          "name"
-        ],
         "additionalProperties": true
       },
       "output_schema": {
@@ -117,10 +118,67 @@
               "count"
             ],
             "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "verbs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "call_mode": {
+                      "type": "string",
+                      "enum": [
+                        "exec",
+                        "query_or_exec"
+                      ]
+                    },
+                    "content_invalidation": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "node",
+                        "global"
+                      ],
+                      "description": "Declared invalidation hint (content_impact), not permission and not proof that nothing was written."
+                    },
+                    "inspect_query": {
+                      "type": "boolean",
+                      "description": "Whether this verb can run as a houdini_inspect structured query row; navigation such as focus_node is exec-only."
+                    },
+                    "purpose": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "count": {
+                "type": "integer"
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "verbs",
+              "count",
+              "note"
+            ],
+            "additionalProperties": true
           }
         ]
       },
       "examples": [
+        {
+          "title": "Discover every verb by intent before choosing one",
+          "code": "__result__ = verb_help()",
+          "read_result": "verbs lists name, call_mode, content_invalidation, inspect_query and a one-line purpose for every registered verb. It is a bounded directory: read verb_help(name) for the actual signature, and verb_help(name, detail='full') for maintained contracts and examples.",
+          "tool": "houdini_inspect"
+        },
         {
           "title": "Inspect a focused group",
           "code": "__result__ = verb_help(['build_module', 'network_boxes', 'node_info', 'tab_create'])",
@@ -135,8 +193,9 @@
         }
       ],
       "notes": [
+        "Omitting name returns the bounded verb directory (verbs/count/note), not callable details; read verb_help(name) for the signature. detail='full' requires one name or a 1..16 name list.",
         "List input returns items/count, not a mapping keyed by verb name. Both scalar and list inputs default to brief; use detail='full' when complete documentation or nested input/output shapes are needed.",
-        "call_mode=exec means houdini_exec or houdini_job_submit; query_or_exec is also available through houdini_inspect. Python names, live Node objects and local variables do not persist across separate tool calls."
+        "call_mode=exec means houdini_exec or houdini_job_submit; query_or_exec usually also runs through houdini_inspect, except explicit navigation such as focus_node (exec-only) — inspect_query states which. content_invalidation is the declared content_impact hint, never permission and never proof that nothing was written. Python names, live Node objects and local variables do not persist across separate tool calls."
       ]
     },
     "node_info": {
@@ -797,6 +856,10 @@
                 "type": "null"
               }
             ]
+          },
+          "preserve_position": {
+            "type": "boolean",
+            "description": "Skip the post-connect flow adjustment and never move the destination. Use when wiring into an existing network whose visible layout must stay unchanged; placement_status becomes 'preserved'."
           }
         },
         "required": [
@@ -870,10 +933,17 @@
           "code": "__result__ = connect('/obj/example_geo/source', '/obj/example_geo/OUT', index=0, output=0)",
           "read_result": "node is the destination; input/source_output report the actual ports and inputs_after shows the current wiring.",
           "tool": "houdini_exec"
+        },
+        {
+          "title": "Wire into an existing network without moving the destination",
+          "code": "__result__ = connect('/obj/example_geo/source', '/obj/example_geo/OUT', preserve_position=True)",
+          "read_result": "position_adjusted is False and placement_status is 'preserved'; the destination keeps its recorded network position.",
+          "tool": "houdini_exec"
         }
       ],
       "notes": [
-        "output is keyword-only. Port strings are exact port names, not labels. connect replaces the current occupant; OBJ parenting is a separate set_object_parent operation."
+        "output is keyword-only. Port strings are exact port names, not labels. connect replaces the current occupant; OBJ parenting is a separate set_object_parent operation.",
+        "preserve_position=True skips the flow adjustment that can move an existing destination; the default keeps the automatic placement for new networks."
       ]
     },
     "network_controls": {

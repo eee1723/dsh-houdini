@@ -1252,6 +1252,44 @@ def _hidden_execution_message(tree):
     return None
 
 
+_UNRESOLVED_SAFE_IMPORTS = frozenset({
+    '__future__', 'typing', 'dataclasses', 'json', 'math', 'collections', 'itertools',
+    'functools', 'pathlib', 'os', 'sys', 're', 'time', 'datetime', 'random', 'string',
+    'enum', 'abc', 'copy', 'contextlib', 'traceback', 'types', 'uuid', 'hashlib',
+    'struct', 'zlib', 'tempfile',
+})
+
+
+def _unresolved_source_from_tree(tree):
+    """True when executed source can reach HOM outside the traced verb facade.
+
+    An import of a local/helper module or of a Houdini implementation module, and
+    dynamic attribute/import calls, cannot be proven harmless by the lexical
+    tracer. The ``dsh_hou_helpers`` facade stays allowed: its public exports are
+    request-dispatched wrappers, so calls through it are traced.
+    """
+    if tree is None:
+        return False
+    dynamic = {'getattr', 'setattr', 'delattr', 'eval', 'exec', 'compile', '__import__'}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split('.')[0]
+                if root != 'dsh_hou_helpers' and root not in _UNRESOLVED_SAFE_IMPORTS:
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or '').split('.')[0]
+            if node.level or (root != 'dsh_hou_helpers' and root not in _UNRESOLVED_SAFE_IMPORTS):
+                return True
+        elif isinstance(node, ast.Call):
+            function = node.func
+            name = (function.id if isinstance(function, ast.Name)
+                    else function.attr if isinstance(function, ast.Attribute) else None)
+            if name in dynamic or (isinstance(function, ast.Attribute) and function.attr == 'import_module'):
+                return True
+    return False
+
+
 class CodeAnalysis:
     """One submitted program and its single, reusable lexical analysis."""
 
@@ -1272,6 +1310,7 @@ class CodeAnalysis:
             self.tree = None
             self.syntax_error = error
         self.raw_usage = _raw_usage_from_tree(self.tree) if self.tree is not None else {}
+        self.unresolved_source = _unresolved_source_from_tree(self.tree) if self.tree is not None else False
 
     def preflight(self, *, mutating_verbs, read_only, raw_gate, allow_raw):
         error = _forbidden_hip_lifecycle_message(self) or _blocking_host_traversal_message(self)

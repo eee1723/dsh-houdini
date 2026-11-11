@@ -21,7 +21,9 @@ try:
     identity=original.sessionId()
     points=len(original.geometry().points())
     bad_query=run(f'list_parms({original.path()!r},filter="size")',read_only=True)
-    assert not bad_query['ok'] and bad_query['transaction']['status']=='effects_unverified' and bad_query['transaction']['source_executed'] is True,bad_query
+    assert not bad_query['ok'] and bad_query['transaction']['status']=='no_scene_change' and bad_query['transaction']['source_executed'] is True,bad_query
+    assert bad_query['transaction']['effects']=='none' and bad_query['transaction']['native_evaluation'] is False,bad_query
+    assert bad_query['execution']['impact']['unavailable'] is False,bad_query
     assert bad_query['evidence'][0]['phase']=='argument_binding' and 'signature' in bad_query['evidence'][0]
     assert root.node('module_a').sessionId()==identity
     bad_module=f'build_module({root.path()!r},[{{"name":"bad","type":"attribwrangle","inputs":["module_a"],"parms":{{"snippet":"unknown_boundary_probe();"}}}}],output="bad")'
@@ -46,7 +48,8 @@ try:
                        ('node_info','node_info(type="box",context="sop")')]:
         failed=run(call)
         assert not failed['ok'] and failed['evidence'][0]['phase']=='argument_binding',failed
-        assert failed['transaction']['status']=='effects_unverified' and failed['transaction']['source_executed'] is True,failed
+        assert failed['transaction']['status']=='no_scene_change' and failed['transaction']['source_executed'] is True,failed
+        assert failed['transaction']['effects']=='none' and failed['execution']['impact']['unavailable'] is False,failed
     def internal_error(value):
         raise TypeError('inside implementation')
     ledger=[]
@@ -79,6 +82,31 @@ try:
     assert example['verbs'][0]['result']=={'node':root.path()+'/path_example'},example
     batch=b._verb_help(['tab_create','read_parms'])
     assert batch['count']==2 and [item['name'] for item in batch['items']]==['tab_create','read_parms'],batch
+    # No-name help is the bounded discovery directory: every verb exactly once,
+    # with a one-line purpose and declared mode, never full contracts.
+    index=b._verb_help()
+    assert index['count']==len(b._VERBS)==len(index['verbs']),index['count']
+    assert [row['name'] for row in index['verbs']]==sorted(b._VERBS)
+    for row in index['verbs']:
+        assert row['call_mode'] in ('exec','query_or_exec'),row
+        assert row['content_invalidation'] in ('none','node','global'),row
+        assert type(row['inspect_query']) is bool,row
+        assert row['purpose'] and len(row['purpose'])<=72 and not row['purpose'].endswith(('*','`')),row
+    index_rows={row['name']:row for row in index['verbs']}
+    assert index_rows['focus_node']['inspect_query'] is False,index_rows['focus_node']
+    assert index_rows['scene_info']['inspect_query'] is True,index_rows['scene_info']
+    assert index_rows['scene_save']['content_invalidation']=='none',index_rows['scene_save']
+    assert {'graph','describe','find_nodes','build_module','camera_fit','render_check'}<={
+        row['name'] for row in index['verbs']}
+    assert 'operation_contract' not in json.dumps(index,ensure_ascii=False)
+    try:
+        b._verb_help(detail='full')
+        raise AssertionError('full help without a name must fail')
+    except ValueError as error:
+        assert 'requires' in str(error),error
+    index_call=run('__result__=verb_help()',read_only=True)
+    assert index_call['ok'] and index_call['result']['count']==len(b._VERBS),index_call
+    assert len(json.dumps(index_call['result'],ensure_ascii=False))<20000,index_call['result']['count']
     # Real test56 discovery requested 12 help records; default help should supply
     # executable callable facts without automatically attaching full schemas.
     names=['build_module','modeling_dimensions','create_spare_parms','tab_create',
@@ -105,3 +133,4 @@ try:
 finally:
     root.destroy()
 print('module checkpoint/discovery failure/integration retry/atomic rollback/signature discovery passed on '+hou.applicationVersionString())
+

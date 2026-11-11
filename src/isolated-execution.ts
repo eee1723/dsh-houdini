@@ -1,6 +1,7 @@
 /** One-shot Houdini computation. DSH owns agents/jobs; the bundled checker owns run facts. */
 import fs from 'node:fs/promises'
 import {readFileSync} from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import {createHash,randomUUID} from 'node:crypto'
 import {spawn,execFile} from 'node:child_process'
@@ -14,9 +15,9 @@ import {hostService} from './api-route.js'
 import {HoudiniToolRuntime,workspaceOf,type HoudiniConnection} from './tool-runtime.js'
 import {resolveVideoRuntime} from './video-runtime.js'
 import {localVideoEnvironment} from './video-process.js'
-import {visualCapability} from './image-output.js'
+import {visualCapability,imageAttachmentFacts} from './image-output.js'
 import {HOUDINI_TOOLS} from './tool-catalog.js'
-import {executionLogValue,executionStdout,renderExec,boundedFact} from './tool-output.js'
+import {executionLogValue,executionStdout,boundedFact} from './tool-output.js'
 import {MAX_MODEL_TEXT_BYTES,MAX_PRESENTATION_BYTES} from './result-policy.js'
 import {pointerKeys,pointerValue} from './result-details.js'
 import {TextRetainer} from '@deepseek-ai/dsh-output-retention'
@@ -30,19 +31,25 @@ if(detailPolicy.schemaVersion!==1||!Number.isSafeInteger(detailPolicy.maxArchive
 const MAX_REPORT_BYTES:number=detailPolicy.maxArchiveBytes
 const MAX_MANIFEST_BYTES=4*1024*1024
 const inputPolicy=JSON.parse(readFileSync(new URL('../houdini/isolated-execution-policy.json',import.meta.url),'utf8'))
-if(inputPolicy.schemaVersion!==1||['maxFiles','maxInputBytes','maxFrame','maxPadding'].some(key=>
+if(inputPolicy.schemaVersion!==1||['maxFiles','maxInputBytes','maxInlineCodeBytes','maxFrame','maxPadding'].some(key=>
   !Number.isSafeInteger(inputPolicy[key])||inputPolicy[key]<=0))throw Error('Unsupported isolated input policy')
 
 export interface IsolatedRuntime {python:string;hython:string;hfs:string;houdini?:string}
+/** Inline manifests are serialized once by the Host, then validated and
+ * executed by the same checker contract a manifest file uses. */
+export interface IsolatedManifest {
+  script?:string;hip?:string;code?:string;input_root?:string;files?:unknown[];checks?:unknown[]
+}
 export interface IsolatedArgs {
-  operation?:'run'|'read';manifest?:string;output_dir?:string;background?:boolean
+  operation?:'run'|'read';manifest?:string|IsolatedManifest;output_dir?:string;background?:boolean
   houdini_installation?:string
   timeout_seconds?:number;memory_mb?:number
-  pointer?:string;offset?:number;limit?:number
+  pointer?:string;offset?:number;limit?:number;select?:string[]
   allow_undeclared_image_input?:boolean
 }
 export interface IsolatedProcessRequest {
   runtime:IsolatedRuntime;manifest:string;manifestSha256:string;output:string;cancelFile:string;timeout:number;memory:number
+  manifestBase?:string;reserved?:boolean
   signal:AbortSignal;onOutput?:(text:string)=>void
 }
 export interface IsolatedProcessResult {exit_code:number|null;cancel_requested:boolean;stdout?:string;stderr:string;error?:string}
@@ -108,6 +115,8 @@ export function runIsolatedProcess(request:IsolatedProcessRequest):Promise<Isola
     const env=localVideoEnvironment()
     for(const key of ['HOUDINI_LICENSE_SERVER','SESI_LMHOST'])if(process.env[key])env[key]=process.env[key]
     const child=spawn(request.runtime.python,[CHECKER,'--trusted','--manifest',request.manifest,'--manifest-sha256',request.manifestSha256,
+      ...(request.manifestBase?['--manifest-base',request.manifestBase]:[]),
+      ...(request.reserved?['--reserved-output']:[]),
       '--hython',request.runtime.hython,'--output-dir',request.output,'--cancel-file',request.cancelFile,
       '--timeout',String(request.timeout),'--memory-mb',String(request.memory)],{
       cwd:path.join(request.runtime.hfs,'bin'),env,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe']})
@@ -173,9 +182,13 @@ function reportView(report:any) {
 
 /** Keep large input inventories in the run report, not every model turn. */
 function inputStatusCounts(rows:any[]=[]):Record<string,number> {
-  return rows.reduce((counts,row)=>{
+  const counts=rows.reduce((counts,row)=>{
     const status=String(row.status);counts[status]=(counts[status]??0)+1;return counts
   },{} as Record<string,number>)
+  const entries=Object.entries(counts) as [string,number][]
+  if(entries.length<=8)return counts
+  return {...Object.fromEntries(entries.slice(0,8)),
+    other_statuses:entries.slice(8).reduce((total,entry)=>total+entry[1],0)}
 }
 
 export function isolatedPresentation(value:any) {
@@ -232,33 +245,89 @@ function isolatedSummary(original:any) {
     presentation:{status:'summary',reason:'The aggregate report exceeded the model-text budget. Use operation="read" with a JSON Pointer such as "/result/builder/result" to retrieve only the needed field; absence from this summary is not evidence of absence.'}})))
 }
 
-/** Header, then execution envelopes through the live result renderer. Do not
- * re-serialize a complete execution/report inside a JSON-escaped text field.
- * Original objects remain in the run report and immutable execution archives. */
+function excerptText(value:unknown,maxChars=800) {
+  if(typeof value!=='string')return value
+  if(value.length<=maxChars)return value
+  const retainer=new TextRetainer({kind:'headTail',headBytes:Math.max(64,Math.floor(maxChars*.75)),tailBytes:Math.max(32,Math.floor(maxChars*.25))})
+  retainer.push(value)
+  return retainer.finish().text+'\n[Excerpt; complete text remains in the run report]'
+}
+
+/** Model-facing projection of one run/read. Execution envelopes are the bulk of
+ * the recorded report but almost never read inline in real workflows; they stay
+ * in report.json and immutable archives and are addressed by pointer. The
+ * projection keeps the facts decisions actually consume: builder __result__
+ * (bounded), check facts, input versions and failure text. */
+export function isolatedResultSummary(value:any) {
+  const report=value.report, result=report?.result??value.progress
+  const builder=result?.builder, checks=Array.isArray(result?.checks)?result.checks:[]
+  const builderFacts=(()=>{
+    if(!builder)return undefined
+    const facts:any={ok:builder.ok}
+    if(typeof builder.error==='string'&&builder.error)facts.error=excerptText(builder.error)
+    if(builder.result!==undefined){
+      const chars=JSON.stringify(builder.result)?.length??0
+      facts.result=chars<=1200?builder.result:{detail_pointer:'/result/builder/result',omitted_chars:chars}
+    }
+    facts.detail_pointer='/result/builder'
+    return facts
+  })()
+  const checkFacts=checks.map((check:any,index:number)=>({id:check.id,kind:check.kind,node:check.node,frame:check.frame,status:check.status,
+    ...(check.geometry?{geometry:check.geometry}:{}),
+    ...(check.artifact?{artifact:{file:check.artifact.file,bytes:check.artifact.bytes}}:{}),
+    ...(check.error?{error:excerptText(check.error,200)}:{}),
+    detail_pointer:'/result/checks/'+index+'/execution'}))
+  const imageRows=Array.isArray(value.imageAttachments)?value.imageAttachments:[]
+  const attachedImages=imageRows.filter((row:any)=>row.attachment),failedImages=imageRows.filter((row:any)=>!row.attachment)
+  const inputs=Array.isArray(report?.inputs)?report.inputs:[]
+  const observations=Array.isArray(report?.input_observations)?report.input_observations:[]
+  const process=value.process
+  const summary:any={kind:'isolated-houdini',run_directory:value.run_directory,report_path:value.report_path,
+    ...(value.job_id?{job_id:value.job_id}:{}),
+    ok:value.ok??report?.ok,finished:report?.finished??false,phase:report?.phase??result?.phase,
+    ...(report?.worker?{worker:{status:report.worker.status,returncode:report.worker.returncode,
+      ...(report.worker.error?{error:excerptText(report.worker.error,400)}:{})}}:{}),
+    ...(builderFacts?{builder:builderFacts}:{}),
+    checks:{count:checks.length,status_counts:inputStatusCounts(checkFacts),
+      ...(checkFacts.length?{items:checkFacts}:{})},
+    ...(report?{inputs_unchanged:report.inputs_unchanged,
+      inputs:{count:inputs.length,...(inputs.length?{files:inputs.slice(0,12).map((row:any)=>row.file)}:{})},
+      input_observations:{count:observations.length,status_counts:inputStatusCounts(observations),
+        ...(observations.length?{detail_pointer:'/input_observations'}:{})}}:{}),
+    ...(report?.inline_source?{inline_source:report.inline_source}:{}),
+    ...(imageRows.length?{imageAttachments:{attached:attachedImages.length,failed:failedImages.length,
+      ...(attachedImages.length?{images:attachedImages.slice(0,8).map((row:any)=>({from:path.basename(String(row.from??'')),...(row.image??{})}))}:{}),
+      ...(failedImages.length?{failures:failedImages.slice(0,8).map((row:any)=>({from:path.basename(String(row.from??'')),error:excerptText(row.error,200)}))}:{}),
+      scope:'Native attachments of this result, not a field of report.json; use these rows directly, not a read pointer.'}}:{}),
+    ...(process&&(process.exit_code!==0||process.error)?{process:{exit_code:process.exit_code,
+      ...(process.error?{error:excerptText(String(process.error),400)}:{})}}:{}),
+    ...(report?.error??value.error?{error:excerptText(report?.error??value.error,1200)}:{}),
+    ...(value.preflight?{preflight:value.preflight}:{}),
+    ...(value.reported_status?{reported_status:value.reported_status}:{}),
+    next_action:'Execution detail blocks are omitted here; read exact fields with operation="read" and select or pointer (for example "/result/builder/result", "/result/checks/0/execution"). Absence from this summary is not evidence of absence.'}
+  if(Buffer.byteLength(JSON.stringify(summary))<=MAX_MODEL_TEXT_BYTES)return summary
+  // Last-resort bound: drop values, never the addresses. Every remaining
+  // pointer resolves against report.json; attachment rows are the only fact
+  // that lives exclusively on the returned value.
+  return {kind:summary.kind,run_directory:summary.run_directory,report_path:summary.report_path,
+    ...(summary.job_id?{job_id:summary.job_id}:{}),ok:summary.ok,finished:summary.finished,phase:summary.phase,
+    ...(summary.worker?{worker:summary.worker}:{}),
+    ...(summary.builder?{builder:{ok:summary.builder.ok,...(summary.builder.error?{error:summary.builder.error}:{}),detail_pointer:'/result/builder'}}:{}),
+    checks:{count:checks.length,status_counts:summary.checks.status_counts,detail_pointer:'/result/checks'},
+    ...(report?{inputs_unchanged:summary.inputs_unchanged,inputs:summary.inputs,input_observations:summary.input_observations}:{}),
+    ...(summary.imageAttachments?{imageAttachments:{attached:summary.imageAttachments.attached,
+      failed:summary.imageAttachments.failed,scope:summary.imageAttachments.scope}}:{}),
+    ...(summary.inline_source?{inline_source:summary.inline_source}:{}),
+    ...(summary.error?{error:summary.error}:{}),
+    presentation:{status:'summary',reason:'The compact receipt exceeded the model-text budget; counts and addresses are kept and no value is claimed absent.'},
+    next_action:'Read exact fields with operation="read" and select or pointer; this summary omitted values, not facts.'}
+}
+
+/** One compact projection plus native images. Complete reports remain in the
+ * run directory; pointer/select reads address any omitted field. */
 export function renderIsolatedResult(value:any):ContentBlock[] {
-  const presented=isolatedPresentation(value)
-  const blocks:ContentBlock[]=[],executions:{label:string;value:any}[]=[]
-  const resultHeader=(result:any,prefix:string)=>{
-    if(!result)return result
-    const {builder,checks,...metadata}=result
-    if(builder)executions.push({label:prefix+' builder',value:builder})
-    return {...metadata,...(checks?{checks:checks.map((check:any)=>{
-      const {execution,...facts}=check
-      if(execution)executions.push({label:prefix+' check '+check.id,value:execution})
-      return facts
-    })}:{})}
-  }
-  const header={...presented,
-    ...(presented.report?{report:{...presented.report,result:resultHeader(presented.report.result,'recorded')}}:{}),
-    ...(presented.progress?{progress:resultHeader(presented.progress,'progress')}:{})}
-  blocks.push({type:'text',text:JSON.stringify(header)})
-  for(const row of executions){
-    const rendered=renderExec({stdout:'',stderr:'',...row.value}).filter(item=>item.type==='text')
-    blocks.push({type:'text',text:row.label+':\n'+rendered.map(item=>item.text).join('\n\n')})
-  }
-  const textBytes=blocks.reduce((total,block)=>total+(block.type==='text'?Buffer.byteLength(block.text):0),0)
-  if(textBytes>MAX_MODEL_TEXT_BYTES)blocks.splice(0,blocks.length,{type:'text',
-    text:JSON.stringify(boundedFact(isolatedSummary(value),'',MAX_MODEL_TEXT_BYTES))})
+  const blocks:ContentBlock[]=[{type:'text',
+    text:JSON.stringify(value?.report||value?.progress?isolatedResultSummary(value):boundedFact(value,'',MAX_MODEL_TEXT_BYTES))}]
   blocks.push(...(value.imageAttachments??[]).filter((row:any)=>row.attachment)
     .map((row:any)=>({type:'image',attachment:row.attachment} as ContentBlock)))
   return blocks
@@ -326,7 +395,7 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
         if(data.length!==artifact.bytes||createHash('sha256').update(data).digest('hex')!==artifact.sha256)throw Error('Image artifact differs from the recorded result')
         const mediaType=path.extname(filename).toLowerCase()==='.png'?'image/png':/\.webp$/i.test(filename)?'image/webp':'image/jpeg'
         const attachment=await attachments.saveImage({data,mediaType,name:path.basename(filename)})
-        total+=attachment.bytes;images.push({from:filename,attachment,semantic_status:'unverified',capability_status:capability.status})
+        total+=attachment.bytes;images.push({from:filename,attachment,image:imageAttachmentFacts(attachment),semantic_status:'unverified',capability_status:capability.status})
       }catch(error){images.push({from:artifact.file,error:String(error),semantic_status:'unverified'})}
     }
   }
@@ -339,6 +408,27 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
     if(!args.output_dir)throw Error('operation=read requires the original absolute output_dir')
     const directory=await localPath(ctx,exec,args.output_dir)
     const reportPath=path.join(directory.local,'report.json')
+    if(args.select!==undefined){
+      if(args.pointer!==undefined||args.offset!==undefined)throw Error('select cannot be combined with pointer or offset; page an oversized selection separately')
+      if(!Array.isArray(args.select)||args.select.length<1||args.select.length>16
+        ||args.select.some(pointer=>typeof pointer!=='string')||new Set(args.select).size!==args.select.length)
+        throw Error('select must contain 1..16 unique JSON Pointers')
+      const limit=args.limit??6000
+      if(!Number.isSafeInteger(limit)||limit<1||limit>16000)throw Error('limit must be 1..16000 characters')
+      const report=await readJson(ctx,exec,reportPath,MAX_REPORT_BYTES)
+      let remaining=limit
+      const items=args.select.map(pointer=>{
+        let value:unknown
+        try {value=pointerValue(report,pointerKeys(pointer))}
+        catch {return {pointer,status:'missing',error:'JSON Pointer field not found'}}
+        const chars=JSON.stringify(value)?.length??0
+        if(chars>remaining)return {pointer,status:'requires_pagination',total_chars:chars,read:{pointer,offset:0,limit}}
+        remaining-=chars
+        return {pointer,status:'available',value}
+      })
+      return {kind:'isolated-houdini-report-selection',run_directory:directory.local,report_path:reportPath,
+        format:'json_selection',items,selected_value_chars:limit-remaining,scope:SCOPE,imageAttachments:[]}
+    }
     if(args.pointer!==undefined||args.offset!==undefined||args.limit!==undefined){
       const pointer=args.pointer??'',offset=args.offset??0,limit=args.limit??6000
       if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>16000)
@@ -356,9 +446,20 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
   const cwd=workspaceOf(exec)
   if(!cwd)throw Error('Isolated Houdini requires the DSH session workspace')
   const output=await localPath(ctx,exec,args.output_dir??path.join(projectDirectoryPath(cwd,'execution_run'),randomUUID()),true)
-  if(await fs.lstat(output.local).catch((error:NodeJS.ErrnoException)=>{if(error.code!=='ENOENT')throw error;return null}))throw Error('Output directory already exists; read it or select a new run directory')
-  const source=await localPath(ctx,exec,args.manifest??'')
-  const manifestBytes=Buffer.from(await source.filesystem.readBytes(source.target,exec.signal,MAX_MANIFEST_BYTES))
+  let manifestBytes:Buffer,manifestBase:string,sourcePath:string|undefined
+  if(typeof args.manifest==='string'){
+    const source=await localPath(ctx,exec,args.manifest)
+    manifestBytes=Buffer.from(await source.filesystem.readBytes(source.target,exec.signal,MAX_MANIFEST_BYTES))
+    manifestBase=path.dirname(source.local);sourcePath=source.local
+  }else{
+    if(args.manifest===null||typeof args.manifest!=='object'||Array.isArray(args.manifest))
+      throw Error('operation=run requires manifest as an absolute JSON manifest path or an inline manifest object')
+    manifestBytes=Buffer.from(JSON.stringify(args.manifest))
+    if(manifestBytes.length>MAX_MANIFEST_BYTES)throw Error('Inline manifest exceeds '+MAX_MANIFEST_BYTES+' bytes')
+    // Inline manifests have no source folder: relative input paths anchor at
+    // the DSH workspace, exactly as workflow/tool callers already resolve.
+    manifestBase=cwd
+  }
   const timeout=args.timeout_seconds??inputPolicy.defaultTimeoutSeconds,memory=args.memory_mb??inputPolicy.defaultMemoryMb
   if(!Number.isFinite(timeout)||timeout<=0||!Number.isSafeInteger(memory)||memory<=0)throw Error('timeout_seconds and memory_mb must be positive finite budgets')
   const runtime=await runtimeResolver(exec,args)
@@ -370,7 +471,7 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
     return {kind:'isolated-houdini',ok:false,phase:'preflight',error:String(error),
       preflight:{phase:'preflight',error:String(error)},scope:SCOPE}
   }
-  const inputRoot=await localPath(ctx,exec,path.resolve(path.dirname(source.local),plan.input_root))
+  const inputRoot=await localPath(ctx,exec,path.resolve(manifestBase,plan.input_root))
   let inputBytes=0
   for(const input of plan.files){
     const location=await localPath(ctx,exec,path.resolve(inputRoot.local,input.path))
@@ -382,40 +483,70 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
     inputBytes+=stat.size??0
     if(inputBytes>plan.max_input_bytes)throw Error('Declared inputs exceed '+plan.max_input_bytes+' bytes')
   }
-  const request={runtime,manifest:source.local,manifestSha256:plan.manifest_sha256,
+  const request={runtime,manifestSha256:plan.manifest_sha256,
     output:output.local,cancelFile:path.join(path.dirname(output.local),'.'+path.basename(output.local)+'.'+randomUUID()+'.cancel'),
     timeout:plan.budgets.timeout_seconds,memory:plan.budgets.memory_mb}
+  // Only a reservation this invocation created is discarded; any directory with
+  // evidence in it stays exactly as recorded.
+  const discardEmptyReservation=async()=>{
+    try {if((await fs.readdir(output.local)).length===0)await fs.rmdir(output.local)}catch{}
+  }
   const run=async(signal:AbortSignal,onOutput?:(text:string)=>void)=>{
     signal.throwIfAborted()
-    // DSH admits a background job before this callback. The checker alone
-    // creates the exclusive run directory; rejected admissions leave no run.
+    // DSH admits a background job before this callback. The Host reserves the
+    // exact run directory atomically here, so two calls cannot both proceed to
+    // the same destination; rejected admissions leave no run behind.
     await fs.mkdir(path.dirname(output.local),{recursive:true})
-    const process=await runner!({...request,signal,onOutput})
-    // A cancelled caller still receives its terminal facts after the owned tree exits.
-    const resultExec={...exec,signal:undefined}
-    try {
-      const value=await readIsolatedRun(ctx,resultExec,output.local,!args.background,args.allow_undeclared_image_input===true)
-      return {...value,ok:value.report?.ok===true&&process.exit_code===0&&!process.error,process}
-    }
+    try {await fs.mkdir(output.local)}
     catch(error){
-      const lines=(process.stdout??'').split(/\r?\n/).filter(Boolean)
-      let preflight:any,reportedStatus:any
-      for(const line of lines.reverse())try {
-        const value=JSON.parse(line)
-        if(value?.phase==='preflight'&&value.ok===false){preflight=value;break}
-        if(typeof value?.run_id==='string'&&typeof value?.report==='string'
-          &&path.resolve(value.report)===path.resolve(output.local,'report.json')){reportedStatus=value;break}
-      }catch{}
-      return {kind:'isolated-houdini',ok:false,run_directory:output.local,report_path:path.join(output.local,'report.json'),process,
-        ...(preflight?{preflight}:{}),...(reportedStatus?{reported_status:reportedStatus}:{}),
-        error:preflight?.error??reportedStatus?.error??process.error??(process.stderr.trim()||String(error)),report_error:String(error),scope:SCOPE}
+      if((error as NodeJS.ErrnoException).code==='EEXIST')
+        throw Error('Output directory already exists; read it with operation="read" or select a new run directory')
+      throw error
+    }
+    let staging:string|undefined,process:IsolatedProcessResult
+    try {
+      let manifestPath:string
+      if(sourcePath!==undefined)manifestPath=sourcePath
+      else {
+        // The checker re-verifies these exact Host-authorized bytes before it
+        // stages inputs, then records the manifest (including inline code) in
+        // request.json. The temporary copy is never execution evidence.
+        staging=path.join(os.tmpdir(),'dsh-isolated-manifest-'+randomUUID()+'.json')
+        try {await fs.writeFile(staging,manifestBytes,{mode:0o600})}
+        catch(error){await discardEmptyReservation();throw error}
+        manifestPath=staging
+      }
+      try {process=await runner!({...request,manifest:manifestPath,manifestBase,reserved:true,signal,onOutput})}
+      catch(error){await discardEmptyReservation();throw error}
+      // A cancelled caller still receives its terminal facts after the owned tree exits.
+      const resultExec={...exec,signal:undefined}
+      try {
+        const value=await readIsolatedRun(ctx,resultExec,output.local,!args.background,args.allow_undeclared_image_input===true)
+        return {...value,ok:value.report?.ok===true&&process.exit_code===0&&!process.error,process}
+      }
+      catch(error){
+        const lines=(process.stdout??'').split(/\r?\n/).filter(Boolean)
+        let preflight:any,reportedStatus:any
+        for(const line of lines.reverse())try {
+          const value=JSON.parse(line)
+          if(value?.phase==='preflight'&&value.ok===false){preflight=value;break}
+          if(typeof value?.run_id==='string'&&typeof value?.report==='string'
+            &&path.resolve(value.report)===path.resolve(output.local,'report.json')){reportedStatus=value;break}
+        }catch{}
+        await discardEmptyReservation()
+        return {kind:'isolated-houdini',ok:false,run_directory:output.local,report_path:path.join(output.local,'report.json'),process,
+          ...(preflight?{preflight}:{}),...(reportedStatus?{reported_status:reportedStatus}:{}),
+          error:preflight?.error??reportedStatus?.error??process.error??(process.stderr.trim()||String(error)),report_error:String(error),scope:SCOPE}
+      }
+    } finally {
+      if(staging!==undefined)await fs.rm(staging,{force:true}).catch(()=>{})
     }
   }
   if(args.background){
     const jobs=hostService(ctx,'jobs')
     if(!jobs)throw Error('DSH background jobs are unavailable; run in the foreground')
     exec.signal?.throwIfAborted()
-    const id=jobs.start({kind:'houdini',label:'独立 Houdini · '+path.basename(source.local),owner:exec.agent.id,
+    const id=jobs.start({kind:'houdini',label:'独立 Houdini · '+(sourcePath?path.basename(sourcePath):'inline manifest'),owner:exec.agent.id,
       toolCall:{callId:exec.callId,rootCallId:exec.rootCallId??exec.callId},outputLimitBytes:16000,
       run:(job:any)=>{
         const controller=new AbortController()
@@ -450,16 +581,27 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
     return {python:runtime.python,hfs:runtime.hfs,hython:path.join(runtime.hfs,'bin',process.platform==='win32'?'hython.exe':'hython'),houdini:('houVersion'in runtime?String(runtime.houVersion):undefined)}
   })
   ctx.tools.register(defineTool({name:'houdini_isolated',description:HOUDINI_TOOLS.houdini_isolated.purpose+
-    ' Load houdini-isolated-execution for the manifest and examples. run starts a new headless Houdini with injected verbs; read retrieves the recorded run and native images without connecting to live. Background runs use DSH job_output/job_kill.',
+    ' Load houdini-isolated-execution for the manifest and examples. run starts a new headless Houdini with injected verbs; read retrieves the recorded run and native images without connecting to live, returning a compact summary unless pointer/select asks for exact fields. manifest accepts an absolute path or an inline object whose code is executed directly, so a small experiment needs no manifest file. run reserves output_dir exclusively; read requires the exact directory returned earlier. Background runs use DSH job_output/job_kill.',
     parameters:{operation:{type:'string',enum:['run','read'],description:'Default run; read only retrieves a prior output_dir.'},
-      manifest:{type:'string',description:'Absolute JSON manifest with hip and/or script; script after hip prepares that copy. Optional input_root is absolute or relative to manifest. files accepts safe relative names or {pattern:"cache/points.$F4.bgeo.sc",start:1,end:240,step:1}; ranges are inclusive, step defaults to 1. Up to '+inputPolicy.maxFiles+' expanded inputs and '+inputPolicy.maxInputBytes+' bytes total; every frame is required and checked through DSH policy. Optional cook/cache/render checks; omitted checks only execute declared input.'},
-      output_dir:{type:'string',description:'Optional absolute NEW run directory for run; default unique execution_run directory under the current DSH workspace. read requires the exact directory returned by the original run. Existing or explicit paths are never moved.'},
+      manifest:{oneOf:[
+        {type:'string',description:'Absolute JSON manifest path. Use a file when the saved manifest itself is reused across runs; otherwise the inline object avoids a separate write.'},
+        {type:'object',description:'Inline manifest: the Host serializes these exact bytes, the same checker validates and stages them, and the run records them in request.json. Relative paths (including a relative input_root) resolve against the current DSH workspace.',
+          properties:{
+            hip:{type:'string',description:'Saved HIP copied into this run (relative to input_root); the script may prepare the copy.'},
+            script:{type:'string',description:'Builder .py path at input_root; executed after an optional hip loads. Not combinable with code.'},
+            code:{type:'string',description:'Inline Python builder executed in the injected verb environment after an optional hip loads; up to '+inputPolicy.maxInlineCodeBytes+' UTF-8 bytes. Staged as a generated .py input and recorded in request.json. Cannot combine with script.'},
+            input_root:{type:'string',description:'Directory for hip/script/files; absolute or relative to the current DSH workspace for an inline manifest.'},
+            files:{type:'array',description:'Additional inputs: safe relative names or {pattern:"cache/points.$F4.bgeo.sc",start:1,end:240,step:1} sequences; every expanded file is required and checked through DSH policy.'},
+            checks:{type:'array',description:'Optional cook/cache/render checks with unique id, kind, node and frame; expect accepts points/primitives counts. Omitted checks only execute declared input.'}},
+          additionalProperties:false}]},
+      output_dir:{type:'string',description:'Optional absolute NEW run directory for run; default unique execution_run directory under the current DSH workspace. Reserved exclusively by this call: an existing or concurrently reserved directory is rejected, never moved or reused. read requires the exact directory returned by the original run.'},
       houdini_installation:{type:'string',description:'Optional explicit absolute Houdini installation directory (HFS). Otherwise use the selected scene\'s recorded installation even if live is offline; legacy fixed-Bridge connections obtain installation metadata online. No Host HFS or PATH fallback.'},
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
       allow_undeclared_image_input:{type:'boolean',description:'Only when the user explicitly confirms this exact route accepts images: attach images despite missing metadata and let the real model response decide. Not a bypass for an observed provider rejection.'},
       pointer:{type:'string',description:'Read only: JSON Pointer into report.json, for example /result/builder/result. Returns a bounded JSON text page without image attachments.'},
       offset:{type:'number',description:'Read only: zero-based character offset into the selected JSON text; default 0. Use next_offset for continuation.'},
       limit:{type:'number',description:'Read only: selected JSON text characters per page, 1..16000; default 6000.'},
+      select:{type:'array',items:{type:'string'},description:'Read only: 1..16 unique JSON Pointers into report.json, for example "/result/builder/result" or "/result/checks/0/execution". Returns bounded exact values without image attachments; not combinable with pointer/offset.'},
       timeout_seconds:{type:'number',description:`Worker time budget in (0, ${inputPolicy.maxTimeoutSeconds}] seconds; default ${inputPolicy.defaultTimeoutSeconds}. Validated before job admission.`},
       memory_mb:{type:'number',description:`Integer process-tree memory budget ${inputPolicy.minMemoryMb}..${inputPolicy.maxMemoryMb} MiB; default ${inputPolicy.defaultMemoryMb}. Not GPU memory; validated before job admission.`}},
     output:{schema:{type:'json'},render:(_args,value)=>renderIsolatedResult(value),presentationMeta:(_args,value)=>({canonical:isolatedLogValue(value)})},

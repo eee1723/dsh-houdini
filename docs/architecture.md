@@ -67,13 +67,13 @@ Bridge终态由生产者经DSH的`appendPluginRecord`写入同一Session中的`p
 
 工作区可写且预算内时，完整原始JSON保存在`dsh-artifacts/results/`的hash归档，作为长期维护源。只读、工作区归档失败或超过其32MiB预算时，原文交DSH原生spill存储，保留opaque locator和后端读取指导；不解析locator、不把宿主临时后端称为长期归档。两种存储均不可用时明确标记durable unavailable，完整即时结构返回仍可供PTC程序消费，原操作的成功/失败不因留存失败改变；原Bridge请求可能仍可查回，但不保证无限期保留，不重放代码。
 
-执行回执的持久canonical受64KiB预算约束，归档失败也不回填整份结果。exec/inspect默认保留完整模型正文；常规已归档结果可显式选择compact，把模型正文压到16KiB并沿detail pointer续读，未归档和未知结构保持完整兜底。独立run聚合模型正文为16KiB，超限保留路径、实际结论、状态和检查数量；operation=read支持JSON Pointer及分页，不把整份报告重复送入上下文。省略范围与原值/恢复入口明确表达，原生图片独立服从附件限额。预算由[结果政策](../houdini/result-detail-policy.json)同源维护，UTF-8文字保留复用DSH的TextRetainer。工作区hash归档可按字段验证和分页；原生opaque结果沿其读取指导取得，不能假装已应用JSON Pointer。完整run报告与各执行原值按自身地址读取。实际机制验证见[结果留存](../tools/tests/result-details.test.mjs)和[独立执行](../tools/tests/isolated-execution.test.mjs)，长期自然任务内存与用户加载缺口仍见[交接](handoff.md)。
+执行回执的持久canonical受64KiB预算约束，归档失败也不回填整份结果。exec/inspect默认保留完整模型正文；常规已归档结果可显式选择compact，把模型正文压到16KiB并沿detail pointer续读，未归档和未知结构保持完整兜底。独立run/read的模型正文默认是紧凑摘要（builder `__result__`键级事实、check事实、输入版本、失败文本与`detail_pointer`），execution块留在report与归档中按需读取；摘要与分页结果同受16KiB上限。operation=read支持select多字段与JSON Pointer分页，不把整份报告重复送入上下文。省略范围与原值/恢复入口明确表达，原生图片独立服从附件限额。预算由[结果政策](../houdini/result-detail-policy.json)同源维护，UTF-8文字保留复用DSH的TextRetainer。工作区hash归档可按字段验证和分页；原生opaque结果沿其读取指导取得，不能假装已应用JSON Pointer。完整run报告与各执行原值按自身地址读取。实际机制验证见[结果留存](../tools/tests/result-details.test.mjs)和[独立执行](../tools/tests/isolated-execution.test.mjs)，长期自然任务内存与用户加载缺口仍见[交接](handoff.md)。
 
 ### 一次性独立执行
 
 `houdini_isolated`为本次调用在新hython中执行明确builder或已保存HIP的副本，复用[隔离检查器](../tools/isolated-houdini-check.py)、输入依赖复制与自有进程回收。结果保留本次输入版本、实际执行、进程退出、检查和产物；原生图像沿DSH附件返回，长任务沿DSH既有作业机制承载。
 
-输入文件与有界帧序列使用同一清单，限制由[输入政策](../houdini/isolated-execution-policy.json)维护；Python检查器的纯规划入口是清单语法、序列展开和检查定义的唯一实现。Host将经DSH读取的原字节交给该入口；规划不读取依赖或调用HOM，Host再逐文件消费DSH读取政策。校验失败在作业准入前返回；worker用同一解析器并核对授权字节摘要后复制输入。run报告与hash归档保存完整执行事实，原生canonical只保留轻量投影；工具展示与后台通知分别按交互用途投影，通知只携带定位信息和数量，不再复制全部输入异常。大型run报告通过operation=read的JSON Pointer和分页按需消费，聚合正文超限时不反复返回整份报告。完整执行的地址由DSH适配器returnedExecutions统一识别，只走生产者声明的live或isolated槽位；详情读取和离线审计复用它，不递归猜测用户返回值。
+输入文件与有界帧序列使用同一清单，限制由[输入政策](../houdini/isolated-execution-policy.json)维护；Python检查器的纯规划入口是清单语法、序列展开和检查定义的唯一实现。清单可直接来自绝对文件，也可作为调用内联对象提交：内联`code`由Host一次性序列化、经同一规划入口校验，并由检查器写成run内的生成脚本；内联清单的相对路径锚当前DSH工作区，文件清单仍锚清单目录。Host将经DSH读取的原字节交给该入口；规划不读取依赖或调用HOM，Host再逐文件消费DSH读取政策。校验失败在作业准入前返回；worker用同一解析器并核对授权字节摘要后复制输入。run目录由Host在启动前原子预留，已存在或并发占用时直接拒绝，不覆盖也不复用旧证据；内联源码、授权清单原字节和输入版本留在同一run的`request.json`与`inputs/`。run报告与hash归档保存完整执行事实，原生canonical只保留轻量投影；工具展示与后台通知分别按交互用途投影，通知只携带定位信息和数量，不再复制全部输入异常。大型run报告通过operation=read的默认摘要、select多字段与JSON Pointer分页按需消费，聚合正文超限时不反复返回整份报告。完整执行的地址由DSH适配器returnedExecutions统一识别，只走生产者声明的live或isolated槽位；详情读取和离线审计复用它，不递归猜测用户返回值。
 
 DSH团队负责创建子任务、上下文和消息；每个作者可以调用同一工具完成独立构建与自验证，不需要常驻子作者执行端或新的会话状态机。同一live现场仍只有一个修改作者。团队默认交付builder及输入/入口和实际检查；现场作者通过现有exec/job的script入口执行并观察实际消费者，不自动合并或重放。需保留已有节点真实状态时按需使用原生片段；未保存现场与未声明依赖不属于独立检查的证据范围。按需方法见[独立执行skill](../skills/houdini-isolated-execution/SKILL.md)。
 
@@ -129,7 +129,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/project-paths.ts](../src/project-paths.ts)、[dsh_project_paths.py](../houdini/python3.11libs/dsh_project_paths.py)、[project-layout.json](../houdini/project-layout.json) | 工程目录角色同源合同、只读HIP锚点投影和Host受管目的地；不维护资产账本、迁移或自动清理，合同与验证见[工程文件](project-files.md) |
 | [src/tools.ts](../src/tools.ts) | 公开执行/查询工具注册、参数分支互斥与派发；按职责注册工具 |
 | [src/tool-runtime.ts](../src/tool-runtime.ts) | 调用级Host身份、只读/修改准入、按原回执定位历史runtime、原生图像附件与结果留存 |
-| [src/isolated-execution.ts](../src/isolated-execution.ts) | 一次性builder/HIP副本；安装来自登记或显式HFS，不要求live健康。报告元数据与执行正文分开，正文复用通用结果呈现；完整报告与执行原值留run及hash归档，canonical保留轻量事实，成功报告不再作为stdout重复展示。消费DSH输入政策、作业和附件，不建立常驻子执行端 |
+| [src/isolated-execution.ts](../src/isolated-execution.ts) | 一次性builder/HIP副本；安装来自登记或显式HFS，不要求live健康。manifest可来自文件或调用内联对象（内联code与script互斥），Host序列化授权字节、经检查器纯规划入口校验，执行源留在`request.json`与`inputs/`；run目录启动前原子预留，已存在或并发占用直接拒绝。报告元数据与执行正文分开，正文复用通用结果呈现；完整报告与执行原值留run及hash归档，canonical保留轻量事实，成功报告不再作为stdout重复展示。消费DSH输入政策、作业和附件，不建立常驻子执行端 |
 | [src/execution-source.ts](../src/execution-source.ts) | exec/job共用的内联或文件源码读取；经DSH文件服务固定UTF-8字节和摘要、核对可选版本后提交，不选择现场、不执行HOM、不自动重放 |
 | [src/tool-query.ts](../src/tool-query.ts) | Host来源/历史结果/能力/回执读取；工作区hash结果支持select批读与JSON Pointer分页，原生opaque结果返回真实读取指导，durable unavailable返回明确缺口及原请求恢复入口，不重复执行HOM |
 | [src/houdini-help.ts](../src/houdini-help.ts)、[houdini-help.py](../tools/houdini-help.py) | 按已选或明确指定的实际安装读取 SideFX 随附帮助，沿 DSH 进程服务运行该安装的普通 Python；精确 ZIP 条目、来源和有界分页，无 HOM、网络查询或跨版本回退 |
@@ -141,7 +141,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-host.ts](../src/executor-host.ts) | 官方根插件拥有的现场目录与选择服务；await私有投影handle就绪后再公开域服务，原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：目标选择/取消、Bridge终态与旧格式读取，晚到回执不能覆盖新选择；私有handle经域服务委托同步读取，不跨域按注册key访问；历史不证明在线或节点归属 |
 | [src/context.ts](../src/context.ts) | 上下文装配与请求准入；原生/PTC共用本步toolSet判断可用Houdini工具，图像能力消费本步modelSelection/agent.model；异步准备文本由原生context provider同步读取，不以仅注册存在或顶层schema猜准入 |
-| [src/scene-context.ts](../src/scene-context.ts) | 用户消息进入原生Inbox时采集一次轻量现场metadata；热状态仅保留待领取消息和当前观察，原生discard释放取消项；冷领取只复用同消息持久观察或明确缺失，不把重开后的现场补成旧观察 |
+| [src/scene-context.ts](../src/scene-context.ts) | 用户消息进入原生Inbox时采集一次轻量现场metadata；热状态仅保留待领取消息和当前观察，原生discard释放取消项；冷领取只复用同消息持久观察或明确缺失，不把重开后的现场补成旧观察；完整观察持久化后，后续组装（自动goal轮、工具续步、inbox刷新）只注入带captured_at/age的历史摘要而非重复整份现场，避免把到达时观察当当前场景 |
 | [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As可在原授权项目内跟随原生工作目录，不改会话创建目录或历史位置 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |

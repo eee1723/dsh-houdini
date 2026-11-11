@@ -48,6 +48,7 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
         dsh_parameter_values.set_parm(consumer,'linked','ch("../read_filter/referenced")')
         filtered=b.run_code(f'__result__=read_parms({probe.path()!r})',read_only=True)
         assert filtered['ok'] and filtered['transaction']['status']=='effects_unverified' and filtered['transaction']['source_executed'] is True,filtered
+        assert filtered['transaction']['effects']=='none' and filtered['transaction']['native_evaluation'] is True,filtered
         by_name={row['name']:row for row in filtered['result']}
         assert 'plain' not in by_name and by_name['changed']['value']==2,by_name
         assert by_name['expression']['expression']=='1' and by_name['expression']['value']==1
@@ -59,6 +60,7 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
             rejected=b.run_code(f'__result__=read_parms({probe.path()!r},{invalid!r})',read_only=True)
             assert not rejected['ok'] and 'changed_only must be boolean' in rejected['error'],rejected
             assert 'names=' in rejected['error'] and rejected['transaction']['status']=='effects_unverified' and rejected['transaction']['source_executed'] is True
+            assert rejected['transaction']['effects']=='none' and rejected['transaction']['native_evaluation'] is True,rejected
         rejects(lambda:h.read_parms(probe,names=['changed','missing']),'missing scalar')
         with mock_patch.object(hou.Parm,'isAtDefault',side_effect=RuntimeError('native default query failed')):
             rejects(lambda:h.read_parms(probe),'native default query failed')
@@ -183,7 +185,8 @@ with dsh_ownership.execution_owner('patch-owner', 'test'):
             reply=b.run_code(f'set_parm({n.path()!r},"snippet",{patch(before,"n=5","n=8")!r})',**options)
             assert not reply['ok'] and reason in reply['error'],reply
         invalid=b.run_code(f'set_parms({n.path()!r},{{"snippet":{patch(before,"absent","x")!r}}})',owner_session='patch-owner')
-        assert invalid['transaction']['status']=='effects_unverified' and invalid['transaction']['source_executed'] is True,invalid
+        assert invalid['transaction']['status']=='no_scene_change' and invalid['transaction']['source_executed'] is True,invalid
+        assert invalid['transaction']['effects']=='none',invalid
         assert invalid['evidence'][0]['phase']=='parameter_patch_preflight',invalid
         valid=b.run_code(f'__result__=set_parms({n.path()!r},{{"snippet":{patch(before,"n=5","n=6")!r}}})',owner_session='patch-owner')
         assert valid['ok'] and valid['result']['patched']==['snippet'],valid

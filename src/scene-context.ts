@@ -4,9 +4,11 @@ import type {SessionEvent as Event} from './execution-history.js'
 import {literalData as literal} from './prompt-data.js'
 export type AgentView = { session: { snapshotEvents(): readonly Event[] } }
 export type SceneBridge = Pick<HoudiniBridge,'sceneContext'> | {sceneContextFor(session:any,signal?:AbortSignal):Promise<unknown>}
-type Observation={key:string;text:Promise<string>}
+type Observation={key:string;capturedAt:number;full:Promise<string>}
 type Observations={pending:Map<string,Observation>;current?:Observation}
 const messageKey=(message:any)=>String(message.id??JSON.stringify(message))
+/** Compact historical summary budget; the full observation is persisted once. */
+const COMPACT_BUDGET=1400
 export class SceneContextProvider {
   // Only the inbox owns pending observations. Claiming moves one to the current
   // slot; older consumed messages already belong to DSH's durable history.
@@ -44,11 +46,21 @@ export class SceneContextProvider {
     // On host resume, reuse the original observation rather than capture the
     // user's later selection and bind it to an old message.
     if (!current) {
-      return recorded.key===key?recorded.text??'':''
+      if(recorded.key!==key||typeof recorded.text!=='string')return ''
+      // The full observation already exists in persisted history; a resumed
+      // assembly only needs the same historical summary later steps receive.
+      return this.compact(key,this.capturedAtOf(recorded.text)??Date.now()/1000,recorded.text)
     }
-    const text = await current.text
+    const full = await current.full
     signal?.throwIfAborted()
-    return text
+    // DSH materializes this contribution as a runtime-context snapshot. Once a
+    // snapshot for exactly this user message is persisted, the full observation
+    // is already in durable history; later assemblies (auto goal rounds, tool
+    // follow-ups, inbox refreshes) only need an explicitly historical summary.
+    // Keying on the persisted message identity also avoids an alternating
+    // full/compact cycle when a later snapshot stores the compact text itself.
+    if(recorded.key===key)return this.compact(key,current.capturedAt,full)
+    return full
   }
 
   private state(agent:object):Observations {
@@ -59,8 +71,9 @@ export class SceneContextProvider {
 
   private captureMessage(agent:AgentView,key:string):Observation {
     const receivedAt = Date.now() / 1000
-    return {key,text:this.capture(agent, key, receivedAt).catch(() =>
-      'Houdini metadata observation unavailable for this user message. Query relevant state explicitly; no automatic retry.')}
+    const full=this.capture(agent, key, receivedAt).catch(() =>
+      'Houdini metadata observation unavailable for this user message. Query relevant state explicitly; no automatic retry.')
+    return {key,capturedAt:receivedAt,full}
   }
 
   private recoveredMessage(agent:AgentView,key:string):Observation {
@@ -72,7 +85,73 @@ export class SceneContextProvider {
       'Houdini metadata observation unavailable for this user message.\n'+literal(JSON.stringify({
         user_message_id:key,observation:{ok:false,status:'unavailable',
           reason:'The original arrival-time observation was not retained. Current selection was not sampled; inspect relevant state explicitly.'}}))
-    return {key,text:Promise.resolve(text)}
+    const capturedAt=this.capturedAtOf(text)??Date.now()/1000
+    return {key,capturedAt,full:Promise.resolve(text)}
+  }
+
+  /** Arrival time for an observation text, used for honest age reporting. */
+  private capturedAtOf(text:string):number|undefined {
+    try {
+      const value=JSON.parse(text.slice(text.indexOf('\n')+1))
+      const captured=Number(value?.capture_requested_at)
+      return Number.isFinite(captured)&&captured>0?captured:undefined
+    } catch { return undefined }
+  }
+
+  /** Bound the persisted observation to its decision-relevant historical facts. */
+  private compact(key:string,capturedAt:number,full:string):string {
+    // The summary must be byte-stable for one observation: DSH materializes
+    // context snapshots over time, so a live-computed field (for example an
+    // elapsed age) would make every snapshot differ and defeat deduplication.
+    const head='Houdini historical scene observation. This is the scene state when its user message arrived, '
+      +'NOT current scene state; later edits and selection changes are not reflected by this snapshot. '
+      +'Query scene_info/node_info/read_parms when current state matters.\n'
+    let summary:Record<string,unknown>
+    try {
+      const value=JSON.parse(full.slice(full.indexOf('\n')+1))
+      const observation:any=value?.observation, result:any=observation?.result
+      const paths=(rows:any):any=>Array.isArray(rows)
+        ? {...(rows.length>12?{count:rows.length}:{}),
+            paths:rows.slice(0,12).map((row:any)=>typeof row==='string'?row:({
+              path:row?.path??null,...(row?.type?{type:row.type}:{}),
+              ...(row?.parent?{parent:row.parent}:{}),
+              ...(row?.needs_cook!==undefined?{needs_cook:row.needs_cook}:{}),
+              ...(Array.isArray(row?.errors)&&row.errors.length?{errors:row.errors.slice(0,1)}:{}),
+              ...(Array.isArray(row?.warnings)&&row.warnings.length?{warnings:row.warnings.slice(0,1)}:{})}))}
+        : null
+      summary={user_message_id:value?.user_message_id??key,capture_requested_at:value?.capture_requested_at??capturedAt,
+        historical:true,
+        observation:{ok:observation?.ok??null,...(observation?.status?{status:observation.status}:{}),
+          ...(observation?.reason?{reason:observation.reason}:{}),
+          ...(result?{result:{
+            ...(result.runtime_id?{runtime_id:result.runtime_id}:{}),
+            ...(result.version?{version:result.version}:{}),
+            ...(result.hip_path?{hip_path:result.hip_path}:{}),
+            ...(result.hip_is_new!==undefined?{hip_is_new:result.hip_is_new}:{}),
+            ...(result.hip_dir?{hip_dir:result.hip_dir}:{}),
+            ...(result.has_named_path!==undefined?{has_named_path:result.has_named_path}:{}),
+            ...(result.has_unsaved_changes!==undefined?{has_unsaved_changes:result.has_unsaved_changes}:{}),
+            ...(result.frame!==undefined?{frame:result.frame}:{}),
+            ...(result.update_mode?{update_mode:result.update_mode}:{}),
+            ...(Array.isArray(result.selection)?{selection:paths(result.selection)}:{}),
+            ...(Array.isArray(result.selected_editor_items)?{selected_editor_items:paths(result.selected_editor_items)}:{}),
+            ...(typeof result.selection_count==='number'?{selection_count:result.selection_count}:{})
+          }}:{})}}
+    } catch {
+      summary={user_message_id:key,capture_requested_at:capturedAt,historical:true,
+        observation:{ok:false,status:'unavailable',reason:'The original full observation is not available; inspect relevant state explicitly.'}}
+    }
+    let text=head+literal(JSON.stringify(summary))
+    if(text.length>COMPACT_BUDGET) {
+      // Keep the historical marker and identity fields, drop optional arrays.
+      const observation:any=(summary as any)?.observation,hint=observation?.result?{result:{
+        hip_path:observation.result.hip_path??null,has_unsaved_changes:observation.result.has_unsaved_changes??null,
+        selection_truncated:true}}:{}
+      summary={...summary,observation:{...observation,...hint}}
+      text=head+literal(JSON.stringify(summary))
+    }
+    if(text.length>COMPACT_BUDGET) text='Houdini historical scene observation (details unavailable; query scene_info when current state matters).'
+    return text
   }
 
   private async capture(agent: AgentView, messageKey: string, receivedAt: number): Promise<string> {
@@ -104,10 +183,9 @@ export class SceneContextProvider {
         observation: { ok: false, status: 'unavailable', reason: 'metadata exceeds observation budget; query the relevant target explicitly' } })
     }
     if (literal(data).length > 6000) data = JSON.stringify({ ...binding, observation:{ok:false,status:'unavailable',reason:'escaped metadata exceeds observation budget; query the relevant target explicitly'} })
-    const text = 'Houdini metadata observation. '
-      + 'Captured once for this user message; never refreshed by tools or elapsed time. '
-      + 'Geometry/selection may change afterward; query explicitly when current state is needed. '
-      + 'Unavailable does not mean an empty scene.\n' + literal(data)
+    const text = 'Houdini metadata observation. Captured once for this user message; never refreshed by tools or elapsed time. '
+      + 'Treat it as the scene state when the user message arrived, not as current scene state; geometry/selection may change afterward. '
+      + 'Query explicitly when current state is needed. Unavailable does not mean an empty scene.\n' + literal(data)
     return text
   }
 }

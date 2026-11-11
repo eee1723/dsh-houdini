@@ -108,6 +108,21 @@ try:
     assert result["position_adjusted"] is False, result
     assert pos(child("d")) == (dx, dy), (pos(child("d")), (dx, dy))
 
+    # 4b) connect preserve_position=True 跳过纠流：增量接入既有网络时保持可见布局。
+    preserve_parent = run(f"p=tab_create('/obj','geo',name='__dsh_preserve_{suffix}')\n__result__=p.path()")
+    extra_parents.append(preserve_parent)
+    preserve_source = run(f"__result__=tab_create({preserve_parent!r},'null',name='source').path()")
+    preserve_destination = run(f"__result__=tab_create({preserve_parent!r},'null',name='destination').path()")
+    ps, pd = hou.node(preserve_source), hou.node(preserve_destination)
+    ps.setPosition(hou.Vector2(0.0, 0.0)); pd.setPosition(hou.Vector2(3.0, 0.0))
+    preserve_before = tuple(pd.position())
+    preserved = run(f"__result__ = connect({preserve_source!r}, {preserve_destination!r}, preserve_position=True)")
+    assert preserved["position_adjusted"] is False, preserved
+    assert preserved["placement_status"] == "preserved", preserved
+    assert preserved["placement_blockers"] == [], preserved
+    assert tuple(pd.position()) == preserve_before, (tuple(pd.position()), preserve_before)
+    assert pd.input(0) == ps
+
     # 5) layout_nodes flow：打乱位置后按拓扑深度分层，同深度按打乱前 x 保持
     #    阅读顺序并整体居中（a/b 深度 0，c/m 深度 1，d 深度 2）
     hou.node(child("a")).setPosition(hou.Vector2(10.0, -3.0))

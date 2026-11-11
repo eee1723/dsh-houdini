@@ -44,7 +44,8 @@ before = {'frame': hou.frame(), 'selection': tuple(hou.selectedNodes()),
           'position': tuple(hou.node(source).position()), 'flags': (hou.node(source).isDisplayFlagSet(), hou.node(source).isRenderFlagSet())}
 empty = ok(f'__result__=network_notes({parent!r})')
 assert empty['result']['notes'] == [] and empty['result']['scene_writes'] == 0, empty
-assert empty['transaction']['status'] == 'effects_unverified' and empty['transaction']['source_executed'], empty
+assert empty['transaction']['status'] == 'no_scene_change' and empty['transaction']['source_executed'], empty
+assert empty['transaction']['effects'] == 'none', empty
 blocked = call(f'network_notes({parent!r})', read_only=True)
 assert not blocked['ok'] and 'read-only' in blocked['error'], blocked
 
@@ -64,7 +65,8 @@ identity = int(a.sessionId())
 updated = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text':'中文使用入口与依赖','position':[-12,4],'size':[8,4],'color':[0.2,0.3,0.25]}}])")
 assert updated['result']['updated'] == ['README'] and int(a.sessionId()) == identity, updated
 unchanged = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text':'中文使用入口与依赖'}}])")
-assert unchanged['result']['unchanged'] == ['README'] and unchanged['transaction']['status'] == 'effects_unverified', unchanged
+assert unchanged['result']['unchanged'] == ['README'] and unchanged['transaction']['status'] == 'no_scene_change', unchanged
+assert unchanged['transaction']['effects'] == 'none', unchanged
 assert unchanged['result']['scene_writes'] == 0
 
 # Native 0 means the graph font default, not zero-height text. Headless

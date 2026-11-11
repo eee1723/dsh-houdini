@@ -153,7 +153,8 @@ try:
         read = bridge.run_code(f'__result__=network_controls({scope!r})',
                                owner_session=owner, owner_call='read')
         assert read['ok'] and read['result']['controls'][0]['path'] == path, read
-        assert read['transaction']['status'] == 'effects_unverified' and read['transaction']['source_executed'] is True, read
+        assert read['transaction']['status'] == 'no_scene_change' and read['transaction']['source_executed'] is True, read
+        assert read['transaction']['effects'] == 'none', read
         failed = bridge.run_code(f"network_controls({scope!r},[{{'node':{path!r},'label':'failed exec'}}])\nraise RuntimeError('later failure')",
                                  owner_session=owner, owner_call='later-failure')
         assert not failed['ok'] and hou.node(path).userData(navigation.CONTROL_KEY) == '实际入口', failed

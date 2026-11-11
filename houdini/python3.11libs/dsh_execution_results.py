@@ -265,14 +265,16 @@ def _operation_summary(name: str, result):
         return {k: result[k] for k in ('ok','parent','phase','scene_writes','created','updated','removed','unchanged',
                                       'restored','restore_errors','identity_remaps','scope') if k in result} | {
             'note_count': len(result.get('notes') or [])}
-    if name == 'layout_nodes' and result.get('mode') in ('handoff','component'):
-        return {k:result[k] for k in ('ok','mode','dry_run','applied','scene_writes','plan_sha256','profile','parent',
+    if name == 'layout_nodes':
+        return {k:result[k] for k in ('ok','mode','dry_run','applied','scene_writes','moved_node_count','plan_sha256','profile','parent',
             'box_count','movable_node_count','moved_node_count','changed_box_count','node_overlap_count',
             'box_overlap_count','obstacle_overlap_count','containment_failures','clearance_failures',
             'component_box_count','leaf_box_count','moved_leaf_box_count','changed_component_box_count',
             'leaf_box_overlap_count','component_box_overlap_count',
             'required_clearances','achieved_clearances','minimum_clearances',
             'fixed_obstacles','skipped_items','layout_status','restored','restore_errors','scope') if k in result}
+    if name in ('set_timeline','set_update_mode'):
+        return {k:result[k] for k in ('changed','scene','scene_writes','before','after','scope') if k in result}
     if name == 'geo_piece_stats' and 'method' in r:
         return {k:r[k] for k in ('node','frame','group','method','status','reason','selected_primitives','selected_points',
             'boundary_edges','boundary_review_status','nonmanifold_edges','orientation_conflicts',

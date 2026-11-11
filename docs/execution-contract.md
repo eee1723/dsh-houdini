@@ -23,7 +23,7 @@ DSH 提供模型、会话、通用 Agent 循环、提示词组合、压缩和原
 
 动词的函数注册、只读/执行准入和内容失效范围在`dsh_execution._VERB_DEFINITIONS`同一处声明；帮助与执行器派生所需视图，不再维护平行名称名单。准入与内容失效是不同维度：会cook、临时改状态或写文件的观察仍可能要求exec；明确UI导航可以不改模型内容。失效范围只是上下文更新提示，不是外部副作用或恢复保证。
 
-任意 Python 的请求模式和现场影响是不同事实。`execution.read_only` 只表示请求了查询模式。提交源码尚未开始执行时可记录 `no_scene_change`。已经运行且没有观测到受管修改或恢复证据时，回执为 `effects_unverified`。受管动词提交和原生 Undo 恢复只覆盖其记录范围，脚本其余效果和外部副作用不由静态扫描证明。
+请求模式与现场影响是不同事实。`execution.read_only` 只表示请求了查询模式。`transaction.effects`只记受管动词写集合：`none`（本次未登记受管写，源码未执行、已确认回滚、dry_run或0修改）、`registered`（写集合已登记）、`unverified`（受管写未确认恢复）。`transaction.native_evaluation`只标记**元数据读取类**动词/查询中意外触发的原生求值（读参数、USD、几何统计等）；显式cook/verify/render/test_controls的求值是受管操作本身，结果字段已报告，不重复标记。`transaction.status`由这两项、`impact.unavailable`和回滚事实推导：受管零写且未检出verb之外HOM语法时为`no_scene_change`；检出未插桩HOM、原生求值或受管写未恢复时为`effects_unverified`/`recovery_unverified`。执行过的任意Python若没有任何受管动词记录（例如import helper/内部实现模块、动态属性），仍按未观察处理（`effects_unverified`），不把"没有静态痕迹"写成"没有修改"；`houdini_inspect`的read_only模式只表示请求模式，import/动态属性仍可能写到静态检测之外，回执以`impact.unavailable`与`read_only_scope`明示该边界，不当作no-write保证。`no_scene_change`只说明本次事务没有登记场景写，任意Python动态调用、imported helper、外部文件/服务副作用不由静态扫描证明，`effects:none`不是"没有修改"的断言。
 
 ## 主线程、执行端与归属
 
@@ -72,9 +72,9 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 
 长任务仍在同一主线程串行执行，不提供并发 HOM。queued 任务可在代码运行前取消；running 任务的取消依赖原生协作检查点，不能强杀用户进程。jobId 来自实际提交结果，状态/等待/取消只接受所属会话；后台提交成功不等于计算完成。
 
-独立执行复用DSH作业与一次性worker。manifest的`hip/script/files`以明确输入根定位，保持相对结构及本次字节版本；HIP和script可以组合，driver先加载副本并登记新identity，再以同一隔离作者运行准备代码和checks。准备代码仍走相同Raw Gate，不允许自行raw load/clear。安装来自当前明确选择的执行端登记，断连记录仍可提供静态安装事实；可显式指定`houdini_installation`，不从Host HFS/PATH或其他现场降级选择。无登记的固定Bridge配置保留在线安装信息入口。安装选择不授现场权限，也不证明原执行结束。默认run目录取当前DSH工作区的共享角色，不为分配目录查询live或自动搬动用户文件。
+独立执行复用DSH作业与一次性worker。manifest可以是绝对文件路径或调用内联对象；内联对象中的`code`是同一清单语言的一部分（与`script`互斥），Host一次性序列化后由检查器的纯规划入口校验，执行时写成run内的生成脚本并保留在`request.json`和`inputs/`，不需要先手写清单文件。文件清单的`hip/script/files`以明确输入根定位，保持相对结构及本次字节版本；内联清单的相对路径锚当前DSH工作区。HIP和script可以组合，driver先加载副本并登记新identity，再以同一隔离作者运行准备代码和checks。准备代码仍走相同Raw Gate，不允许自行raw load/clear。run目录由Host原子预留；已存在或并发占用的同一目录直接拒绝，不覆盖、不合并。安装来自当前明确选择的执行端登记，断连记录仍可提供静态安装事实；可显式指定`houdini_installation`，不从Host HFS/PATH或其他现场降级选择。无登记的固定Bridge配置保留在线安装信息入口。安装选择不授现场权限，也不证明原执行结束。默认run目录取当前DSH工作区的共享角色，不为分配目录查询live或自动搬动用户文件。
 
-worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。每次builder/check单独捕获原生及子进程输出并恢复描述符；完整扫描已确认的Mantra `Unable to load texture`，保留有界首尾文本、实际路径与`native_diagnostics`，计入failed并停止后续checks，不能因envelope.ok或文件fresh形成假绿。warning/unverified及纯几何检查不被该纹理规则一刀切。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
+worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。模型默认看到run/read紧凑摘要（builder `__result__`键级事实、check事实、输入版本与失败文本）；execution渲染块留在report与归档，按`detail_pointer`经read的`select`/pointer取回，摘要未展开不表示字段不存在。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。每次builder/check单独捕获原生及子进程输出并恢复描述符；完整扫描已确认的Mantra `Unable to load texture`，保留有界首尾文本、实际路径与`native_diagnostics`，计入failed并停止后续checks，不能因envelope.ok或文件fresh形成假绿。warning/unverified及纯几何检查不被该纹理规则一刀切。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
 
 HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
 
@@ -84,7 +84,7 @@ HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过
 
 ## 事实、上下文与观察
 
-每次执行返回 runtime_id、sequence、observed_at、frame、HIP 路径和实际影响记录。节点 identity 与运行实例共同解释；同路径重新创建的节点不是原节点。影响观察来自原生输出和最近计算可见依赖，truncated/unavailable/global 直接保留，不推断未列出的依赖不存在。
+每次执行返回 runtime_id、sequence、observed_at、frame、HIP 路径和实际影响记录。节点 identity 与运行实例共同解释；同路径重新创建的节点不是原节点。影响观察来自原生输出和最近计算可见依赖，truncated/unavailable/global 直接保留，不推断未列出的依赖不存在。`impact.unavailable`只标记已检出的证据缺口（未插桩HOM、原生求值、影响观察失败或受管写未恢复）；已登记的受管写集合不等于"影响未知"，其范围由`transaction.effects`和影响节点表达。
 
 [execution-history](../src/execution-history.ts)统一关联公开调用、结果与回执；[execution-state](../src/execution-state.ts)的完整观察保留最近失败，动态上下文只携带未决请求、活动 job 及原结果不可取得的恢复事实。已送达的普通同步错误留在原工具结果，后续成功不再触发整份现场快照重发；无关观察的sequence、时间和路径也不改变未决提醒。几何检查和任务质量判断保留在原结果中，Host 不建立第二套完成状态解释器。开发评测中的 [delivery-audit](../tools/delivery-audit.mjs)只读取历史，生产上下文不注入评测完成门。
 

@@ -60,7 +60,8 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
     assert preview['scene_writes'] == 0 and not preview['applied']
     assert library.read_bytes() == old_bytes and api.parameter_states(n) == before_states[0]
     envelope = b.run_code('__result__=' + call + ', dry_run=True)', owner_session='tool-author')
-    assert envelope['transaction']['status'] == 'effects_unverified' and envelope['transaction']['source_executed'] is True, envelope
+    assert envelope['transaction']['status'] == 'no_scene_change' and envelope['transaction']['source_executed'] is True, envelope
+    assert envelope['transaction']['effects'] == 'none', envelope
     result = run('__result__=' + call + ')')
     assert result['current_state_preserved'] and len(result['affected_instances']) == 2
     for node, state in zip((n, n2), before_states):
@@ -74,7 +75,8 @@ __result__ = hda_create(n, 'dsh_fixture::interface::1.0', hda_file={str(library)
     snapshot = library.read_bytes()
     bad = b.run_code(call + ')', owner_session='tool-author')
     assert not bad['ok'] and 'stale interface' in bad['error']
-    assert bad['transaction']['status'] == 'effects_unverified' and bad['transaction']['source_executed'] is True, bad
+    assert bad['transaction']['status'] == 'no_scene_change' and bad['transaction']['source_executed'] is True, bad
+    assert bad['transaction']['effects'] == 'none', bad
     assert library.read_bytes() == snapshot
     revision = api.interface_revision(n)
     with dsh_ownership.execution_owner('tool-author', 'negative'):
@@ -179,7 +181,10 @@ try:
         assert getattr(module, name).__module__ == module.__name__, (module.__name__, name)
         assert getattr(module, name) is not original_functions[(module, name)]
     for module, name in ((creation, 'tab_create'), (values, 'set_parms'), (render, 'render_view')):
-        assert getattr(h, name) is getattr(module, name), 'public export retained an old implementation'
+        # The facade wraps every public callable so aliases use the current
+        # request dispatch; identity lives in the recorded implementation.
+        assert getattr(h, name).__dsh_verb_implementation__ is getattr(module, name), \
+            f'public export retained an old implementation: {module.__name__}.{name}'
         assert execution._VERBS[name] is getattr(module, name), 'dispatch retained an old implementation'
     assert events[0] == 'stop' and events[-1] == 'start', events
     for source, consumer in (('dsh_network_layout','dsh_network_boxes'),

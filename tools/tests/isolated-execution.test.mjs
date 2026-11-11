@@ -28,9 +28,10 @@ ctx.get=name=>ctx[name]
 const exec={agent:{id:'isolated-tool-owner',model:{current:()=>({provider:'test',model:'image'})},session:{header:{cwd:root}}},callId:'run-1',rootCallId:'run-1',signal:new AbortController().signal}
 const runtimeResolver=async()=>{runtimeReads++;return {python:process.execPath,hython:process.execPath,hfs:path.dirname(process.execPath)}}
 const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a+p8AAAAASUVORK5CYII=','base64')
-let processRequests=[]
+let processRequests=[],manifestCopies=[]
 async function runner(request){
   processRequests.push(request)
+  manifestCopies.push({path:request.manifest,bytes:await fs.readFile(request.manifest).catch(()=>null)})
   await fs.mkdir(path.join(request.output,'artifacts','image'),{recursive:true})
   await fs.writeFile(path.join(request.output,'artifacts','image','test.png'),pixel)
   const report={ok:true,finished:true,run_id:'unit-run',phase:'completed',inputs_unchanged:true,
@@ -94,6 +95,9 @@ try {
   const output=path.join(root,'run')
   const result=await executeIsolated(ctx,exec,{manifest,output_dir:output},runtimeResolver,runner)
   assert.equal(processRequests[0].manifestSha256,createHash('sha256').update(await fs.readFile(manifest)).digest('hex'))
+  assert.equal(processRequests[0].manifest,manifest,'a file manifest is authorized where the caller stored it')
+  assert.equal(processRequests[0].manifestBase,root)
+  assert.equal(processRequests[0].reserved,true,'the Host reserved the run directory before the checker started')
   assert.equal(result.kind,'isolated-houdini');assert.equal(result.report.result.builder.result.width,5)
   assert.equal(result.report.result.builder.stdout,'[verb] set_parms echo\nMeasured width: 5 m')
   assert.deepEqual(result.report.result.builder.verbs,[{verb:'set_parms'}])
@@ -103,11 +107,14 @@ try {
   assert.equal(isolatedPresentation(result).report.worker.output,undefined,'model display alone omits verbose process output')
   const echoed={...result,process:{...result.process,stdout:JSON.stringify(result.report)}};
   const modelText=renderIsolatedResult(echoed).filter(item=>item.type==='text').map(item=>item.text).join('\n');
-  assert.equal((modelText.match(/Measured width: 5 m/g)??[]).length,1,'authored execution output is displayed once, not echoed inside process stdout');
-  assert(modelText.includes('Authored diagnostic'));
-  assert(modelText.includes('__result__'));
+  assert(modelText.includes('"width":5'),'builder __result__ facts stay in the default summary');
+  assert(modelText.includes('detail_pointer'),'execution details remain addressable from the summary');
+  assert(!modelText.includes('Measured width: 5 m'),'execution envelope text is not rendered inline by default');
+  assert(!modelText.includes('Authored diagnostic'),'execution stderr stays in the recorded envelope');
   assert(!modelText.includes('[verb] set_parms echo'));
   assert.equal(echoed.process.stdout,JSON.stringify(result.report),'canonical process evidence is unchanged');
+  const detailRead=renderIsolatedResult(result).filter(item=>item.type==='text').map(item=>item.text).join('\n');
+  assert(detailRead.length<3000,'a read/run summary stays small enough for frequent use');
   assert.equal(result.execution,undefined,'independent execution never projects a live observation')
   assert.equal(result.process.exit_code,0);assert.equal(savedImages,1)
   assert(!HOUDINI_SCENE_TOOLS.has('houdini_isolated'))
@@ -126,6 +133,21 @@ try {
   assert.equal(firstPage.text,'{\n');assert.equal(firstPage.next_offset,2)
   const secondPage=await tool.execute({operation:'read',output_dir:output,pointer:'/result/builder/result',offset:firstPage.next_offset,limit:16000},exec)
   assert.equal(secondPage.text,selected.text.slice(2));assert.equal(secondPage.next_offset,null)
+  const selection=await tool.execute({operation:'read',output_dir:output,
+    select:['/result/builder/result','/result/builder/ok','/result/missing']},exec)
+  assert.equal(selection.kind,'isolated-houdini-report-selection')
+  assert.deepEqual(selection.items[0],{pointer:'/result/builder/result',status:'available',value:{width:5}})
+  assert.deepEqual(selection.items[1],{pointer:'/result/builder/ok',status:'available',value:true})
+  assert.equal(selection.items[2].status,'missing')
+  assert.deepEqual(selection.imageAttachments,[])
+  await assert.rejects(tool.execute({operation:'read',output_dir:output,select:['/result/builder/result'],pointer:''},exec),/cannot be combined/,
+    'select and pointer stay separate exact-read modes')
+  await assert.rejects(tool.execute({operation:'read',output_dir:output,select:[]},exec),/1\.\.16 unique JSON Pointers/)
+  assert(renderIsolatedResult(read).filter(item=>item.type==='text').reduce((total,item)=>total+item.text.length,0)<3000,
+    'default read/run model text is a compact summary')
+  const readText=renderIsolatedResult(read).filter(item=>item.type==='text').map(item=>item.text).join('');
+  assert(readText.includes('"attached":1')&&readText.includes('"mediaType":"image/png"'),
+    'attached image facts are reachable in the summary instead of a report pointer')
   await assert.rejects(tool.execute({operation:'read',output_dir:output,pointer:'/result/missing'},exec),/JSON Pointer field not found/)
   assert.equal(runtimeReads,1,'reading a completed run never resolves the current Houdini')
   assert.equal(tool.output.render({},read).filter(item=>item.type==='image').length,1)
@@ -133,6 +155,8 @@ try {
   const metadataOnly=await executeIsolated(ctx,exec,{operation:'read',output_dir:output,allow_undeclared_image_input:true},runtimeResolver,runner)
   assert.equal(metadataOnly.imageAttachments[0].capability_status,'unsupported')
   assert(metadataOnly.imageAttachments[0].attachment,'metadata refusal must not hide a readable isolated image')
+  assert(metadataOnly.imageAttachments[0].image.mediaType==='image/png'&&/re-encode/.test(metadataOnly.imageAttachments[0].image.preview_policy),
+    'isolated images carry stored-dimension and preview-derivation facts')
   ctx.llm.resolveModelInfo=async()=>({inputModalities:['text','image']})
   assert.equal(tool.presentResult({}, {meta:{canonical:read},content:[]}).title,'独立 Houdini · 已完成');
   assert.equal(tool.presentResult({}, {meta:{canonical:{report:{finished:true,ok:false}}},content:[]}).title,'独立 Houdini · 失败');
@@ -188,6 +212,9 @@ try {
   const changed=await executeIsolated(ctx,exec,{operation:'read',output_dir:output},runtimeResolver,runner)
   assert.equal(changed.imageAttachments[0].attachment,undefined)
   assert.match(changed.imageAttachments[0].error,/differs/)
+  const changedText=renderIsolatedResult(changed).filter(item=>item.type==='text').map(item=>item.text).join('');
+  assert(changedText.includes('"failed":1'),'failed image rows stay visible in the result summary');
+  assert(!changedText.includes('/imageAttachments'),'the summary never points at a field report.json does not have');
   await assert.rejects(()=>executeIsolated(ctx,exec,{manifest,output_dir:output},runtimeResolver,runner),/already exists/)
   mode='read-only'
   await assert.rejects(()=>executeIsolated(ctx,exec,{manifest,output_dir:path.join(root,'denied')},runtimeResolver,runner),/read-only/)
@@ -294,6 +321,52 @@ try {
   await executeIsolated(ctx,exec,{manifest:combined,output_dir:path.join(root,'absolute-root')},runtimeResolver,runner)
   await fs.writeFile(combined,JSON.stringify({...combinedManifest,files:['../outside.py']}))
   await assert.rejects(()=>executeIsolated(ctx,exec,{manifest:combined,output_dir:path.join(root,'escaped-input')},runtimeResolver,runner),/outside input_root/)
+
+  // Inline manifests avoid the extra hand-written manifest while keeping the
+  // same checker contract; the exact bytes are recorded in the run.
+  const inlineSourceRoot=path.join(root,'inline-source');await fs.mkdir(inlineSourceRoot)
+  await fs.writeFile(path.join(inlineSourceRoot,'build.py'),'__result__={"inline_root":true}')
+  const inlineObject={script:'build.py',input_root:'inline-source',checks:[]}
+  const inlineOutput=path.join(root,'inline-run')
+  const inlineBefore=processRequests.length
+  const inlineRun=await executeIsolated(ctx,exec,{manifest:inlineObject,output_dir:inlineOutput},runtimeResolver,runner)
+  const inlineRequest=processRequests[inlineBefore]
+  assert.equal(inlineRequest.reserved,true)
+  assert.equal(inlineRequest.manifestBase,root,'inline relative paths anchor at the DSH workspace')
+  assert.equal(inlineRequest.manifestSha256,createHash('sha256').update(JSON.stringify(inlineObject)).digest('hex'))
+  assert(Buffer.compare(manifestCopies[inlineBefore].bytes,Buffer.from(JSON.stringify(inlineObject)))===0,
+    'the checker authorizes exactly the inline bytes the Host serialized')
+  assert.equal(await fs.stat(inlineRequest.manifest).catch(()=>null),null,'the temporary inline manifest copy is not retained as run evidence')
+  assert.equal(inlineRun.ok,true)
+  assert(await fs.stat(inlineOutput).catch(()=>null))
+  assert.equal(inputStats.slice(-1)[0],path.join(inlineSourceRoot,'build.py'),'inline inputs still pass the DSH read policy')
+  await assert.rejects(()=>executeIsolated(ctx,exec,{output_dir:path.join(root,'no-manifest')},runtimeResolver,runner),/manifest/,
+    'run still requires a manifest (path or inline object)')
+  const codeOutput=path.join(root,'inline-code')
+  const codeBefore=processRequests.length
+  const codeRun=await executeIsolated(ctx,exec,{manifest:{code:'__result__={"inline":true}'},output_dir:codeOutput},runtimeResolver,runner)
+  assert.equal(codeRun.ok,true)
+  assert(Buffer.compare(manifestCopies[codeBefore].bytes,Buffer.from(JSON.stringify({code:'__result__={"inline":true}'})))===0)
+  const preflightOutput=path.join(root,'inline-preflight')
+  const preflight=await executeIsolated(ctx,exec,{manifest:{code:'raise RuntimeError("must not execute in this Host test")'},output_dir:preflightOutput},runtimeResolver,
+    async()=>({exit_code:1,cancel_requested:false,stderr:'',stdout:'{"ok":false,"phase":"preflight","error":"inline preflight error"}\n'}))
+  assert.equal(preflight.error,'inline preflight error')
+  assert.equal(await fs.stat(preflightOutput).catch(()=>null),null,'an inline preflight rejection releases the empty reservation')
+  let releaseFirst
+  const firstGate=new Promise(resolve=>{releaseFirst=resolve})
+  const concurrentOutput=path.join(root,'concurrent')
+  const firstRun=executeIsolated(ctx,exec,{manifest:{code:'__result__={}'},output_dir:concurrentOutput},runtimeResolver,
+    async request=>{await firstGate;return runner(request)})
+  for(let tries=0;tries<400;tries++){
+    if(await fs.stat(concurrentOutput).catch(()=>null))break
+    await new Promise(resolve=>setTimeout(resolve,5))
+  }
+  assert(await fs.stat(concurrentOutput).catch(()=>null),'the first concurrent run reserved its directory')
+  try {
+    await assert.rejects(()=>executeIsolated(ctx,exec,{manifest:{code:'__result__={}'},output_dir:concurrentOutput},runtimeResolver,runner),/already exists/,
+      'a second run cannot silently share a reserved output_dir')
+  } finally {releaseFirst()}
+  assert.equal((await firstRun).ok,true)
 
   const legacyDir=path.join(root,'legacy-large');await fs.mkdir(legacyDir)
   const legacy={ok:false,finished:true,phase:'worker_result',run_id:'large-legacy',error:'original geometry check failure',
