@@ -30,7 +30,15 @@
 
 ## 路径、图片与清理
 
-工程目录按用途统一，实际位置读取`scene_info()['project_layout']['directories']`：网络参考使用`reference_downloaded`，生成辅助参考使用`reference_generated`，材质依赖使用`texture`，几何/模拟/通道缓存使用`cache`，教程与任务分析使用`analysis`，使用说明使用`documentation`，成图使用`render`，过程检查使用`visual_check`。目录角色与生命周期合同见[工程文件](../../../docs/project-files.md)，不要另建资料清单来替代原始来源或DSH回执。自动输出返回实际路径后再交付；不因另存为而移动历史图片或重写旧卡片。
+工程目录按用途统一，实际位置读取`scene_info()['project_layout']['directories']`：网络参考使用`reference_downloaded`，生成辅助参考使用`reference_generated`，材质依赖使用`texture`，几何/模拟/通道缓存使用`cache`，教程与任务分析使用`analysis`，使用说明使用`documentation`，成图使用`render`，过程检查使用`visual_check`，构建与维护脚本使用`script`。目录角色与生命周期合同见[工程文件](../../../docs/project-files.md)，不要另建资料清单来替代原始来源或DSH回执。自动输出返回实际路径后再交付；不因另存为而移动历史图片或重写旧卡片。
+
+### 脚本位置与保留
+
+简单操作和一次性探针可用现场 `code` 或隔离 `manifest.code`。需要文件时，在首次写入或委派前使用当前现场的 `project_layout.directories.script`。构建和维护源码放在该目录，需落盘的临时探针放在其 `scratch/` 子目录。把选定的实际路径和输入依赖传给子作者。用户指定位置和既有Package资源布局优先。未命名HIP可在任务明确的工作区沿用 `dsh-artifacts/scripts/` 布局。
+
+后续运行复用维护源码。独立运行的 `inputs/` 保留当次检查的输入版本。交付时核对HIP、表达式或回调实际读取的脚本，随工程提供这些依赖；用户要求的源码或工具按其交付范围提供。临时脚本沿下文的任务内收尾规则处理。
+
+### 图片与检查
 
 需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 

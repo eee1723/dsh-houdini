@@ -1,27 +1,25 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.8** 精确支持 **DSH 0.2.2-rc.1**；DSH 0.2.1-rc.3 / 0.2.1-rc.5用户须精确选择旧版0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.11** 精确支持 **DSH 0.2.2-rc.1**。DSH 0.2.1-rc.3 / 0.2.1-rc.5用户须精确选择旧版0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
 
 ## 普通安装
 
-标准发行单元是包含Houdini和媒体资源的完整插件包。在Desktop原生「插件 → 添加插件」中填写当前已公开且兼容的精确包名 **`dsh-houdini@0.1.8`** 并安装、启用；包名来源可使用宿主原生版本选择和更新。普通用户无需npm账号、另装Node或执行脚本。
-
-网络受限时，可从[GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.8)取得同一个完整包，通过下方地址或下载后的本地文件安装。地址和文件来源不自动获得registry更新资格，后续替换沿下文原生管理流程：
+0.1.11 通过 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11) 提供包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中使用下方地址，或下载 `.tgz` 后使用本地文件的绝对路径。地址和文件安装的后续替换沿下文原生管理流程。
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.8/dsh-houdini-0.1.8.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
 ```
 
-使用[npm 包名](https://www.npmjs.com/package/dsh-houdini)时，先确认所选安装源已经公开所需版本及其`engines.dsh`兼容范围，再填写`dsh-houdini@<版本>`。仅填写`dsh-houdini`会查询该源的latest，不会自动寻找兼容当前宿主的版本。GitHub地址安装与npm包名安装分别保留各自的来源，安装同一份内容也不会自动转换来源。
+同样支持 DSH 0.2.2-rc.1 的 [npm 版本](https://www.npmjs.com/package/dsh-houdini)是 `dsh-houdini@0.1.8`。按包名安装时，先确认所选源提供目标版本及兼容的 `engines.dsh`，再填写精确包名。包名来源可使用宿主原生版本选择和更新。
 
-刚发布时请填写精确版本，例如`dsh-houdini@0.1.8`。宿主包管理器的新版本年龄策略可能让裸包名实际选择较旧版本，即使预检卡片已经显示新版；以安装后的实际版本和兼容结果为准。精确版本选择及后续原生更新由宿主管理，不需要为此放宽旧包兼容范围或修改全局安装策略。
+宿主包管理器的新版本年龄策略可能让裸包名实际选择较旧版本，即使预检卡片已经显示新版。以安装后的实际版本和兼容结果为准。
 
-如果镜像缺少npm官方已公开的版本，可在对话框右侧「安装源」切换npm官方源`https://registry.npmjs.org/`。官方源尚未公开该版本时，换源不能解决；使用已公开的GitHub完整地址或下载同一个包后本地安装。具体未完成的渠道见[发行交接](handoff.md#h-01-标准插件发布与用户加载)。
+如果镜像缺少 npm 官方已公开的版本，可在对话框右侧「安装源」切换 npm 官方源 `https://registry.npmjs.org/`。安装 GitHub 版本时使用上方地址或本地 `.tgz`。
 
 GitHub发布页同时提供SHA256校验文件。仓库首页、历史独立工作台包和GitHub自动生成的Source code ZIP不适用于这条标准插件安装路径；源码push、tag或Draft本身不等于包已公开可用。
 
 1. 安装受支持的官方 DSH Desktop，并确认其 DSH 宿主版本符合上方精确兼容范围。
-2. 打开Desktop原生「插件 → 添加插件」，在「包名或地址」填写 **`dsh-houdini@0.1.8`** 并点击「安装」。网络受限时使用上述完整地址或同一个完整`.tgz`的本地绝对路径，无须解压后寻找`Install.cmd`。
+2. 打开 Desktop 原生「插件 → 添加插件」，在「包名或地址」填写上方 GitHub 地址或完整 `.tgz` 的本地绝对路径，点击「安装」。
 3. 安装完成后启用插件。当前宿主的新装插件默认停用，可在安装结果中选择「立即启用」，或在插件列表启用 `dsh-houdini`；安装成功本身不表示 Houdini 模式已经加载。
 4. 在 DSH 原生模型设置中完成供应商或账户配置，为当前对话选择可用主模型。插件复用这些设置。
 5. 如果要换工作区，先选工作区，再在其中的新对话选择 Houdini 模式。在工程菜单选择 Houdini 安装，新建场景或打开已有 HIP；已经加载兼容组件的工程也可直接选择绑定。

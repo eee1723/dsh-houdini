@@ -34,7 +34,7 @@ These capabilities can be combined: start by inspecting an existing network, tur
 | Item | Supported range |
 |---|---|
 | Operating system | Windows x64 |
-| Host | Plugin 0.1.8 requires DSH 0.2.2-rc.1. Users on DSH 0.2.1-rc.5 / rc.3 must explicitly select older plugin version 0.1.6. Confirm the host version before upgrading the plugin. See the [compatibility matrix](dsh-runtime-compatibility.json) for exact supported combinations and validation boundaries. |
+| Host | Plugin 0.1.11 requires DSH 0.2.2-rc.1. Users on DSH 0.2.1-rc.5 / rc.3 must explicitly select older plugin version 0.1.6. Confirm the host version before upgrading the plugin. See the [compatibility matrix](dsh-runtime-compatibility.json) for exact supported combinations and validation boundaries. |
 | Houdini | 21.0 / 22.0; see the [installation guide](docs/setup.md) for build compatibility information. |
 | Models | Configure an available primary chat model in DSH. Image understanding, image generation, and speech features depend on the actual capabilities of the selected models and services. |
 
@@ -45,12 +45,12 @@ These capabilities can be combined: start by inspecting an existing network, tur
 3. Click **Enable Now**, or enable `dsh-houdini` from the plugin list.
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.8/dsh-houdini-0.1.8.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
 ```
 
-The [GitHub release package and checksum files](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.8) provide the complete installation package; no extraction or script execution is required. For subsequent updates to an address-installed version, use native plugin management as described in the [update instructions](docs/setup.md#connection--support连接与维护).
+The [GitHub release package and checksum files](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11) provide the complete installation package. Enter the package directly in Desktop. For subsequent updates to an address-installed version, use native plugin management as described in the [update instructions](docs/setup.md#connection--support连接与维护).
 
-Before installing by [npm package name](https://www.npmjs.com/package/dsh-houdini), confirm that the selected registry has published the target version and that the version supports your current DSH. Entering only `dsh-houdini` queries that registry's `latest` tag; it does not automatically find a version compatible with the current host. If a mirror lacks a published version, switch to the official registry. If upstream has not published the version yet, changing registries will not help; use an existing official installation URL instead.
+Use the GitHub address above to install 0.1.11. [npm](https://www.npmjs.com/package/dsh-houdini) currently provides `dsh-houdini@0.1.8` for the same DSH version. When installing by package name, confirm that the selected registry carries the version and enter the exact package specifier.
 
 Newly installed plugins are disabled by default and provide Houdini mode only after being enabled. The full package includes FFmpeg / ffprobe, and a standard Python interpreter is located automatically from the Houdini installation. Using the plugin requires no separate Node installation, source compilation, or FFmpeg PATH configuration.
 

@@ -1,6 +1,6 @@
 ---
 name: houdini-network-handoff
-description: 让用户找到、理解并继续编辑Houdini成果：工程另存与文件交付、节点入口、Network Box和Sticky Note。准备保存交付成果、已明确模块编辑边界，或用户要求整理网络时加载；纯查询、单参修改、临时诊断不触发。
+description: 让用户找到、理解并继续编辑Houdini成果：工程另存与文件交付、节点入口、Network Box和Sticky Note。首次写入或委派任务脚本文件、准备交付成果、明确模块编辑边界或整理网络时加载；纯查询、单参修改和内联诊断不触发。
 ---
 
 # Houdini Network Handoff

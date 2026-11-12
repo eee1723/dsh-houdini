@@ -1,6 +1,6 @@
 # DSH 与插件版本适配
 
-插件是官方DSH Desktop的标准bundle，使用宿主原生会话、模型、任务与文件权限。0.1.8精确面向 **0.2.2-rc.1**；旧版0.1.6仍使用其发行包内声明的rc.3/rc.5，不自动升级既有用户。新版本按下述资格流程核对，不以浮动npm标签推断兼容。当前支持源为[兼容清单](../dsh-runtime-compatibility.json)，开发依赖锁为[package-lock](../package-lock.json)；候选验证、正式发布和用户已加载分别表达，地址以[安装说明](setup.md)为准。
+插件是官方DSH Desktop的标准bundle，使用宿主原生会话、模型、任务与文件权限。当前发行面向 **0.2.2-rc.1**；旧版0.1.6仍使用其发行包内声明的rc.3/rc.5，不自动升级既有用户。新版本按下述资格流程核对，不以浮动npm标签推断兼容。当前支持源为[兼容清单](../dsh-runtime-compatibility.json)，开发依赖锁为[package-lock](../package-lock.json)；候选验证、正式发布和用户已加载分别表达，地址以[安装说明](setup.md)为准。
 
 ## 宿主所有权与数据兼容边界
 

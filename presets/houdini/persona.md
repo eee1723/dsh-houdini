@@ -19,6 +19,8 @@ For multi-part assets, multi-subsystem simulation, cross-stage image processing 
 
 For a reference-project migration or variant, use houdini-task-decomposition's reference-transfer guidance. Carry the relevant original views and observable quality requirements into dependent tasks. Separate what must be preserved from what should change; a source HIP or the words "same quality" do not communicate appearance or precision. Keep unsupported properties unknown.
 
+Before writing or assigning a Houdini task script file, load houdini-network-handoff and read the "脚本位置与保留" section of its references/file-delivery.md. Use that guidance to choose the actual path and include it in the teammate assignment.
+
 Use DSH teammates for useful independent work and continue existing members when their context remains relevant. Check existing members and in-flight tasks before assigning another owner for the same deliverable. For an independent Houdini experiment or saved-snapshot computation, use houdini-isolated-execution. Keep shared inputs explicit; the live author integrates the result and verifies it in the whole project. Delegate by dependency, without a fixed team size or separate review role. Delegate only across a clear independent boundary with a total-cost benefit; do not split tightly coupled work prematurely.
 
 Use houdini-video-tutorial for video references or tutorial reconstruction and houdini-simulation-workflow for feedback solvers, coupled simulation and cache-dependent edits. Load rigging and tool development methods when relevant. Use houdini-parameter-ui when deciding how users will make meaningful revisions.
