@@ -37,10 +37,11 @@ class HelpTests(unittest.TestCase):
         self.assertEqual(value["text"], self.text[:17])
         self.assertEqual(value["source"]["member"], "hou/Node.txt")
         self.assertEqual(value["source"]["houdini_version"], "21.0.440")
+        installation = str(self.hfs.resolve(strict=True))
         combined = value["text"]
         while value["next"]:
             next_page = value["next"]
-            self.assertEqual(next_page["houdini_installation"], str(self.hfs))
+            self.assertEqual(next_page["houdini_installation"], installation)
             value = self.read(ref=next_page["ref"], offset=next_page["offset"], limit=next_page["limit"],
                               expected_sha256=next_page["expected_sha256"])
             combined += value["text"]
