@@ -34,7 +34,7 @@ export async function visualCapability(exec: any, ctx: any) {
         boundary:'Metadata declaration only; it does not test the provider or model.',
         recovery:[
           {kind:'ask_user',action:'Ask the user once, naming this exact route, whether to enable image input or switch routes; then continue after their answer.'},
-          {kind:'probe',action:'After the user confirms this exact route accepts images, re-run the same image-producing call through houdini_exec or houdini_inspect (or houdini_isolated read) with allow_undeclared_image_input=true. The real model response decides; a provider rejection is evidence, not permission to keep overriding.'},
+          {kind:'probe',action:'After the user confirms this exact route accepts images, retrieve the existing result with houdini_request(request_ref=...) or houdini_isolated(operation="read", output_dir=...) and allow_undeclared_image_input=true. If no retained image exists, create one minimal new image instead of repeating an earlier edit, save or unknown execution. The real model response decides; a provider rejection is evidence, not permission to keep overriding.'},
           {kind:'config',action:'Enable image input for this provider/model route in DSH configuration; tools cannot change route configuration.'}],
         next_action:'Ask the user once or run one explicitly authorized probe before treating visual verification as blocked. Metadata refusal is not proof the route cannot accept images.'}),
       observation:'Declared model input capability only. Native images may be attempted even when metadata is absent; route acceptance and semantic inspection require an actual model response.'}
@@ -67,9 +67,9 @@ export function imageAttachmentFacts(attachment:any) {
   for(const key of ['mediaType','bytes','width','height'])if(ref[key]!==undefined)facts[key]=ref[key]
   if(ref.originalDimensions)facts.normalized_from=ref.originalDimensions
   facts.preview_policy=ref.originalDimensions
-    ? 'Stored bytes are the native channel\'s normalized raster (single-frame 8-bit sRGB, '+String(ref.width)+'x'+String(ref.height)+'), downscaled from the source; the request preview can be resized or re-encoded again.'
+    ? 'Stored bytes are the native channel\'s normalized raster (single-frame 8-bit sRGB, '+String(ref.width)+'x'+String(ref.height)+'), possibly downscaled from the source; the request preview can be resized or re-encoded again.'
     : 'Stored bytes are the native channel\'s normalized raster (single-frame 8-bit sRGB); the source file may have had another bit depth, color space or metadata, and the request preview can be resized or re-encoded again.'
-  facts.scope='Normalized preview pixels are not source-pixel or geometric evidence. For 1:1 claims use render_check numbers or render a detail view at source framing, not a rescaled preview.'
+  facts.scope='Use the preview for composition and shape visible at its delivered scale, not for source-pixel, aliasing or fine-edge claims. For 1:1 claims use original-file pixel checks such as render_check or a source-framing detail render, not a rescaled preview.'
   return facts
 }
 

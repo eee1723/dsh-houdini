@@ -137,9 +137,9 @@ __result__={'lights':summary['counts']['lights'],'compute_threads':hou.maxThread
     missing_dependency=run('undeclared-dependency')
     assert not missing_dependency['ok'] and 'dsh_isolated_fixture_support' in missing_dependency['error'],missing_dependency
 
-    # A saved HIP's $HIP-relative texture is lazy renderer input: loading the
-    # copied HIP succeeds, but Mantra must not produce a false-green check when
-    # that texture was omitted from the manifest. The original stays immutable.
+    # A saved HIP's $HIP-relative texture is lazy renderer input. Exercise the
+    # product-default Karma Setup + MaterialX path: a missing declared dependency
+    # must not become a fresh-file false green, and the source HIP stays immutable.
     import base64
     texture_root=root/'textures';texture_root.mkdir()
     texture_source=texture_root/'roughness.png'
@@ -147,32 +147,35 @@ __result__={'lights':summary['counts']['lights'],'compute_threads':hou.maxThread
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a+p8AAAAASUVORK5CYII='))
     texture_hip=root/'texture_fixture.hip'
     texture_builder=root/'texture_builder.py'
-    texture_builder.write_text('''from __future__ import annotations
-g=tab_create('/obj','geo',name='texture_fixture')
+    texture_builder.write_text('''g=tab_create('/obj','geo',name='texture_fixture')
 n=tab_create(g,'box',name='OUT')
-mat=tab_create('/mat','principledshader',name='TEXTURE_FIXTURE_MAT')
-set_parms(mat,{'rough_useTexture':1,'rough_texture':'$HIP/textures/roughness.png','rough':1.0})
-assigned=tab_create(g,'material',name='ASSIGN',inputs=[n],parms={'shop_materialpath1':mat.path()})
-sop_set_output(assigned)
-cam=tab_create('/obj','cam',name='TEXTURE_FIXTURE_CAM')
-camera_fit(cam,assigned,width=16,height=16)
-dry_fit=camera_fit(cam,assigned,width=16,height=16,dry_run=True)
-tab_create('/obj','hlight',name='TEXTURE_FIXTURE_LIGHT',parms={'tx':1.0,'ty':1.0,'tz':1.0,'light_intensity':1.0})
-for name in ('TEXTURE_ROP_FIRST','TEXTURE_ROP_LATER'):
- tab_create('/out','ifd',name=name,parms={'camera':cam.path(),'vobject':g.path(),
-  'vm_renderengine':'pbrraytrace','override_camerares':1,'res_fraction':'specific','res_overridex':16,'res_overridey':16})
+c=tab_create('/obj','cam',name='texture_camera')
+camera_fit(c,n,width=16,height=16)
+imp=tab_create('/stage','sceneimport',name='scene')
+set_parms(imp,{'objects':g.path()+' '+c.path(),'forceobjects':g.path()+' '+c.path()})
+mat=tab_create('/stage','materiallibrary',name='materials',inputs=[imp])
+tab_apply(mat,'vop_karmamtlxsubnet')
+builder=mat.node('karmamaterial')
+surface=builder.node('mtlxstandard_surface')
+texture=tab_create(builder,'mtlximage','roughness_texture',parms={'signature':'default','file':'$HIP/textures/roughness.png','filecolorspace':'Raw'})
+connect(texture,surface,'specular_roughness')
+set_parms(mat,{'matnode1':'karmamaterial','matpath1':'/materials/texture_fixture','assign1':True,'geopath1':'/texture_fixture'})
+tab_apply('/stage','lop_karma_setup')
+settings=hou.node('/stage/karmarendersettings');rop=hou.node('/stage/usdrender_rop1')
+connect(mat,settings)
+set_parms(settings,{'camera':'/texture_camera','engine':'cpu','convergence_mode':'Path Traced','pathtracedsamples':2,'res_mode':'autoheight','resolutionx':16})
+set_parms(rop,{'husk_enable_headlight':1,'husk_headlight':'distant'})
 saved=scene_save_as(path='''+repr(texture_hip.as_posix())+''',expected_current_path=scene_info()['hip_path'],
- reason='Create authored isolated texture fixture')
-__result__={'saved':saved,'dry_fit':dry_fit}
+ reason='Create isolated Karma texture fixture')
+__result__={'saved':saved}
 ''',encoding='utf-8')
     manifest_path.write_text(json.dumps({'script':'texture_builder.py','checks':[]}),encoding='utf-8')
     fixture=run('texture-fixture')
     assert fixture['ok'] and texture_hip.is_file(),fixture
-    assert fixture['result']['builder']['outcome']['checks']['unverified']==1,fixture
     fixture_hash=runner.digest(texture_hip)
     texture_checks=[
-        {'id':'first','kind':'render','node':'/out/TEXTURE_ROP_FIRST','frame':1,'file':'first.png'},
-        {'id':'later','kind':'render','node':'/out/TEXTURE_ROP_LATER','frame':1,'file':'later.png'},
+        {'id':'first','kind':'render','node':'/stage/usdrender_rop1','frame':1,'file':'first.png'},
+        {'id':'later','kind':'render','node':'/stage/usdrender_rop1','frame':1,'file':'later.png'},
     ]
     manifest_path.write_text(json.dumps({'hip':'texture_fixture.hip','checks':texture_checks}),encoding='utf-8')
     missing_texture=run('texture-undeclared')
@@ -183,20 +186,23 @@ __result__={'saved':saved,'dry_fit':dry_fit}
     assert failed_texture['status']=='failed',failed_texture
     failed_execution=failed_texture['execution']
     assert failed_execution['outcome']['checks']['failed']==1,failed_execution
-    assert failed_execution['native_diagnostics'][0]['kind']=='texture_load_failed',failed_execution
-    expected_missing=(root/'texture-undeclared/inputs/textures/roughness.png').as_posix()
-    assert failed_execution['native_diagnostics'][0]['path']==expected_missing,failed_execution
+    diagnostic=failed_execution['native_diagnostics'][0]
+    assert diagnostic['kind']=='texture_load_failed' and diagnostic['renderer'] in ('karma','unknown'),failed_execution
+    expected_missing='texture-undeclared/inputs/textures/roughness.png'
+    assert diagnostic['path'].endswith(expected_missing),failed_execution
     assert expected_missing in failed_execution['native_output'],failed_execution
+    if hou.applicationVersionString().startswith('22.'):
+        assert diagnostic['renderer']=='karma' and 'Error Summary' in failed_execution['native_output'],failed_execution
     assert not (root/'texture-undeclared/artifacts/later').exists(),'later render must not execute'
     assert runner.digest(texture_hip)==fixture_hash
 
     # Builder execution and validation are separate in the Bridge envelope.
-    # Even authored code that ignores the returned render result cannot hide a
-    # failed native check from the isolated run or continue to manifest checks.
+    # Ignoring render_frame's returned errors cannot hide the native failure or
+    # continue to manifest checks; unrelated check failures are not reused here.
     ignore_script=root/'texture_ignore_result.py'
     ignore_script.write_text('''from pathlib import Path
 picture=Path(hou.hipFile.path()).parent.parent/'builder-diagnostic.png'
-rendered=render_frame('/out/TEXTURE_ROP_FIRST',picture=str(picture),frame=1)
+rendered=render_frame('/stage/usdrender_rop1',picture=str(picture),frame=1)
 __result__={'ignored_render_errors':rendered['errors']}
 ''',encoding='utf-8')
     manifest_path.write_text(json.dumps({'hip':'texture_fixture.hip','script':'texture_ignore_result.py',

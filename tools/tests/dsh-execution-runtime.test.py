@@ -38,6 +38,15 @@ with (patch.object(hou.undos, 'areEnabled', side_effect=AssertionError('query in
     assert result['transaction']['source_executed'] and result['execution']['read_only'], result
     assert not result['execution']['impact']['unavailable'], result
 
+    # Standard-library method names such as compile are not dynamic HOM access.
+    # Use the same callable provenance as Raw Gate instead of a second name list.
+    standard_library = bridge.run_code(
+        "import re\npattern = re.compile('box')\n__result__ = {'frame': scene_info()['frame'], 'matches': pattern.findall('box box')}",
+        read_only=True)
+    assert standard_library['ok'] and standard_library['result']['matches'] == ['box', 'box'], standard_library
+    assert standard_library['transaction']['status'] == 'no_scene_change', standard_library
+    assert not standard_library['execution']['impact']['unavailable'], standard_library
+
     failed = bridge.run_code("describe('/obj/__missing_query_fixture__')", read_only=True)
     assert not failed['ok'] and failed['transaction']['status'] == 'effects_unverified', failed
     assert failed['transaction']['effects'] == 'none' and failed['transaction']['native_evaluation'] is True, failed

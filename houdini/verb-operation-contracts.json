@@ -2312,7 +2312,7 @@
       "examples": [
         {
           "title": "Check a render without assuming an ok field",
-          "code": "rendered = render_frame('/out/mantra1', picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/material/check.png', frame=1)\n__result__ = rendered",
+          "code": "rendered = render_frame('/stage/usdrender_rop1', picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/material/check.png', frame=1)\n__result__ = rendered",
           "read_result": "Do not test rendered['ok']: render_frame returns no ok key. Require fresh is True and errors == [], then inspect output/file_bytes and the actual image. Multi-product USD renders use outputs; output can be null.",
           "tool": "houdini_exec"
         }

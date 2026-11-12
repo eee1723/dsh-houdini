@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 122
+Execution contract version: 123
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 
@@ -79,7 +79,7 @@ execution中的hip_dir来自同次场景观察，未命名场景为null；Host�
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。现场选择不迁工作区目录；本对话成功Save As按既有目录接续合同处理。
 Bridge每次启动同时建立新的请求注册表与执行runtime，回执和execution使用同一个runtime_id；
 executor_id标识Houdini进程，不能与某次Bridge运行或DSH会话身份互换。
-合同122增加结构化查询和统一动词派发，旧组件须重开后才接收新执行。已知120/121原进程仍在线时，只能按已核对的原运行代际与会话读取原请求或作业状态，原归属校验保持。
+合同122增加结构化查询和统一动词派发；合同123收敛原生纹理诊断、标准库来源分析与图片恢复路径，旧组件须重开后才接收新执行。已知120–122原进程仍在线时，只能按已核对的原运行代际与会话读取原请求或作业状态，原归属校验保持。该分支只覆盖这些候选升级期间仍在线的旧进程；对应进程退出并完成helper重开后删除，不扩展为旧版执行兼容。
 有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
 同时读取词表与执行合同；它替代普通health握手，不增加网络往返，也不进入HOM队列。GET /health不签票。
 票仅在首次提交前保留120秒，未用票最多4096条；登记时在同锁内消费。只有Bridge签发的票可首次登记，

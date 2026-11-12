@@ -141,7 +141,7 @@ export interface BridgeTargetExpectation { runtimeId?:string; sceneEpoch?:string
 
 // These known older receipt and job-status endpoints still enforce the
 // original owner/runtime and return the same facts. They admit no new work.
-const previousReceiptVersions = new Set([120,121])
+const previousReceiptVersions = new Set([120,121,122])
 
 export class HoudiniBridge {
   readonly baseUrl: string

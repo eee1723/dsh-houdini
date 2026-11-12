@@ -953,14 +953,14 @@ def _referenced_methods(reference):
     return {reference[-1]} if reference[0] in ('hom_method', 'unknown_method') else set()
 
 
-def _raw_usage_from_tree(tree: ast.AST) -> dict:
+def _raw_usage_from_tree(tree: ast.AST, callables=None) -> dict:
     """Describe raw HOM syntax and gate-relevant mutations for UI/auditing.
 
     This is structured execution evidence, not a source-code regex.  It shares
     the same covered/suspected mutation rules as the Raw Gate so the client can
     distinguish harmless reads, blocked writes and audited exemptions.
     """
-    callables = _callable_references(tree)
+    callables = _callable_references(tree) if callables is None else callables
     parameter_writes = _parameter_write_calls(tree)
     box_writes = _network_box_mutation_calls(tree)
     note_writes = _network_note_mutation_calls(tree)
@@ -1252,41 +1252,39 @@ def _hidden_execution_message(tree):
     return None
 
 
-_UNRESOLVED_SAFE_IMPORTS = frozenset({
-    '__future__', 'typing', 'dataclasses', 'json', 'math', 'collections', 'itertools',
-    'functools', 'pathlib', 'os', 'sys', 're', 'time', 'datetime', 'random', 'string',
-    'enum', 'abc', 'copy', 'contextlib', 'traceback', 'types', 'uuid', 'hashlib',
-    'struct', 'zlib', 'tempfile',
-})
-
-
-def _unresolved_source_from_tree(tree):
+def _unresolved_source_from_tree(tree, callables=None):
     """True when executed source can reach HOM outside the traced verb facade.
 
-    An import of a local/helper module or of a Houdini implementation module, and
-    dynamic attribute/import calls, cannot be proven harmless by the lexical
-    tracer. The ``dsh_hou_helpers`` facade stays allowed: its public exports are
-    request-dispatched wrappers, so calls through it are traced.
+    Standard-library calls use the same lexical provenance as Raw Gate; method
+    names alone do not make them dynamic. Local/helper and Houdini implementation
+    imports, reflection and dynamic imports remain unresolved. The public verb
+    facade stays allowed because its calls join the request-local tracer.
     """
     if tree is None:
         return False
-    dynamic = {'getattr', 'setattr', 'delattr', 'eval', 'exec', 'compile', '__import__'}
+    standard_module = _standard_module_resolver()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split('.')[0]
-                if root != 'dsh_hou_helpers' and root not in _UNRESOLVED_SAFE_IMPORTS:
+                if root != 'dsh_hou_helpers' and standard_module(alias.name) is None:
                     return True
         elif isinstance(node, ast.ImportFrom):
             root = (node.module or '').split('.')[0]
-            if node.level or (root != 'dsh_hou_helpers' and root not in _UNRESOLVED_SAFE_IMPORTS):
+            if node.level or (root != 'dsh_hou_helpers' and standard_module(node.module or '') is None):
                 return True
-        elif isinstance(node, ast.Call):
-            function = node.func
-            name = (function.id if isinstance(function, ast.Name)
-                    else function.attr if isinstance(function, ast.Attribute) else None)
-            if name in dynamic or (isinstance(function, ast.Attribute) and function.attr == 'import_module'):
-                return True
+    references = _callable_references(tree) if callables is None else callables
+    dynamic = {'getattr', 'setattr', 'delattr', 'eval', 'exec', 'compile', '__import__'}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        reference = references.get(id(node))
+        if reference in (('getattr',), ('setattr',), ('delattr',)) \
+                or reference == ('python_method', 'importlib', 'import_module'):
+            return True
+        function = node.func
+        if reference is None and isinstance(function, ast.Name) and function.id in dynamic:
+            return True
     return False
 
 
@@ -1309,8 +1307,9 @@ class CodeAnalysis:
         except SyntaxError as error:
             self.tree = None
             self.syntax_error = error
-        self.raw_usage = _raw_usage_from_tree(self.tree) if self.tree is not None else {}
-        self.unresolved_source = _unresolved_source_from_tree(self.tree) if self.tree is not None else False
+        callables = _callable_references(self.tree) if self.tree is not None else None
+        self.raw_usage = _raw_usage_from_tree(self.tree, callables) if self.tree is not None else {}
+        self.unresolved_source = _unresolved_source_from_tree(self.tree, callables) if self.tree is not None else False
 
     def preflight(self, *, mutating_verbs, read_only, raw_gate, allow_raw):
         error = _forbidden_hip_lifecycle_message(self) or _blocking_host_traversal_message(self)

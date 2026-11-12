@@ -3005,7 +3005,7 @@ Render one frame through an explicit ROP and verify fresh nonempty output files 
 调用工具：`houdini_exec`。
 
 ```python
-rendered = render_frame('/out/mantra1', picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/material/check.png', frame=1)
+rendered = render_frame('/stage/usdrender_rop1', picture='$HIP/dsh-artifacts/checks/previews/$HIPNAME/material/check.png', frame=1)
 __result__ = rendered
 ```
 

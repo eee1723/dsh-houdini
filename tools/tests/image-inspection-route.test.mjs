@@ -51,6 +51,8 @@ try{
     'metadata refusal carries executable recovery steps instead of a dead end');
   assert.match(unsupported.next_action,/Ask the user once/);
   assert.match(unsupported.recovery[1].action,/allow_undeclared_image_input/);
+  assert.match(unsupported.recovery[1].action,/houdini_request\(request_ref/);
+  assert.doesNotMatch(unsupported.recovery[1].action,/re-run the same/,'an image probe must not replay edits, saves or unknown execution');
  const missing=await attachImages(value,exec,bridge,{});assert.match(missing.imageAttachments[0].error,/unavailable/);
  modalities=['image'];const failed=await attachImages(value,exec,{fetchMedia:async()=>{throw Error('transport unavailable')}},ctx);
  assert.equal(failed.ok,true,'image failure must not cause scene replay');assert.equal(imageBlocks(failed).length,0);

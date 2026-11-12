@@ -523,12 +523,15 @@ def load_manifest(path, *, expected_sha256=None, base=None):
     return manifest
 
 
+_TEXTURE_LOAD_FAILURE = re.compile(r"\[[0-9:]+\]\s+(?:(mantra):\s+)?Unable to load texture '(.+)'")
+
+
 def _execute_with_native_output(call):
     """Capture native/child-process output for exactly one Bridge execution.
 
-    Bridge's redirect_stdout/stderr only sees Python text. Mantra inherits the
-    worker's OS descriptors, so scope descriptor redirection to this synchronous
-    call and restore both descriptors before any subsequent check.
+    Bridge's redirect_stdout/stderr only sees Python text. Native renderers and
+    their children inherit the worker's OS descriptors, so scope descriptor
+    redirection to this synchronous call and restore both descriptors afterward.
     """
     with tempfile.TemporaryFile() as native_log:
         sys.stdout.flush()
@@ -547,9 +550,8 @@ def _execute_with_native_output(call):
         finally:
             for _fd, backup in saved:
                 os.close(backup)
-        # Scan the complete stream for the confirmed failure, but retain only a
-        # bounded head/tail preview. A chatty renderer cannot exhaust worker RAM
-        # or the result archive merely because diagnostics are being collected.
+        # Scan the complete stream for confirmed failures, but retain only a
+        # bounded head/tail preview in the execution evidence.
         edge = 128 * 1024
         native_log.seek(0, os.SEEK_END)
         size = native_log.tell()
@@ -563,27 +565,42 @@ def _execute_with_native_output(call):
             native_log.seek(-edge, os.SEEK_END)
             data = head + marker + native_log.read(edge)
         native_output = data.decode('utf-8', errors='replace')
-        diagnostic_lines = []
+        diagnostic_lines, husk = [], False
         native_log.seek(0)
         for raw_line in native_log:
             line = raw_line.decode('utf-8', errors='replace').rstrip('\r\n')
-            if re.fullmatch(r"\[[0-9:]+\] mantra: Unable to load texture '(.+)'", line):
+            husk = husk or re.match(r'^Command: husk(?:\s|$)', line) is not None
+            if _TEXTURE_LOAD_FAILURE.fullmatch(line):
                 diagnostic_lines.append(line)
-    return envelope, native_output, omitted, diagnostic_lines
+    # Facts come from the complete stream, including any omitted middle. The
+    # bounded display text is never reparsed to reconstruct renderer identity.
+    evidence = {'lines': diagnostic_lines, 'renderer': 'karma' if husk else 'unknown'}
+    return envelope, native_output, omitted, evidence
+
+
+def _native_texture_diagnostics(native_output, diagnostic_lines=None, renderer=None):
+    if renderer is None:
+        renderer = 'karma' if re.search(r'^Command: husk(?:\s|$)', native_output, re.MULTILINE) else 'unknown'
+    diagnostics, seen = [], set()
+    for line in native_output.splitlines() if diagnostic_lines is None else diagnostic_lines:
+        match = _TEXTURE_LOAD_FAILURE.fullmatch(line)
+        if match and line not in seen:
+            seen.add(line)
+            diagnostics.append({'kind': 'texture_load_failed', 'renderer': match[1] or renderer,
+                                'path': match[2], 'message': line})
+    return diagnostics
 
 
 def _record_native_diagnostics(envelope, native_output, omitted=0, diagnostic_lines=None):
-    """Promote only the observed Mantra texture-load failure, not arbitrary logs."""
+    """Promote observed native texture-load failures, not arbitrary logs or checks."""
     if native_output:
         envelope['native_output'] = native_output
     if omitted:
         envelope['native_output_omitted_bytes'] = omitted
-    diagnostics = []
-    for line in native_output.splitlines() if diagnostic_lines is None else diagnostic_lines:
-        match = re.fullmatch(r"\[[0-9:]+\] mantra: Unable to load texture '(.+)'", line)
-        if match:
-            diagnostics.append({'kind': 'texture_load_failed', 'renderer': 'mantra',
-                                'path': match[1], 'message': line})
+    diagnostics = _native_texture_diagnostics(
+        native_output,
+        diagnostic_lines['lines'] if diagnostic_lines is not None else None,
+        diagnostic_lines['renderer'] if diagnostic_lines is not None else None)
     if not diagnostics:
         return envelope
     envelope['native_diagnostics'] = diagnostics
@@ -592,6 +609,15 @@ def _record_native_diagnostics(envelope, native_output, omitted=0, diagnostic_li
     checks = envelope.setdefault('outcome', {}).setdefault('checks', {})
     checks['failed'] = checks.get('failed', 0) + 1
     return envelope
+
+
+def _successful_execution_result(envelope):
+    if not envelope['ok']:
+        raise RuntimeError(envelope.get('error') or 'Bridge execution failed')
+    diagnostics = envelope.get('native_diagnostics', [])
+    if diagnostics:
+        raise RuntimeError('; '.join(row['message'] for row in diagnostics))
+    return envelope.get('result')
 
 
 def worker(request_file):
@@ -627,14 +653,7 @@ def worker(request_file):
             return execution_projection(directory, identifier, envelope, inline_budget=budget)
 
         def successful(envelope):
-            if not envelope['ok']:
-                raise RuntimeError(envelope.get('error') or 'Bridge execution failed')
-            checks = envelope.get('outcome', {}).get('checks', {})
-            if checks.get('failed', 0) > 0:
-                diagnostics = envelope.get('native_diagnostics', [])
-                detail = '; '.join(row['message'] for row in diagnostics)
-                raise RuntimeError(detail or 'Bridge execution reported failed checks')
-            return envelope.get('result')
+            return _successful_execution_result(envelope)
 
         def run():
             # Reserved driver initialization, on this worker's owning thread.

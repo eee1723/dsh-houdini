@@ -36,14 +36,24 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     def chatty_native_call():
         os.write(1,b'prefix\n'+b'x'*200000+b'\n')
         os.write(1,b"[12:34:56] mantra: Unable to load texture 'E:/missing.png'\n")
+        os.write(1,b"[12:34:57] Unable to load texture '../../../run/inputs/roughness.png'\n")
+        os.write(1,b'Command: husk -s /Render/settings\n')
         os.write(1,b'y'*200000)
         return {'ok':True,'outcome':{'checks':{'failed':0}}}
     envelope,native_output,omitted,lines=runner._execute_with_native_output(chatty_native_call)
     envelope=runner._record_native_diagnostics(envelope,native_output,omitted,lines)
     assert omitted>0 and len(native_output)<300000
-    assert envelope['native_diagnostics'][0]['path']=='E:/missing.png'
-    assert envelope['outcome']['checks']['failed']==1
+    assert [row['path'] for row in envelope['native_diagnostics']]==['E:/missing.png','../../../run/inputs/roughness.png']
+    assert [row['renderer'] for row in envelope['native_diagnostics']]==['mantra','karma']
+    assert envelope['outcome']['checks']['failed']==1,'two diagnostics belong to one native renderer operation'
     assert envelope['native_output_omitted_bytes']==omitted
+    try:runner._successful_execution_result(envelope)
+    except RuntimeError as error:assert 'Unable to load texture' in str(error)
+    else:raise AssertionError('a native texture failure was accepted')
+    # An ordinary authored check failure is not a native renderer diagnostic and
+    # must not be reinterpreted by the isolated runner's texture-failure rule.
+    ordinary={'ok':True,'result':{'points':8},'outcome':{'checks':{'failed':1}}}
+    assert runner._successful_execution_result(ordinary)=={'points':8}
     cases=json.loads((ROOT/'tools/tests/fixtures/isolated-file-sequences.json').read_text(encoding='utf-8'))
     for case in cases['valid']:
         assert runner.manifest_inputs({'script':'build.py','files':case['files']})==case['expected']

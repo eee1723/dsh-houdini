@@ -133,4 +133,3 @@ try:
 finally:
     root.destroy()
 print('module checkpoint/discovery failure/integration retry/atomic rollback/signature discovery passed on '+hou.applicationVersionString())
-
