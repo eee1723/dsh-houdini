@@ -1,14 +1,12 @@
 ---
 name: houdini-solaris-karma-workflow
-description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma 材质与渲染网络。用于用户要求最终渲染、Karma CPU/XPU、MaterialX、USD 材质绑定、Render Settings、AOV、USD Render ROP，或把 SOP/COP 结果接入 /stage；不用于仅需 render_view 的快速 SOP 视觉验证。
+description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma 材质与渲染网络。用于新建最终渲染或无头图像检查的渲染链路、Karma CPU/XPU、MaterialX、USD 材质绑定、Render Settings、AOV、USD Render ROP，或把 SOP/COP 结果接入 /stage。
 ---
 
 # Houdini Solaris / Karma Workflow
 
-目标是留下当前 Houdini 版本中用户通过 Tab 菜单能理解和继续维护的 USD/Karma 网络，
-不以“有一张图片”替代材质、stage 和渲染契约。
-本skill的Karma架构偏好用于用户选择Karma或来源未规定渲染方法的任务。教程已明确其他渲染器/材质时先复现其方法；
-确认软件、版本或资源缺口需要适配Karma，或另建优化分支时再使用本skill，选择与切换沿[视频复现协议](../houdini-video-tutorial/references/reconstruction.md)。
+新建渲染链路默认使用 Solaris/Karma，包含最终渲染和需要在无头进程出图的检查。交付当前 Houdini 版本中用户能通过 Tab 菜单理解和继续维护的材质、stage 与渲染入口。
+用户指定渲染器、继续已有有效渲染链路或复现教程时，沿用相应方法。教程遇到软件、版本或资源缺口，或需要另建优化分支时，沿[视频复现协议](../houdini-video-tutorial/references/reconstruction.md)决定是否切换。
 
 ## 执行顺序
 
@@ -22,7 +20,7 @@ description: 在 Houdini Solaris/LOPs 中设计、构建、检查和交付 Karma
 4. 按材质载体选择入口：普通shader网络可从Material Library内的 **Karma Material Builder** 开始，
    `tab_apply(matlib, 'vop_karmamtlxsubnet')`提供预配置的Karma/MaterialX subnet。H22以COP纹理为主要输入时
    也可使用Texture Material Library + USD Material COP；H21不提供这组H22节点，按实际发现使用图像输入。
-5. 来源未规定架构的新Karma最终渲染默认用 `/stage` 的 **Karma (Setup)**；调用
+5. 新建Karma渲染链路用 `/stage` 的 **Karma (Setup)**；调用
    `tab_apply('/stage', 'lop_karma_setup')`，保留它生成的 Karma Render Settings 与
    USD Render ROP 及二者表达式。普通 `karma` LOP 或传统 Principled 能出图不代表这是
    当前默认架构。

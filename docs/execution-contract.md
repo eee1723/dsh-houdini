@@ -90,9 +90,9 @@ HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过
 
 [scene-context](../src/scene-context.ts)为每条收到的用户消息采集一次轻量元数据，帮助解释“这个节点”“选中对象”“当前场景”等现场指代。切换视角、网络、选择或 frame 不把新现场绑定到旧消息；当前状态需要显式 inspect。选择是指代线索，不是修改授权。
 
-[context](../src/context.ts)通过 DSH 原生 context section 提供现场、待决执行和声明图像能力；通用历史压缩、消息更新和 token 管理由 DSH 完成。没有另一个可写任务账本或自建 surface 压缩器。
+[context](../src/context.ts)通过 DSH 原生 context section 提供现场观察与待决执行。通用历史压缩、消息更新和 token 管理由 DSH 完成。
 
-图像能力取当前模型 route 与附件服务元数据；houdini_capabilities 可显式查询。它不请求模型、不渲染、不自动换模型。文件传输、GUI 启动、图像显示及模型实际语义识图分别判断；没有成功内容级识图就保持视觉未验证。
+`houdini_capabilities` 按需读取当前模型的图片输入声明和附件通道。图片输入声明由 DSH 模型设置维护。变更设置或换到支持图片的模型后，沿原执行回执、隔离报告或保存文件读回已有图片。文件传输、GUI 启动、图像显示及模型实际语义识图分别判断，视觉状态以内容级识图为准。
 
 ## 类型、参数与网络操作
 

@@ -202,7 +202,7 @@ npm test
 
 功能回归验证真实接口和错误；GUI 验证页面及运行加载；模型任务评测验证自然采用与结果质量。三者按实际需要运行，结果不能相互替代。视觉验收区分文件与图像传输、显示、模型实际识图。
 
-[图像请求组合](../tools/tests/dsh-image-consumption-fixture.mjs)以`node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]`运行固定DSH Web标准preset、原生read_image及真实pi-ai适配器，由自建loopback provider捕获最终HTTP图片。它在同一会话调整并恢复原生requestImagePixelBudget，核对原参考/A/B均保留、请求变体与wire哈希一致、模型句柄尺寸、源文件/持久附件不变及无offload。受控响应不证明真实模型识图或token费用下降；比较像素和编码字节时分别记录格式变化，不把较小分辨率当成较小传输。缺少图片模态声明时保留unsupported元数据；只有用户明确确认路由后才允许allow_undeclared_image_input单次尝试，通道/查询失败与实际保存失败分别处理。记录实际Node/DSH/运行修复身份，标准preset通过不扩大为Houdini preset、GUI或正式发行验证。实际模型的预算对照仍沿下述授权试验入口。
+[图像请求组合](../tools/tests/dsh-image-consumption-fixture.mjs)以`node tools/tests/dsh-image-consumption-fixture.mjs <prepared-runtime> [output-root]`运行固定DSH Web标准preset、原生read_image及真实pi-ai适配器，由自建loopback provider捕获最终HTTP请求。先核对仅文本路由只收到占位文字，再通过原生模型设置开启同一路由的图片输入并读回原图。在同一会话调整并恢复原生requestImagePixelBudget，核对原参考/A/B均保留、请求变体与wire哈希一致、模型句柄尺寸、源文件/持久附件不变及无offload。比较像素和编码字节时分别记录格式变化。记录实际Node/DSH/运行修复身份，标准preset通过只证明此组合的传输和保留。实际模型识图和预算对照沿下述授权试验入口。
 
 任务拆分与完整源组件的方法改动，先用[skill审计](../skills/houdini-skill-governance/scripts/audit-houdini-skills.mjs)、preset组合与下述`--context-loop`验证注册、资料路由和实际模型输入。自然采用另用同模型、同要求、同预算的独立工程对照：观察源组件的局部检查是否影响后续构建，再执行换源、改布局、局部细化或共享尺寸变化，检查最终消费者与修改范围；用另一类任务验证领域外适用性。源本来应为Box、共享连续表面和先代理后细化都是合法反例，不按节点数、截图数或技能关键词评分。审查需包含能推翻自报成功的情况，例如实际开口被封堵但模板未变、同包围范围的错误形状和局部遮挡；模板或生成公式通过不能升级为最终实体关系通过。trace的原生图片与显式读图记录通过nextToolStep定位观察返回后提交的下一动作，引用原时间线而不推断修改、因果或成功；并发中先提交后返回的动作不算后续决策。受控模型能取到技能不证明自主分治或质量提升，保留质量、返工及计算成本的实际证据，过程产物留会话/临时目录。
 

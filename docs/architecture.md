@@ -119,7 +119,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/frontend-host.ts](../src/frontend-host.ts) | bare包入口，在Host根Loader登记前端模块、前端能力与教程视频用途配置；DSH volatile字段和共享设置表单持久化provider/model/Python，设置页直接保存同源配置并诊断本机依赖；模型工具通过preset内dsh-houdini/agent加载 |
 | [src/node-delivery.ts](../src/node-delivery.ts) | 从原DSH执行回执坐标取回节点交付，复用当前Agent执行端绑定与Bridge队列；浏览器不自报节点目标 |
 | [src/node-delivery-record.ts](../src/node-delivery-record.ts) | Host与生成客户端共享成功present_nodes动词回执的提取，不依赖业务返回值包装 |
-| [src/image-output.ts](../src/image-output.ts) | 模型步骤前/显式查询的图像能力预检，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；缺少图片模态声明保留警告；用户明确确认路由后可单次allow_undeclared_image_input覆盖，实际路由接受与语义识图分别验证 |
+| [src/image-output.ts](../src/image-output.ts) | 按需读取 DSH 图片输入声明，Bridge 图像→DSH 原生附件；字节限额、原生与 Code Mode 图像返回，无工作区副本；模型设置由 DSH 维护，实际路由接受与语义识图分别验证 |
 | [src/image-generation.ts](../src/image-generation.ts) | Host图片生成/编辑：复用DSH配置/凭据、上传参考图原字节；managed经Bridge只读观察所选HIP，原图与预览分别保存，不修改场景、不自动重试或替换模型 |
 | [src/api-route.ts](../src/api-route.ts) | 图片与转录共用的DSH显式API路由、endpoint和凭据解析；不猜测模型协议、不维护第二份账号注册表 |
 | [src/video-transcription.ts](../src/video-transcription.ts) | 教程ASR发现与执行，复用DSH的环境清理后仅显式传入本次凭据；传递明确并发/速率与模型选项，原生/PTC消费同一转录结果，attempt/outcome仍由视频脚本维护，无HOM和自动重试 |
@@ -140,8 +140,8 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/executor-controller.ts](../src/executor-controller.ts) | DSH认证Remote：按明确启动来源创建或定位指定会话，列出/选择/取消目标和退出活动查询；不扫描会话历史、不恢复节点或迁移目录 |
 | [src/executor-host.ts](../src/executor-host.ts) | 官方根插件拥有的现场目录与选择服务；await私有投影handle就绪后再公开域服务，原生不唤醒上下文记录初始选择，preset不拥有Host，卸载撤销旧Bridge请求 |
 | [src/executor-identity-projection.ts](../src/executor-identity-projection.ts) | 同源Session投影：目标选择/取消、Bridge终态与旧格式读取，晚到回执不能覆盖新选择；私有handle经域服务委托同步读取，不跨域按注册key访问；历史不证明在线或节点归属 |
-| [src/context.ts](../src/context.ts) | 上下文装配与请求准入；原生/PTC共用本步toolSet判断可用Houdini工具，图像能力消费本步modelSelection/agent.model；异步准备文本由原生context provider同步读取，不以仅注册存在或顶层schema猜准入 |
-| [src/scene-context.ts](../src/scene-context.ts) | 用户消息进入原生Inbox时采集一次轻量现场metadata；热状态仅保留待领取消息和当前观察，原生discard释放取消项；冷领取只复用同消息持久观察或明确缺失，不把重开后的现场补成旧观察；完整观察持久化后，后续组装（自动goal轮、工具续步、inbox刷新）只注入带captured_at/age的历史摘要而非重复整份现场，避免把到达时观察当当前场景 |
+| [src/context.ts](../src/context.ts) | 上下文装配与请求准入；原生/PTC共用本步toolSet判断可用Houdini工具；异步准备的现场观察和待决执行由原生context provider同步读取 |
+| [src/scene-context.ts](../src/scene-context.ts) | 用户消息进入原生Inbox时请求一次轻量现场观察，`capture_requested_at`记录请求时间，`observed_at`记录Houdini主线程实际采样时间。热状态只保留待领取消息和当前观察，原生discard释放取消项；冷领取复用同消息的持久观察或报告缺失。完整观察持久化后，后续组装使用有界且稳定的历史摘要 |
 | [src/scene-recovery.ts](../src/scene-recovery.ts) | 原节点权限的独立保存点评估与激活重试；写入时仅对匹配保存点尝试恢复，不自动找窗/加载/丢内容；本对话成功Save As可在原授权项目内跟随原生工作目录，不改会话创建目录或历史位置 |
 | [src/prompt-data.ts](../src/prompt-data.ts) | 结构化补充段读取、事件定位及JSON字符串的模板转义 |
 | [src/execution-history.ts](../src/execution-history.ts) | 单次快照的调用/结果索引、终态回执与job关联、未决执行和当前runtime锚；派生视图共同消费 |
@@ -176,7 +176,7 @@ domain skill给出本领域默认方法、例外和按需路由，reference维�
 复杂任务由persona路由到[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)，按编辑用途和依赖选择可观察单元；SOP的完整源组件由[建模方法](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局)维护，网络分组由[网络交接skill](../skills/houdini-network-handoff/SKILL.md)消费实际职责。DSH计划记录当前工作，执行回执提供事实，不增加模块状态机、完成账本或执行门槛。
 
 工作区差异提醒由同次执行返回的已命名HIP目录投影，按agent去重；无目录或不确定回执不另发HOM探针。
-scene-context为每条用户消息提供一次消息绑定的metadata。节点选择保留现有信息，选中的便签和网络框单列类型、父网络及名称，界面上的点面选择保持未观察。execution-history关联已记录执行事实，execution-state仅提供运行状态、真实失败与未知请求。任务资料从resource按需读取。
+同一步领取多条用户消息时，scene-context只注入最后一条关联的metadata。同批其他消息的现场指代需另行核对。选中的便签和网络框保留类型、父网络及名称，界面上的点面选择保持未观察。execution-history关联已记录执行事实，execution-state仅提供运行状态、真实失败与未知请求。任务资料从resource按需读取。
 task-sources是按需回读/历史替换恢复用的原始材料索引。补充段独立记入plugin消息，不随Host整包runtime context重发。
 三者不互相替代。缺失不等于空场景，被动选择变化不构成新任务或foreign修改授权。
 client消费公开trajectory snapshot，不依赖已删除的Session内部字段。

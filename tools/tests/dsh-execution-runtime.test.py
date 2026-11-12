@@ -133,6 +133,14 @@ try:
     assert managed['execution']['impact']['attempted'] and not managed['execution']['impact']['unavailable'], managed
     assert effect_node.sessionId() in {item['identity'] for item in managed['execution']['impact']['nodes']}, managed
 
+    no_later_write = bridge.run_code(
+        f"set_parm({effect_node.path()!r}, 'sizex', 9)\n"
+        "mode = scene_info()['update_mode']\nset_update_mode(mode, expected_mode=mode)",
+        owner_session='effect-observer')
+    assert no_later_write['ok'] and no_later_write['transaction']['effects'] == 'registered', no_later_write
+    assert no_later_write['verbs'][-1]['summary']['changed'] is False, no_later_write
+    assert no_later_write['execution']['impact']['last_edit_ledger_index'] == 1, no_later_write
+
     # A cook/observation verb exercises Houdini without an instrumented scene
     # write; it is a managed operation (its facts are in the verb result), not a
     # metadata-read native evaluation.

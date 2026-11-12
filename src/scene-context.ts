@@ -89,7 +89,7 @@ export class SceneContextProvider {
     return {key,capturedAt,full:Promise.resolve(text)}
   }
 
-  /** Arrival time for an observation text, used for honest age reporting. */
+  /** Recover the Host's request time, separate from Houdini's observed_at. */
   private capturedAtOf(text:string):number|undefined {
     try {
       const value=JSON.parse(text.slice(text.indexOf('\n')+1))
@@ -103,18 +103,23 @@ export class SceneContextProvider {
     // The summary must be byte-stable for one observation: DSH materializes
     // context snapshots over time, so a live-computed field (for example an
     // elapsed age) would make every snapshot differ and defeat deduplication.
-    const head='Houdini historical scene observation. This is the scene state when its user message arrived, '
-      +'NOT current scene state; later edits and selection changes are not reflected by this snapshot. '
+    const head='Houdini historical scene observation. This only applies to its recorded user message. '
+      +'When available, observed_at records when Houdini sampled the scene on its main thread. '
       +'Query scene_info/node_info/read_parms when current state matters.\n'
     let summary:Record<string,unknown>
     try {
       const value=JSON.parse(full.slice(full.indexOf('\n')+1))
+      if(value?.historical===true&&value.user_message_id===key) {
+        const retained=head+literal(JSON.stringify(value))
+        if(retained.length<=COMPACT_BUDGET)return retained
+      }
       const observation:any=value?.observation, result:any=observation?.result
       const paths=(rows:any):any=>Array.isArray(rows)
         ? {...(rows.length>12?{count:rows.length}:{}),
             paths:rows.slice(0,12).map((row:any)=>typeof row==='string'?row:({
-              path:row?.path??null,...(row?.type?{type:row.type}:{}),
+              ...(row?.path?{path:row.path}:{}),...(row?.type?{type:row.type}:{}),
               ...(row?.parent?{parent:row.parent}:{}),
+              ...(row?.name?{name:row.name}:{}),
               ...(row?.needs_cook!==undefined?{needs_cook:row.needs_cook}:{}),
               ...(Array.isArray(row?.errors)&&row.errors.length?{errors:row.errors.slice(0,1)}:{}),
               ...(Array.isArray(row?.warnings)&&row.warnings.length?{warnings:row.warnings.slice(0,1)}:{})}))}
@@ -125,6 +130,7 @@ export class SceneContextProvider {
           ...(observation?.reason?{reason:observation.reason}:{}),
           ...(result?{result:{
             ...(result.runtime_id?{runtime_id:result.runtime_id}:{}),
+            ...(typeof result.observed_at==='number'?{observed_at:result.observed_at}:{}),
             ...(result.version?{version:result.version}:{}),
             ...(result.hip_path?{hip_path:result.hip_path}:{}),
             ...(result.hip_is_new!==undefined?{hip_is_new:result.hip_is_new}:{}),
@@ -145,12 +151,14 @@ export class SceneContextProvider {
     if(text.length>COMPACT_BUDGET) {
       // Keep the historical marker and identity fields, drop optional arrays.
       const observation:any=(summary as any)?.observation,hint=observation?.result?{result:{
+        observed_at:observation.result.observed_at,
         hip_path:observation.result.hip_path??null,has_unsaved_changes:observation.result.has_unsaved_changes??null,
         selection_truncated:true}}:{}
       summary={...summary,observation:{...observation,...hint}}
       text=head+literal(JSON.stringify(summary))
     }
-    if(text.length>COMPACT_BUDGET) text='Houdini historical scene observation (details unavailable; query scene_info when current state matters).'
+    if(text.length>COMPACT_BUDGET)text=head+literal(JSON.stringify({user_message_id:key,capture_requested_at:capturedAt,
+      historical:true,observation:{status:'details_omitted'}}))
     return text
   }
 
@@ -183,8 +191,9 @@ export class SceneContextProvider {
         observation: { ok: false, status: 'unavailable', reason: 'metadata exceeds observation budget; query the relevant target explicitly' } })
     }
     if (literal(data).length > 6000) data = JSON.stringify({ ...binding, observation:{ok:false,status:'unavailable',reason:'escaped metadata exceeds observation budget; query the relevant target explicitly'} })
-    const text = 'Houdini metadata observation. Captured once for this user message; never refreshed by tools or elapsed time. '
-      + 'Treat it as the scene state when the user message arrived, not as current scene state; geometry/selection may change afterward. '
+    const text = 'Houdini metadata observation. A single sample was requested when this user message arrived. '
+      + 'If this step includes several user messages, this applies only to the last one. Resolve the other messages’ scene references separately. '
+      + 'When available, observed_at records when Houdini sampled the scene on its main thread. Geometry and selection can change before and after sampling. '
       + 'Query explicitly when current state is needed. Unavailable does not mean an empty scene.\n' + literal(data)
     return text
   }

@@ -36,20 +36,29 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     def chatty_native_call():
         os.write(1,b'prefix\n'+b'x'*200000+b'\n')
         os.write(1,b"[12:34:56] mantra: Unable to load texture 'E:/missing.png'\n")
+        os.write(1,b"[12:34:57] mantra: Unable to load texture 'E:/missing.png'\n")
+        os.write(1,b'Command: husk --renderer HdStormRendererPlugin -s /Render/settings\n')
         os.write(1,b"[12:34:57] Unable to load texture '../../../run/inputs/roughness.png'\n")
-        os.write(1,b'Command: husk -s /Render/settings\n')
+        # A diagnostic-looking fragment inside a long log line is not a match.
+        os.write(1,b'z'*(runner._NATIVE_LINE_LIMIT+1) + b"[12:34:58] Unable to load texture 'fragment.png'\n")
         os.write(1,b'y'*200000)
         return {'ok':True,'outcome':{'checks':{'failed':0}}}
-    envelope,native_output,omitted,lines=runner._execute_with_native_output(chatty_native_call)
-    envelope=runner._record_native_diagnostics(envelope,native_output,omitted,lines)
-    assert omitted>0 and len(native_output)<300000
+    envelope=runner._execute_with_native_output(chatty_native_call)
+    assert envelope['native_output_omitted_bytes']>0 and len(envelope['native_output'])<300000
+    assert 'Unable to load texture' not in envelope['native_output'], 'only the full stream contains the failures'
     assert [row['path'] for row in envelope['native_diagnostics']]==['E:/missing.png','../../../run/inputs/roughness.png']
-    assert [row['renderer'] for row in envelope['native_diagnostics']]==['mantra','karma']
+    assert [row['renderer'] for row in envelope['native_diagnostics']]==['mantra','unknown']
     assert envelope['outcome']['checks']['failed']==1,'two diagnostics belong to one native renderer operation'
-    assert envelope['native_output_omitted_bytes']==omitted
     try:runner._successful_execution_result(envelope)
     except RuntimeError as error:assert 'Unable to load texture' in str(error)
     else:raise AssertionError('a native texture failure was accepted')
+    def many_texture_failures():
+        for index in range(runner._NATIVE_DIAGNOSTIC_LIMIT+3):
+            os.write(2,f"[12:34:57] Unable to load texture 'missing{index}.png'\n".encode('ascii'))
+        return {'ok':True}
+    many=runner._execute_with_native_output(many_texture_failures)
+    assert len(many['native_diagnostics'])==runner._NATIVE_DIAGNOSTIC_LIMIT
+    assert many['native_diagnostics_omitted_matches']==3
     # An ordinary authored check failure is not a native renderer diagnostic and
     # must not be reinterpreted by the isolated runner's texture-failure rule.
     ordinary={'ok':True,'result':{'points':8},'outcome':{'checks':{'failed':1}}}

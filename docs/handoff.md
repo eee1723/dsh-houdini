@@ -1,8 +1,8 @@
 # 当前开发交接
 
-核对日期：2026-11-11
+核对日期：2026-11-12
 
-源码候选0.1.10使用执行合同123，精确面向DSH 0.2.2-rc.1，尚未公开发布。公开包0.1.8使用120，前一候选0.1.9使用121；升级后须让已有 Houdini 窗口加载新组件。旧版0.1.6使用119和DSH rc.3/rc.5。现役职责见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
+源码候选0.1.10使用执行合同124，精确面向DSH 0.2.2-rc.1，尚未公开发布。公开包0.1.8使用120；升级后须让已有 Houdini 窗口加载新组件。现役职责见[架构](architecture.md)、[工具说明](tools.md)和[开发规范](development.md)。
 
 ## 待交接事项
 
@@ -66,7 +66,7 @@
 - 分治验证：须观察拆分在未见产品、装配、模拟与连续改稿中的自然采用；核对各作者实读原图、观察尺度、组合源近景及换源/改布局后的关系保持，以及曲线/净距反馈、工程入口和直接文件交付的实际收益。沿同模型、同参考和相近展示条件对照，方法见[文件交付](../skills/houdini-network-handoff/references/file-delivery.md)。
 - 现状：参考读取、预览路线和目标持续推进的自然采用仍不稳定；原图未送达不能用成图/数值证明匹配。须以同模型、同参考及相同视觉条件，对照未见产品、复杂资产连续修改、源替换和多轮Goal续跑，分别测效果、返工与计算成本，不以工具采用率或局部几何回归代表整件质量。
 - 推进与反馈：长会话曾确认Desktop renderer两次OOM；源码已改用轻量会话事实、hash归档和独立图片直传。仍须在官方入口核对长任务压缩/重开后的页面内存、完整Trace与任务恢复，不能以单元测试宣布崩溃消除。
-- 图像与隔离验证：缺少图片模态声明时的单次覆盖已过Host回归，仍须在新Houdini会话对精确路由做真实请求验证，不能以配置声明或附件到达代替识图。隔离纹理假绿由H21/H22默认Karma Setup + MaterialX真实路径覆盖漏声明、builder忽略错误、补声明正例和后续停止；H21无Error Summary时renderer保持unknown，Mantra旧格式仅有纯文本兼容回归。其他渲染器及自然任务依赖闭包仍待验证，未声明依赖不会由worker猜测补齐。
+- 图像与渲染验证：在用户正常入口核对原生模型设置变更后，同一 Houdini 会话能查回既有图像并完成实际识图。隔离诊断须继续观察其他渲染器及真实依赖闭包。现场 `render_frame` 的文件新鲜度与 ROP 错误不能覆盖原生进程仅写日志的纹理失败。下一步在 H21/H22 验证 USD Render ROP 的原生日志能否按调用取得并保留用户既有日志设置，再决定是否扩展现场回执。需要核实日志级纹理故障时，使用对应保存副本的独立检查。
 - 下一步：以大型Packed/特殊属性布局、复杂依赖快照、薄障碍、采样间隙和未选部件漂移审查检查边界；渲染查询内存错误按进程定位。Karma默认、HIP分组输出与原生产品继承须正式入口核对。用同模型独立任务检查基准迁移、表面覆盖、常用改稿、曲线编辑与材质消费者，观察委派后需求保持及必要尺度原图的实际采用。
 - 验证缺口：H21.0.440/H22.0.368 的展开 VEX 在无插件的最小工程中仍可触发下游编译崩溃，须厂商定位。H21 加载 H22 保存的复杂工程时发生的 GUI 崩溃尚未定位。H22 的 USD 原生退出问题仍可用[独立复现工具](../tools/reproduce-usd-exit.py)观测，受管的隔离检查进程已改用专用收尾路径，实测范围不覆盖任意裸 hython 脚本。
 - 移除条件：不同产品和连续修改结果有实际观察，优化收益可以解释；模型漏件不直接转成永久执行门。
@@ -80,10 +80,10 @@
 - 移除条件：真实资料与工程交付贯通，解析格式通过不冒充实际效果。
 - 入口：[视频入口](../skills/houdini-video-tutorial/SKILL.md)、[COP入口](../skills/houdini-cop-workflow/SKILL.md)。
 
-### H-07 长任务审计与系统接口修复
+### H-07 长任务的现场回执验证
 
 - 状态：待验证
-- 现状：test158 运行的是已含部分新机制的开发构建，不能整体当旧行为证据。当前源码已完成：派生查询与 effects/native evaluation、资源空参、connect preserve_position、scene-context 一份 full+稳定摘要、verb_help 目录、isolated 内联清单/独占 run/摘要与详情指针、Karma/Mantra 纹理失败且普通检查不误停、标准库来源复用、图片原结果只读恢复、persona 有收益续轮与委派前去重。机制已测，未在 live 加载。
-- 下一步：真实 DSH+live Houdini 验证；H21/H22 已过 isolated/effects/查询及核心边界，live 的 no_scene_change、动态写 unknown、图片实际路由和自然长任务收益仍未验证。
-- 移除条件：真实 live 加载与自然任务收益有证据，effects 不再误伤 dry_run/preflight 且动态/裸 HOU 仍 unknown。
+- 现状：源码候选的回执和恢复覆盖隔离检查，用户正在使用的 Desktop 和 Houdini 组合仍缺现场证据。
+- 下一步：在官方 DSH Desktop 加载当前候选，沿真实 Houdini 对话核对零写与未确认恢复、历史选区与当前目标、原请求图片查回，以及后台执行中断后的同源恢复。自然任务质量和长时内存见 H-03。
+- 移除条件：真实入口的原生工具结果、选中任务、现场身份及重开后的恢复记录一致；动态与裸 HOM 的影响保持有界表述。
 - 入口：[execution runtime](../tools/tests/dsh-execution-runtime.test.py)、[isolated host](../tools/tests/isolated-execution.test.mjs)、[manifest](../tools/tests/dsh-isolated-manifest.test.py)、[real isolated](../tools/tests/dsh-isolated-houdini.test.py)、[snapshot budget](../tools/tests/scene-snapshot-budget.test.mjs)、[delivery audit](../tools/tests/delivery-audit.test.mjs)。

@@ -287,6 +287,14 @@ try:
             failure = restore_failed['verbs'][0]['summary']
             assert failure['phase'] == 'render_restore' and failure['restored'] is False, restore_failed
             assert failure['fresh'] is True and failure['restore_errors'], restore_failed
+            undo = restore_failed.get('rollback') or {}
+            if undo.get('applied') and not undo.get('error'):
+                assert restore_failed['transaction']['effects'] == 'none', restore_failed
+                assert restore_failed['transaction']['status'] == 'rolled_back', restore_failed
+            else:
+                assert restore_failed['transaction']['effects'] == 'unverified', restore_failed
+                assert restore_failed['transaction']['status'] == 'recovery_unverified', restore_failed
+            assert restore_failed['execution']['impact']['unavailable'] is True, restore_failed
             assert all(row['summary']['dispatched'] is False for row in restore_failed['verbs'][1:3]), restore_failed
             assert restore_failed['verbs'][3]['ok'] is True, restore_failed
             assert hou.node(target_path).evalParm('tx') == 2

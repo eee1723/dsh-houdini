@@ -219,7 +219,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
     if any(n.parent() != p or n.type().category() != hou.sopNodeTypeCategory() for n in selected):
         raise ValueError("all nodes must be direct SOP children of parent")
     if hou.updateModeSetting() == hou.updateMode.Manual:
-        result = {'ok':False, 'healthy':False, 'warning_free':None, 'parent':p.path(),
+        result = {'ok':False, 'scene_writes':0, 'healthy':False, 'warning_free':None, 'parent':p.path(),
                   'output':out.path(), 'status':'not_evaluated_manual', 'update_mode':'manual',
                   'failure_reasons':['not_evaluated_manual'], 'geometry':None, 'nonempty':None,
                   'output_fingerprint':None, 'semantic_status':'unverified',
@@ -255,7 +255,7 @@ def verify_network(parent, output=None, nodes=None, limit: int = 512, require_va
         reasons = [r for r in reasons if r != 'empty_output'] + ['unverified_output_content']
     if public is not None and not public['ok']:
         reasons.append('public_output')
-    result = {'ok': not reasons, 'output': out.path(), 'failure_reasons': reasons,
+    result = {'ok': not reasons, 'scene_writes': 0, 'output': out.path(), 'failure_reasons': reasons,
             'parent': p.path(), 'frame': float(hou.frame()),
             'checked_at': time.time(), 'scope': 'direct_children' if nodes is None else 'explicit_nodes',
             'scope_signature': hashlib.sha256('\n'.join(sorted(n.path() for n in selected)).encode()).hexdigest(),

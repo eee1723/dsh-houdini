@@ -337,16 +337,19 @@ def _managed_scene_write(entry):
 
     Explicit counters win. A successful dry_run/applied=false/changed=false call
     writes nothing; an observation verb without a counter (verify/render/cook)
-    is not a write; test controls count only when their state was not restored.
+    is not a write unless temporary state failed to restore. Control tests also
+    count when they return without confirming restoration.
     Uncounted node/global edit verbs stay conservative because their summary
     omitted the counter, not because they are known to write.
     """
     summary = entry.get('summary') or {}
+    restored = summary.get('restored', summary.get('batch_parameter_state_restored',
+                                                   summary.get('parameter_state_restored')))
     writes = summary.get('scene_writes')
     if isinstance(writes, int):
-        return writes != 0 and (entry.get('ok') is True or summary.get('restored') is not True)
-    if summary.get('restored') is True:
-        return False
+        return writes != 0 and (entry.get('ok') is True or restored is not True)
+    if restored is not None:
+        return restored is False
     if entry.get('ok') is True and (summary.get('dry_run') is True
                                     or summary.get('applied') is False or summary.get('changed') is False):
         return False
@@ -355,7 +358,7 @@ def _managed_scene_write(entry):
     if definition is None:
         return False
     if name in ('test_controls', 'test_cop_controls'):
-        return summary.get('restored') is not True
+        return True
     if definition.content_impact == 'none':
         return False
     return True
@@ -504,7 +507,6 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, 
             result = fn(*args, **kwargs)
             if impact is not None:
                 if edits_content:
-                    impact['last_edit_ledger_index'] = len(ledger) + 1
                     if name != 'delete_node':
                         _observe_impact(targets, impact, descendants=name == 'rename_node')
                 if name in ('test_controls', 'test_cop_controls') and isinstance(result, dict) and result.get('restored') is not True:
@@ -977,7 +979,8 @@ class ExecutionRuntime:
         # Static calls may never run, and an unrecognized/imported call can
         # still mutate the scene. Neither absence nor presence in the AST is
         # evidence that arbitrary Python made no changes or committed edits.
-        mutation_attempted = any(_managed_scene_write(v) for v in verb_ledger)
+        last_write = next((index for index in range(len(verb_ledger), 0, -1)
+                           if _managed_scene_write(verb_ledger[index - 1])), None)
         # Three orthogonal facts, all from existing receipts: the managed write
         # set (effects), detected uninstrumented HOM, and native evaluation.
         # effects="none" means the instrumented channel registered no write; it
@@ -993,7 +996,7 @@ class ExecutionRuntime:
         unconservative = _uninstrumented_hom(raw_usage, gate_outcome) or analysis.unresolved_source
         uninstrumented = executed and (unconservative or not verb_ledger)
         native = native_evaluation['attempted']
-        effects = ('none' if not executed or clean_undo or not mutation_attempted
+        effects = ('none' if not executed or clean_undo or last_write is None
                    else 'registered' if not failed else 'unverified')
         if not executed:
             transaction_status = 'no_scene_change'
@@ -1041,6 +1044,9 @@ class ExecutionRuntime:
             _observe_impact([node for identity in created_nodes if (node := hou.nodeBySessionId(identity)) is not None], impact)
         else:
             impact = {'nodes': {}, 'attempted': False, 'global': False, 'truncated': False, 'unavailable': False}
+        if last_write is not None:
+            impact['attempted'] = True
+            impact['last_edit_ledger_index'] = last_write
         # unavailable marks detected evidence gaps, not ordinary registered edits:
         # uninstrumented HOM, native evaluation, failed impact observation or an
         # unrecovered managed write; a registered write set stays observable.

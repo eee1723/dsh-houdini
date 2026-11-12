@@ -201,7 +201,8 @@ def execution_view(envelope, details):
            'fields': ['/' + key for key in envelope if key != 'verbs']}}
     fields = [('error', 1600), ('outcome', 800), ('rollback', 800), ('scope', 450),
               ('semantic_status', 160), ('restored', 160), ('execution', 1000),
-              ('script', 500), ('native_diagnostics', 1600), ('native_output_omitted_bytes', 160), ('evidence', 2300),
+              ('script', 500), ('native_diagnostics', 1600), ('native_diagnostics_omitted_matches', 160),
+              ('native_output_omitted_bytes', 160), ('evidence', 2300),
               ('checks', 800), ('result', 4000), ('native_output', 1200),
               ('stderr', 700), ('advisory', 450), ('stdout', 1000),
               ('transaction', 700), ('rawUsage', 500), ('artifactCandidates', 400)]
@@ -523,7 +524,38 @@ def load_manifest(path, *, expected_sha256=None, base=None):
     return manifest
 
 
-_TEXTURE_LOAD_FAILURE = re.compile(r"\[[0-9:]+\]\s+(?:(mantra):\s+)?Unable to load texture '(.+)'")
+_TEXTURE_LOAD_FAILURE = re.compile(rb"\[[0-9:]+\]\s+(?:(mantra):\s+)?Unable to load texture '(.+)'")
+_NATIVE_LINE_LIMIT = 128 * 1024  # Includes a UTF-8 Windows extended-length path.
+_NATIVE_DIAGNOSTIC_LIMIT = 16
+
+
+def _scan_native_diagnostics(stream):
+    """Collect distinct texture failures with bounded memory, including skipped preview text."""
+    diagnostics, seen, omitted = [], set(), 0
+    while raw := stream.readline(_NATIVE_LINE_LIMIT + 1):
+        if len(raw) > _NATIVE_LINE_LIMIT:
+            # Drain the remainder without interpreting its fragments as log lines.
+            while raw and not raw.endswith(b'\n'):
+                raw = stream.readline(_NATIVE_LINE_LIMIT + 1)
+            continue
+        message = raw.rstrip(b'\r\n')
+        match = _TEXTURE_LOAD_FAILURE.fullmatch(message)
+        if not match:
+            continue
+        # Husk is a delegate-agnostic renderer host. A command line elsewhere in
+        # the output cannot identify the renderer that emitted this diagnostic.
+        renderer, path = match[1] or b'unknown', match[2]
+        key = (renderer, path)
+        if key in seen:
+            continue
+        if len(diagnostics) >= _NATIVE_DIAGNOSTIC_LIMIT:
+            omitted += 1
+            continue
+        seen.add(key)
+        diagnostics.append({'kind': 'texture_load_failed', 'renderer': renderer.decode('ascii'),
+                            'path': path.decode('utf-8', errors='replace'),
+                            'message': message.decode('utf-8', errors='replace')})
+    return diagnostics, omitted
 
 
 def _execute_with_native_output(call):
@@ -564,50 +596,19 @@ def _execute_with_native_output(call):
             marker = ('\n[native output omitted %d bytes; full stream was scanned for renderer diagnostics]\n' % omitted).encode('ascii')
             native_log.seek(-edge, os.SEEK_END)
             data = head + marker + native_log.read(edge)
-        native_output = data.decode('utf-8', errors='replace')
-        diagnostic_lines, husk = [], False
         native_log.seek(0)
-        for raw_line in native_log:
-            line = raw_line.decode('utf-8', errors='replace').rstrip('\r\n')
-            husk = husk or re.match(r'^Command: husk(?:\s|$)', line) is not None
-            if _TEXTURE_LOAD_FAILURE.fullmatch(line):
-                diagnostic_lines.append(line)
-    # Facts come from the complete stream, including any omitted middle. The
-    # bounded display text is never reparsed to reconstruct renderer identity.
-    evidence = {'lines': diagnostic_lines, 'renderer': 'karma' if husk else 'unknown'}
-    return envelope, native_output, omitted, evidence
-
-
-def _native_texture_diagnostics(native_output, diagnostic_lines=None, renderer=None):
-    if renderer is None:
-        renderer = 'karma' if re.search(r'^Command: husk(?:\s|$)', native_output, re.MULTILINE) else 'unknown'
-    diagnostics, seen = [], set()
-    for line in native_output.splitlines() if diagnostic_lines is None else diagnostic_lines:
-        match = _TEXTURE_LOAD_FAILURE.fullmatch(line)
-        if match and line not in seen:
-            seen.add(line)
-            diagnostics.append({'kind': 'texture_load_failed', 'renderer': match[1] or renderer,
-                                'path': match[2], 'message': line})
-    return diagnostics
-
-
-def _record_native_diagnostics(envelope, native_output, omitted=0, diagnostic_lines=None):
-    """Promote observed native texture-load failures, not arbitrary logs or checks."""
-    if native_output:
-        envelope['native_output'] = native_output
+        diagnostics, omitted_matches = _scan_native_diagnostics(native_log)
+    if data:
+        envelope['native_output'] = data.decode('utf-8', errors='replace')
     if omitted:
         envelope['native_output_omitted_bytes'] = omitted
-    diagnostics = _native_texture_diagnostics(
-        native_output,
-        diagnostic_lines['lines'] if diagnostic_lines is not None else None,
-        diagnostic_lines['renderer'] if diagnostic_lines is not None else None)
-    if not diagnostics:
-        return envelope
-    envelope['native_diagnostics'] = diagnostics
-    envelope.setdefault('checks', []).append({
-        'verb': 'native_renderer', 'status': 'failed', 'diagnostics': diagnostics})
-    checks = envelope.setdefault('outcome', {}).setdefault('checks', {})
-    checks['failed'] = checks.get('failed', 0) + 1
+    if diagnostics:
+        envelope['native_diagnostics'] = diagnostics
+        envelope.setdefault('checks', []).append({'verb': 'native_renderer', 'status': 'failed'})
+        checks = envelope.setdefault('outcome', {}).setdefault('checks', {})
+        checks['failed'] = checks.get('failed', 0) + 1
+    if omitted_matches:
+        envelope['native_diagnostics_omitted_matches'] = omitted_matches
     return envelope
 
 
@@ -616,7 +617,7 @@ def _successful_execution_result(envelope):
         raise RuntimeError(envelope.get('error') or 'Bridge execution failed')
     diagnostics = envelope.get('native_diagnostics', [])
     if diagnostics:
-        raise RuntimeError('; '.join(row['message'] for row in diagnostics))
+        raise RuntimeError(diagnostics[0]['message'])
     return envelope.get('result')
 
 
@@ -639,10 +640,9 @@ def worker(request_file):
                              'verb_catalog_sha256': bridge._VERB_CATALOG_HASH, 'owner_session': session}
 
         def execute(code, call, *, script=None):
-            envelope, native_output, omitted, diagnostic_lines = _execute_with_native_output(
+            return _execute_with_native_output(
                 lambda: bridge._execute(lambda: bridge.run_code(
                     code, owner_session=session, owner_call=call, script=script)))
-            return _record_native_diagnostics(envelope, native_output, omitted, diagnostic_lines)
 
         def retain(envelope, identifier):
             remaining = len(request['manifest']['checks']) - len(result['checks'])
@@ -651,9 +651,6 @@ def worker(request_file):
             reserve = 65536 + len(_encoded(request).encode('utf-8')) + remaining * DETAIL_THRESHOLD * 80
             budget = MAX_ARCHIVE_BYTES - len(_encoded(result).encode('utf-8')) - reserve
             return execution_projection(directory, identifier, envelope, inline_budget=budget)
-
-        def successful(envelope):
-            return _successful_execution_result(envelope)
 
         def run():
             # Reserved driver initialization, on this worker's owning thread.
@@ -705,7 +702,7 @@ def worker(request_file):
             else:
                 raw_builder = execute('__result__={"snapshot_loaded":True}', 'snapshot_loaded')
             result['builder'] = retain(raw_builder, 'builder')
-            successful(raw_builder)
+            _successful_execution_result(raw_builder)
             for check in manifest['checks']:
                 row = {'id': check['id'], 'kind': check['kind'], 'node': check['node'], 'frame': check['frame'], 'status': 'running'}
                 result['checks'].append(row)
@@ -722,7 +719,7 @@ def worker(request_file):
                         artifact = artifact_target(directory, check)
                         raw_execution = execute(frame_code + f'__result__=render_frame({node.path()!r},picture={str(artifact)!r},frame={check["frame"]!r})', check['id'])
                         row['execution'] = retain(raw_execution, 'check-' + check['id'])
-                        rendered = successful(raw_execution)
+                        rendered = _successful_execution_result(raw_execution)
                         if rendered.get('errors') or rendered.get('fresh') is not True:
                             raise ValueError('render did not produce a fresh error-free artifact')
                     else:
@@ -730,7 +727,7 @@ def worker(request_file):
                             raise ValueError('cook/cache require a SOP output')
                         raw_execution = execute(frame_code + f'__result__=verify_network({node.parent().path()!r},output={node.path()!r},nodes=[{node.path()!r}])', check['id'])
                         row['execution'] = retain(raw_execution, 'check-' + check['id'])
-                        geometry = successful(raw_execution)['geometry']
+                        geometry = _successful_execution_result(raw_execution)['geometry']
                         counts = {'points': geometry['points'], 'primitives': geometry['prims']}
                         row['geometry'] = counts
                         for name, value in check.get('expect', {}).items():

@@ -18,8 +18,10 @@ const SCENE='dsh-houdini:scene-context',STATE='dsh-houdini:execution-state'
 const user=(id,text)=>({id,role:'user',source:{kind:'user'},content:[{type:'text',text}]})
 const data=section=>JSON.parse(section.text.slice(section.text.indexOf('\n')+1))
 let calls=0,frame=1
-const selectedEditorItems=[{type:'sticky_note',parent:'/obj/example',name:'READ_ME'}]
-const bridge={async sceneContext(){calls++;return {ok:true,result:{frame,hip_path:'{{scene}}.hip',
+const observedAt=Date.now()/1000+1
+const selectedEditorItems=[{type:'sticky_note',parent:'/obj/example',name:'READ_ME'},
+  {type:'network_box',parent:'/obj/example',name:'GROUP_A'}]
+const bridge={async sceneContext(){calls++;return {ok:true,result:{frame,observed_at:observedAt,hip_path:'{{scene}}.hip',
   selection:[{path:'/obj/selected'}],selected_editor_items:selectedEditorItems}}}}
 const hooks={},registered=[]
 const projectionCtx=await fixtureProjectionContext({tools:{get:(_name,_scope,toolSet)=>toolSet?.enabled===false?undefined:({name:'houdini_inspect'})},systemPrompt:{context:c=>registered.push(c)},on:(n,f)=>hooks[n]=f})
@@ -37,6 +39,8 @@ async function assemble(message,contexts=registered.map(c=>({name:c.name,text:c.
 assert.equal((await assemble(user('greeting','你好'))).filter(section=>section.name===SCENE).length,1)
 const first=await assemble(user('selected','检查选中节点'))
 assert.equal(data(first[0]).observation.result.frame,1)
+assert.equal(data(first[0]).observation.result.observed_at,observedAt)
+assert.match(first[0].text,/sample was requested when this user message arrived/)
 assert.deepEqual(data(first[0]).observation.result.selected_editor_items,selectedEditorItems)
 assert(!first[0].text.includes('{{'),'scene strings cannot interpolate prompt variables')
 frame=20
@@ -58,6 +62,8 @@ const resumedData=data({text:resumedText})
 assert.equal(resumedData.historical,true)
 assert.equal(resumedData.user_message_id,'selected')
 assert.equal(resumedData.observation.result.hip_path,'{{scene}}.hip')
+assert.equal(resumedData.observation.result.observed_at,observedAt)
+assert.deepEqual(resumedData.observation.result.selected_editor_items.paths,selectedEditorItems)
 assert.equal(resumedData.age_seconds,undefined,'the summary must stay byte-stable, not carry a live-computed age')
 assert(!resumedText.includes('{{'),'compact summary cannot interpolate prompt variables')
 assert.equal(calls,2,'resume reuses the original selection observation')
@@ -77,7 +83,7 @@ assert.equal(data((await assemble())[0]).historical,true,
 session.append('user/message',{role:'user',content:[{type:'text',text:resumedText}],
   source:{kind:'runtime-context',form:'snapshot',sections:[{name:SCENE,text:resumedText}]}},{surfaceOp:'append'})
 assert.equal(data((await assemble())[0]).historical,true,'a persisted compact summary stays compact')
-assert.equal(data({text:await resumed.observe({session})}).historical,true)
+assert.equal(await resumed.observe({session}),resumedText,'reopening after the compact snapshot preserves the exact historical observation')
 assert.equal(calls,2,'stable deduplication never recaptures the scene')
 session.append('tool/call',{turn:1,step:2,callId:'unknown',name:'houdini_exec',arguments:'{}'})
 session.append('tool/result',{turn:1,step:2,message:{role:'tool',source:{kind:'tool',callId:'unknown'},content:[]},meta:{canonical:{ok:false,requestReceipt:{request_ref:'r.request',status:'unknown_transport'}}}},{surfaceOp:'append'})

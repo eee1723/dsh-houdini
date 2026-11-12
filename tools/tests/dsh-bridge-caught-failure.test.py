@@ -87,6 +87,16 @@ checked = dsh_bridge.run_code("__result__=verify_network('/obj/outcome_fixture',
 assert checked['ok'] and checked['outcome']['operations']['failed'] == 0, checked
 assert checked['outcome']['checks']['failed'] == 1, checked
 assert checked['checks'][0]['status'] == 'failed', checked
+corrected = dsh_bridge.run_code(
+    "try:\n    verify_network('/obj/outcome_fixture', output='EMPTY')\n"
+    "except Exception:\n    pass\n"
+    "box=tab_create('/obj/outcome_fixture','box',name='source')\n"
+    "connect(box, '/obj/outcome_fixture/EMPTY')\n"
+    "__result__=verify_network('/obj/outcome_fixture', output='EMPTY')")
+assert corrected['ok'] and corrected['result']['nonempty'] is True, corrected
+assert corrected['verbs'][0]['summary']['scene_writes'] == 0, corrected
+assert [v['check_status'] for v in corrected['verbs'] if v['verb'] == 'verify_network'] == ['failed', 'passed'], corrected
+assert corrected['outcome']['operations']['failed'] == 1, corrected
 if os.environ.get('DSH_OUTCOME_FIXTURE_OUT'):
     Path(os.environ['DSH_OUTCOME_FIXTURE_OUT']).write_text(json.dumps(
         {'caught_read': query, 'failed_check': checked}, ensure_ascii=False, indent=2), encoding='utf-8')

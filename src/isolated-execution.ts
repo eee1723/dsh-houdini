@@ -45,7 +45,6 @@ export interface IsolatedArgs {
   houdini_installation?:string
   timeout_seconds?:number;memory_mb?:number
   pointer?:string;offset?:number;limit?:number;select?:string[]
-  allow_undeclared_image_input?:boolean
 }
 export interface IsolatedProcessRequest {
   runtime:IsolatedRuntime;manifest:string;manifestSha256:string;output:string;cancelFile:string;timeout:number;memory:number
@@ -357,7 +356,7 @@ export function isolatedJobSummary(value:any) {
         ?'Original input sources changed or could not be observed; read input_observations. Execution concerns the declared staged inputs; external effects are not restored.':'')})))
 }
 
-export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true,allowUndeclaredImageInput=false) {
+export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true) {
   const directory=await localPath(ctx,exec,output)
   const reportPath=path.join(directory.local,'report.json'),report=await readJson(ctx,exec,reportPath,MAX_REPORT_BYTES)
   let progress:any
@@ -382,9 +381,7 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
         continue
       }
       try {
-        if(capability.status==='unavailable'
-            ||(capability.status==='unsupported'&&!allowUndeclaredImageInput))
-          throw Error(capability.reason??'Image input unavailable')
+        if(capability.status!=='available')throw Error(capability.reason)
         if(images.filter(row=>row.attachment).length>=attachments.imageLimits.maxImagesPerMessage)throw Error('Native image count limit reached')
         const filename=path.resolve(directory.local,artifact.file)
         if(!filename.startsWith(directory.local+path.sep))throw Error('Image artifact is outside its run directory')
@@ -441,7 +438,7 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
         pointer,offset,total_chars:text.length,next_offset:end<text.length?end:null,
         format:'json_text_page',text:text.slice(offset,end),scope:SCOPE,imageAttachments:[]}
     }
-    return readIsolatedRun(ctx,exec,args.output_dir,true,args.allow_undeclared_image_input===true)
+    return readIsolatedRun(ctx,exec,args.output_dir)
   }
   const cwd=workspaceOf(exec)
   if(!cwd)throw Error('Isolated Houdini requires the DSH session workspace')
@@ -521,7 +518,7 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
       // A cancelled caller still receives its terminal facts after the owned tree exits.
       const resultExec={...exec,signal:undefined}
       try {
-        const value=await readIsolatedRun(ctx,resultExec,output.local,!args.background,args.allow_undeclared_image_input===true)
+        const value=await readIsolatedRun(ctx,resultExec,output.local,!args.background)
         return {...value,ok:value.report?.ok===true&&process.exit_code===0&&!process.error,process}
       }
       catch(error){
@@ -597,7 +594,6 @@ export function registerIsolatedTool(ctx:Context,connection:HoudiniConnection,op
       output_dir:{type:'string',description:'Optional absolute NEW run directory for run; default unique execution_run directory under the current DSH workspace. Reserved exclusively by this call: an existing or concurrently reserved directory is rejected, never moved or reused. read requires the exact directory returned by the original run.'},
       houdini_installation:{type:'string',description:'Optional explicit absolute Houdini installation directory (HFS). Otherwise use the selected scene\'s recorded installation even if live is offline; legacy fixed-Bridge connections obtain installation metadata online. No Host HFS or PATH fallback.'},
       background:{type:'boolean',description:'Default false. true returns a native DSH job_id immediately.'},
-      allow_undeclared_image_input:{type:'boolean',description:'Only when the user explicitly confirms this exact route accepts images: attach images despite missing metadata and let the real model response decide. Not a bypass for an observed provider rejection.'},
       pointer:{type:'string',description:'Read only: JSON Pointer into report.json, for example /result/builder/result. Returns a bounded JSON text page without image attachments.'},
       offset:{type:'number',description:'Read only: zero-based character offset into the selected JSON text; default 0. Use next_offset for continuation.'},
       limit:{type:'number',description:'Read only: selected JSON text characters per page, 1..16000; default 6000.'},

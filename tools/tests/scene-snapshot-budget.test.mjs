@@ -109,7 +109,7 @@ async function run(){
     assert.match(first[0].text,/Houdini metadata observation\./u)
     if(first.length>1){
       assert.equal(first[1].historical,true,'later snapshots carry the historical summary')
-      assert.match(first[1].text,/NOT current scene state/u)
+      assert.match(first[1].text,/Query scene_info\/node_info\/read_parms when current state matters/u)
       assert.equal(first[1].age,undefined,'the summary must not carry a live-computed age (snapshot stability)')
       assert.equal(first[1].text,first[first.length-1].text,
         'every later snapshot for the same observation must be byte-identical')

@@ -254,23 +254,26 @@ def capture_loaded():
         _SCENE = store.identity(hou.node('/').userData(SCENE_KEY))
     except ValueError:
         _SCENE = uuid.uuid4().hex
+    _PROVEN = None
+    _LOADED_STAMP = None
+    _LOADED_NODES, _LOADED_NOTES, _LOADED_BOXES = {}, {}, {}
+    if not _LOADED:
+        return
+    path = hou.hipFile.path()
     try:
-        _LOADED_STAMP = store.file_stamp(hou.hipFile.path())
+        _LOADED_STAMP = store.file_stamp(path)
     except OSError:
-        _LOADED_STAMP = None
+        return
     nodes = _nodes()
     _LOADED_NODES = {int(node.sessionId()): (node.userData(NODE_KEY), node.type().category().name(),
                                             node.type().name()) for node in nodes}
     parents = (hou.node('/'), *nodes)
     _LOADED_NOTES = dsh_network_notes.capture_loaded_notes(parents)
     _LOADED_BOXES = dsh_network_boxes.capture_loaded_boxes(parents)
-    _PROVEN = None
-    checkpoint, stamp, path, epoch, serial = _LOADED, _LOADED_STAMP, hou.hipFile.path(), _EPOCH, _SAVE_SERIAL
+    checkpoint, stamp, epoch, serial = _LOADED, _LOADED_STAMP, _EPOCH, _SAVE_SERIAL
     baseline = dict(_LOADED_NODES)
     note_baseline = dict(_LOADED_NOTES)
     box_baseline = dict(_LOADED_BOXES)
-    if not checkpoint or not stamp:
-        return
     def verify():
         global _PROVEN
         try:

@@ -69,7 +69,7 @@ __result__ = {'output': out.path(), 'width_m': width}
 
 根据要证明的性质选择检查：明确SOP输出的cook与非空、指定实体的关系、代表性控制变化、缓存回读或ROP产物。数值断言应能区分正确与错误结果；`verify_network`通过不替代部件关系或美术质量。
 
-worker没有用户视窗；`render_view`与viewport截图要求GUI，不能用于无头检查。需要图像时，在输入工程或builder中建立所需相机、灯光、材质和ROP，由render检查调用`render_frame`产图并查看返回的原生附件。需要直接查看时输出PNG/JPEG；EXR保留为原始产物，另生成合适的本地预览。正式渲染方法按需加载Solaris/Karma工作流；低成本观察只覆盖本次画幅能看清的范围。
+worker没有用户视窗；`render_view`与viewport截图要求GUI。无头出图时复用工程中的有效ROP，或按[渲染工作流](../houdini-solaris-karma-workflow/SKILL.md)在builder中建立所需相机、灯光、材质和ROP。render检查通过`render_frame`出图并返回原生附件。需要直接查看时输出PNG/JPEG；EXR保留为原始产物，另生成合适的本地预览。当前路由没有声明图片输入时，在DSH原生模型设置中确认并补全声明，或切换到已声明图片能力的路由，再用`houdini_isolated(operation="read")`取回原图。低成本观察只覆盖本次画幅能看清的范围。
 
 后台提交返回`job_id`、`run_directory`和`report_path`，用DSH原生`job_output`等待、`job_kill`取消；提交成功不等于执行结束，执行超时不等于取消。read必须使用原调用返回的`run_directory`作为`output_dir`，读取已有报告/进度并附上可用图片，不连接live、不猜最新run、不重新计算。默认run/read只返回紧凑摘要：builder的`__result__`键级事实、每个check的`id/status/geometry`、输入版本、失败文本和`detail_pointer`；execution渲染块留在report与归档中，需要时按指针读取。大执行详情优先用原回执的`details.sha256`调用`houdini_resource(kind="result", select=[...])`多选，或用`houdini_isolated(operation="read", select=[...])`直接读报告；单个大字段才用`pointer/offset/limit`分页。其他会话消费时先read原run以取得同源引用。详情不可用、归档失败与原执行结论分别报告，不因摘要没有展开字段而重跑探针。进度文件可变，不证明进程当前存活。消费原任务的结果，不通过重复提交未知计算探测状态。
 

@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 123
+Execution contract version: 124
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 
@@ -79,7 +79,7 @@ execution中的hip_dir来自同次场景观察，未命名场景为null；Host�
 不追加Python探测、维护另一HIP缓存或因提醒失败拖延原结果。现场选择不迁工作区目录；本对话成功Save As按既有目录接续合同处理。
 Bridge每次启动同时建立新的请求注册表与执行runtime，回执和execution使用同一个runtime_id；
 executor_id标识Houdini进程，不能与某次Bridge运行或DSH会话身份互换。
-合同122增加结构化查询和统一动词派发；合同123收敛原生纹理诊断、标准库来源分析与图片恢复路径，旧组件须重开后才接收新执行。已知120–122原进程仍在线时，只能按已核对的原运行代际与会话读取原请求或作业状态，原归属校验保持。该分支只覆盖这些候选升级期间仍在线的旧进程；对应进程退出并完成helper重开后删除，不扩展为旧版执行兼容。
+Host 和 Bridge 以当前执行合同准入新工作。旧组件须随对应 Houdini 重开后才接收新执行。已知120–123原进程仍在线时，只能按已核对的原运行代际与会话读取原请求或作业状态，原归属校验保持。过渡读取覆盖这些版本的在途请求和作业，原进程退出并完成组件重开后可移除兼容。
 有Host会话身份的exec/query/jobs先调用POST /requests/prepare，以owner_session取得同runtime的单次票，
 同时读取词表与执行合同；它替代普通health握手，不增加网络往返，也不进入HOM队列。GET /health不签票。
 票仅在首次提交前保留120秒，未用票最多4096条；登记时在同锁内消费。只有Bridge签发的票可首次登记，
@@ -87,7 +87,7 @@ executor_id标识Houdini进程，不能与某次Bridge运行或DSH会话身份�
 HTTP断联、超时、坏JSON或错误状态码
 返回unknown_transport时，用houdini_request(request_ref=...)查回，不重发code。请求查回工具不接受code、pointer或分页；返回queued/running/done/not_executed/unknown等状态，done回读原结果。
 请求查回读取Bridge注册表，不进入HOM队列；running确认同代请求仍执行，queued确认已接收但未派发，均不提供进度百分比或预计完成时间。HTTP超时不取消原生工作。场景查询及界面发现/捕获共享主线程队列，不能作为独立存活探针；Shell未枚举到进程也不能覆盖同代Bridge回执。Host对非终态回执附加这些状态语义，原生与嵌套工具消费同一结构值。
-运行上下文与trace报告共用execution-facts的状态转换；根Host await私有投影handle后通过域服务公开同步读取，在线消费DSH原生投影，冷历史按需折叠。上下文按本步toolSet判断工具准入，图像能力消费本步modelSelection/agent.model，原生与PTC保持一致。后续running/queued替换旧通信未知，终态不被迟到观察重新激活。重复查回同一非终态不增加“待查回调用”或重发相同动态上下文，查询本身不成为另一项未完成执行。
+运行上下文与trace报告共用execution-facts的状态转换；根Host await私有投影handle后通过域服务公开同步读取，在线消费DSH原生投影，冷历史按需折叠。上下文按本步toolSet判断工具准入，原生与PTC保持一致。后续running/queued替换旧通信未知，终态不被迟到观察重新激活。重复查回同一非终态不增加“待查回调用”或重发相同动态上下文，查询本身不成为另一项未完成执行。
 回执窗口最多4096条：正在执行/排队的请求及活动job关联不可淘汰，已终结旧记录按容量轮转，不设累计请求寿命。
 只有全部槽都仍活动时才拒绝新增登记。结果正文最多保留10分钟且总量上限64MiB，超预算先淘汰旧正文；
 过期/预算淘汰明确为result_expired，单条超预算为result_unavailable；记录淘汰后为unknown，不能推断未执行。

@@ -108,7 +108,6 @@ async function bodyBytes(response:Response, limit=LIMIT):Promise<Buffer> {
 export interface ImageGenerateArgs extends ImageOutputOptions {
   provider:string; model:string; prompt:string; references?:string[]
   size?:string; quality?:string; background?:string
-  allow_undeclared_image_input?:boolean
 }
 
 export async function generateImage(ctx:any, exec:any, args:ImageGenerateArgs, request:typeof fetch=fetch,
@@ -207,11 +206,10 @@ export async function generateImage(ctx:any, exec:any, args:ImageGenerateArgs, r
     facts.provider_model=typeof result.model==='string'?result.model:null
     let attachment:any, attachment_error:string|undefined
     const capability=await visualCapability(exec,ctx)
-    if (capability.status!=='unavailable'
-        &&(capability.status==='available'||args.allow_undeclared_image_input===true)) {
+    if (capability.status==='available') {
       try {attachment=await attachments.saveImage({data:bytes,mediaType:format.mediaType,name:path.basename(output.local)})}
       catch {attachment_error='Original image saved; native preview decoding, size policy or attachment storage failed. Inspect the original file with a suitable viewer; do not regenerate.'}
-    } else attachment_error='Image saved; the current model route or attachment channel is unavailable. Visual inspection remains unverified.'
+    } else attachment_error='Image saved. Check houdini_capabilities, then use read_image on this saved file when the route accepts images.'
     const capability_status=capability.status
     const dimensions=attachment?.originalDimensions ?? (attachment?{width:attachment.width,height:attachment.height}:null)
     const expected=args.size?.match(/^(\d+)x(\d+)$/)
@@ -251,8 +249,7 @@ export function registerImageTools(ctx:Context, connection?:HoudiniConnection) {
       purpose:{type:'string',enum:['reference','texture'],description:'Default reference goes to dsh-artifacts/references/generated; texture goes to dsh-artifacts/textures. This classifies the intended use, not image quality.'},
       references:{type:'array',items:{type:'string'},description:'Optional local reference paths, up to 16. Their actual pixels are uploaded using images/edits.'},
       size:{type:'string',description:'Provider-supported WIDTHxHEIGHT or auto.'},quality:{type:'string',description:'Provider-supported quality; omitted keeps its default.'},
-      background:{type:'string',enum:['auto','opaque','transparent']},
-      allow_undeclared_image_input:{type:'boolean',description:'Only when the user explicitly confirms this exact chat route accepts images: attach the saved preview despite missing metadata; the actual model response decides support.'}},output,
+      background:{type:'string',enum:['auto','opaque','transparent']}},output,
     presentCall:args=>({card:'generic',kind:'execute',title:`生成图片 · ${args.model}`,rawInput:args}),
     execute:(args,exec)=>generateImage(ctx,exec,args,fetch,connection)}))
 }

@@ -300,8 +300,10 @@ export function apply(ctx) {
           const retained=expandArchivedExecution(nativeLarge?.data?.meta?.canonical)
           assert.equal(retained?.result?.payload,largePayload,'later native and PTC steps expand the same original archive')
         }
-        const snapshots = options.messages.map(message => message.content.filter(block => block.type === 'text')
-          .map(block => block.text).join('\n')).filter(text => text.includes('Houdini metadata observation.'))
+        const sceneSnapshots = options.messages.filter(message => message.source?.kind === 'runtime-context'
+          && message.source.sections?.some(section => section.name === 'dsh-houdini:scene-context'))
+        const snapshots = sceneSnapshots.map(message => message.content.filter(block => block.type === 'text')
+          .map(block => block.text).join('\n'))
         if(geometryReceipt && step>geometryStart){
           for(let offset=0;offset<Math.min(2,step-geometryStart);offset++){
             const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(geometryStart+offset))
@@ -406,9 +408,10 @@ export function apply(ctx) {
         if(!current)fs.writeFileSync(output+'.missing-context.json',JSON.stringify({messages:options.messages,
           events:ctx.sessions.get(options.sessionId).snapshotEvents()},null,2))
         assert(current, 'provider must receive the real scene context')
-        assert(current.includes('initial-scene-once')&&current.includes('/obj/context_fixture'),
+        assert(current.includes('context-fixture.hip')&&current.includes('/obj/context_fixture'),
           'the provider must receive the explicitly selected fixture scene, not an unavailable or unrelated observation')
-        assert(current.includes('Houdini image input capability'), 'provider must receive image capability')
+        if(step===0)assert(current.includes('initial-scene-once'),'the initial full observation reaches the provider')
+        assert(!current.includes('Houdini image input capability'), 'image capability is queried on demand, not added to scene snapshots')
         const runtimeEvents = ctx.sessions.get(options.sessionId).snapshotEvents()
           .filter(event => event.type === 'user/message' && event.data?.source?.kind === 'runtime-context')
         assert(runtimeEvents.length >= snapshots.length, 'snapshots must originate from the native loop events')
@@ -435,7 +438,10 @@ export function apply(ctx) {
           }
         }
         if (step === 1 || step === 2) {
-          assert.equal(snapshots.length,requests[0].snapshotCount,'settled failure/repair must not append scene and vision again')
+          assert.equal(snapshots.length,requests[0].snapshotCount+1,
+            'the full observation can transition to its historical summary once across a settled failure and repair')
+          assert.equal(snapshots.filter(text=>text.includes('Houdini metadata observation.')).length,1,
+            'the original full observation appears once')
           const error = options.messages.find(message => message.role === 'tool' && message.toolCallId === 'context-0')
           const visible = error?.content.filter(block => block.type === 'text').map(block => block.text).join('\n')
           assert(error && visible.includes('FIXTURE_UNKNOWN_PARAMETER'),'original actionable tool error must remain visible')

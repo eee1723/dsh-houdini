@@ -31,32 +31,11 @@ export async function visualCapability(exec: any, ctx: any) {
     return {...base,status:supported?'available':'unsupported',image_input:supported,
       attachment_channel:true,limits:attachments.imageLimits,
       ...(supported?{}:{reason:'current model route does not declare image input',
-        boundary:'Metadata declaration only; it does not test the provider or model.',
-        recovery:[
-          {kind:'ask_user',action:'Ask the user once, naming this exact route, whether to enable image input or switch routes; then continue after their answer.'},
-          {kind:'probe',action:'After the user confirms this exact route accepts images, retrieve the existing result with houdini_request(request_ref=...) or houdini_isolated(operation="read", output_dir=...) and allow_undeclared_image_input=true. If no retained image exists, create one minimal new image instead of repeating an earlier edit, save or unknown execution. The real model response decides; a provider rejection is evidence, not permission to keep overriding.'},
-          {kind:'config',action:'Enable image input for this provider/model route in DSH configuration; tools cannot change route configuration.'}],
-        next_action:'Ask the user once or run one explicitly authorized probe before treating visual verification as blocked. Metadata refusal is not proof the route cannot accept images.'}),
-      observation:'Declared model input capability only. Native images may be attempted even when metadata is absent; route acceptance and semantic inspection require an actual model response.'}
+        next_action:'Select a route that declares image input, or enable image input for this exact provider/model in DSH model settings if the provider supports it. Then read existing images with houdini_request, houdini_isolated(operation="read"), or read_image for a saved local file.'})}
   } catch(error) {
     return {...base,status:'unavailable',image_input:null,reason:String(error),
-      recovery:[
-        {kind:'config',action:'Inspect the route and attachment channel configuration; a failed lookup does not describe the model itself.'},
-        {kind:'ask_user',action:'If the route or attachment channel is expected to work, ask the user to confirm the configuration before concluding visual work is impossible.'}],
-      next_action:'Inspect the route/channel configuration; do not infer visual capability from a successful render.'}
+      next_action:'Check DSH model settings and the native attachment channel, then read existing images when the route is available.'}
   }
-}
-
-/** Small per-step projection for the runtime-context section. The complete
- * answer, including recovery steps, is returned on demand by houdini_capabilities. */
-export function visualCapabilityBrief(value:any) {
-  const {provider,model,status,image_input,reason}=value??{}
-  return {...(provider?{provider,model}:{}),status,image_input,
-    ...(reason?{reason}:{}),
-    ...(status==='unsupported'?{recovery:['ask_user','probe','config'],
-      next_action:'Ask the user once or run one user-authorized probe; call houdini_capabilities for the exact steps. Metadata refusal is not proof the route cannot accept images.'}:{}),
-    ...(status==='available'?{boundary:'Declared metadata only; semantic inspection requires an actual response.'}:{}),
-    ...(status==='unavailable'?{next_action:'Inspect route/channel configuration; do not infer visual capability from a successful render.'}:{})}
 }
 
 /** Attachment facts a model may safely use: the stored bytes and their
@@ -87,12 +66,7 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
   try {
     const attachments = ctx.get?.('attachments')
     const capability = await visualCapability(exec,ctx)
-    // Missing image metadata is not proof that the routed model rejects images.
-    // An explicit user-backed override permits one native attempt; the actual
-    // request establishes support. Channel/lookup failures still stop the read.
-    if (capability.status === 'unavailable'
-        || (capability.status === 'unsupported' && exec.allow_undeclared_image_input !== true))
-      throw new Error(capability.reason)
+    if (capability.status !== 'available') throw new Error(capability.reason)
     let totalBytes = 0
     for (const from of paths) {
       try {

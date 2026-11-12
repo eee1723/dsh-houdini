@@ -29,15 +29,7 @@ const MODEL_PRESENTATION_PARAM = {
   description:'Model-facing text only; default full. compact bounds an archived result to 16 KiB and keeps detail pointers for selective reads. It does not change execution or canonical facts. Unarchived and unfamiliar results stay full.',
 } as const
 
-const IMAGE_METADATA_OVERRIDE_PARAM = {
-  type:'boolean',
-  description:'Optional one-call override only when the user explicitly confirms this exact route accepts images. Allows native attachments despite missing image metadata; the actual model response still decides support. Never use to bypass an observed provider rejection.',
-} as const
-const withImageMetadataOverride = (exec:any,args:any) => args.allow_undeclared_image_input===true
-  ? {...exec,allow_undeclared_image_input:true} : exec
-
 const EXECUTION_PARAMS = {
-  allow_undeclared_image_input: IMAGE_METADATA_OVERRIDE_PARAM,
   code: {type:'string',description:'Python batch with hou and verbs. With script, optional invocation after its definitions (for example __result__ = build(parent)); otherwise the complete batch.'},
   script: {type:'string',description:'Absolute UTF-8 .py builder path. Host reads its actual source once through the current file policy; use this instead of exec(open(...).read()). This grants no extra mutation permission and does not replay, update or replace existing nodes automatically.'},
   expected_sha256: {type:'string',description:'Optional SHA-256 of the tested script bytes; requires script. A changed file fails before selecting or restoring the target scene.'},
@@ -61,7 +53,6 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     presentCall: args=>({card:'generic',title:HOUDINI_TOOLS.houdini_exec.label,kind:'edit',rawInput:codePresentationInput(args)}),
     presentResult: (_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_exec.label,result),result),
     async execute(args,exec) {
-      exec=withImageMetadataOverride(exec,args)
       const source=await resolveExecutionSource(ctx,exec,args)
       const {bridge,owner}=await runtime.target(exec,'write')
       return runtime.result(await bridge.exec(source.code,owner,exec.signal,args.allow_raw,false,source.script),exec,bridge,true)
@@ -81,12 +72,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
         }}},
       code:{type:'string',description:'Legacy Python observation code. Assign __result__ or print; code does not certify a read-only effect.'},
       presentation:MODEL_PRESENTATION_PARAM,
-      allow_undeclared_image_input:IMAGE_METADATA_OVERRIDE_PARAM,
     },output:readOutput,
     presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_inspect.label,kind:'read',rawInput:args.queries??args.code}),
     presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_inspect.label,result),result),
     async execute(args,exec) {
-      exec=withImageMetadataOverride(exec,args)
       if((args.code===undefined)===(args.queries===undefined))throw Error('Provide exactly one of code or queries')
       if(args.queries!==undefined&&(!args.queries.length||args.queries.length>16))throw Error('Provide 1..16 structured Houdini queries')
       if(args.code!==undefined&&!args.code.trim())throw Error('Provide nonempty Python observation code')
@@ -99,11 +88,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
   }))
   ctx.tools.register(defineTool({
     name:'houdini_request',description:HOUDINI_TOOLS.houdini_request.purpose+' Receipt recovery reads the original execution; never resubmits code. Missing receipts mean unknown, not proof of no execution.',
-    parameters:{request_ref:{type:'string',required:true,description:'Original request_ref, or index for current-session recent references.'},
-      allow_undeclared_image_input:IMAGE_METADATA_OVERRIDE_PARAM},output:readOutput,
+    parameters:{request_ref:{type:'string',required:true,description:'Original request_ref, or index for current-session recent references.'}},output:readOutput,
     presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_request.label,kind:'read',rawInput:args}),
     presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_request.label,result),result),
-    execute:(args,exec)=>recoverRequest(args.request_ref,withImageMetadataOverride(exec,args),runtime,liveJobs),
+    execute:(args,exec)=>recoverRequest(args.request_ref,exec,runtime,liveJobs),
   }))
   ctx.tools.register(defineTool({
     name:'houdini_resource',description:HOUDINI_TOOLS.houdini_resource.purpose+' Host-only pagination; does not execute Houdini. Source originals and past results are historical material. Help reads one exact installed SideFX page without HOM, web search or temporary nodes.',
@@ -157,12 +145,10 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
       target:{type:'string',required:true,description:'Exact target reference returned by houdini_ui_list in this runtime.'},
       path:{type:'string',description:'Safe PNG basename for managed/delivery, or absolute temporary path for explicit.'},
       output_policy:{type:'string',enum:['managed','delivery','explicit'],description:'Default managed observation; explicit can capture an unnamed scene without Save As.'},
-      allow_undeclared_image_input:IMAGE_METADATA_OVERRIDE_PARAM,
     },output:readOutput,
     presentCall:args=>({card:'generic',title:HOUDINI_TOOLS.houdini_ui_screenshot.label,kind:'read',rawInput:args}),
     presentResult:(_args,result)=>genericResult(resultTitle(HOUDINI_TOOLS.houdini_ui_screenshot.label,result),result),
     async execute(args,exec) {
-      exec=withImageMetadataOverride(exec,args)
       if(!args.target?.trim())throw Error('Provide the exact UI target reference returned by houdini_ui_list')
       const {bridge,owner}=await runtime.target(exec)
       return runtime.result(await bridge.captureUi(args,owner,exec.signal),exec,bridge,true)
@@ -190,7 +176,6 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
     }),
     presentResult: (_args, result) => genericResult(jobResultTitle(HOUDINI_TOOLS.houdini_job_submit.label, result), result),
     async execute(args, exec) {
-      exec=withImageMetadataOverride(exec,args)
       const source=await resolveExecutionSource(ctx,exec,args)
       const { bridge, owner } = await runtime.target(exec,'write')
       return liveJobs.submit(source,exec,bridge,owner,args.allow_raw)

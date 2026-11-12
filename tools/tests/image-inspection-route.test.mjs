@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {attachImages,imageBlocks,visualCapability} from '../../lib/image-output.js';
-import {installSceneContext} from '../../lib/context.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-native-images-'));
 const value={ok:true,stdout:'',stderr:'',images:[
@@ -41,18 +40,24 @@ try{
  }
  assert.equal(sceneCalls,1);
  modalities=['text'];const before=fetched;
- const blocked=await attachImages(value,exec,bridge,ctx);assert.equal(fetched,before);assert.equal(imageBlocks(blocked).length,0);
-  const metadataOnly=await attachImages(value,{...exec,allow_undeclared_image_input:true},bridge,ctx);assert.equal(fetched,before+2);assert.equal(imageBlocks(metadataOnly).length,2);
-  assert(metadataOnly.imageAttachments.every(item=>item.capability_status==='unsupported'&&!item.error),
-    'missing image metadata preserves a warning but does not fabricate a provider refusal');
-  assert.equal((await visualCapability(exec,ctx)).status,'unsupported','capability reporting itself remains accurate');
-  const unsupported=await visualCapability(exec,ctx);
-  assert.deepEqual(unsupported.recovery.map(step=>step.kind),['ask_user','probe','config'],
-    'metadata refusal carries executable recovery steps instead of a dead end');
-  assert.match(unsupported.next_action,/Ask the user once/);
-  assert.match(unsupported.recovery[1].action,/allow_undeclared_image_input/);
-  assert.match(unsupported.recovery[1].action,/houdini_request\(request_ref/);
-  assert.doesNotMatch(unsupported.recovery[1].action,/re-run the same/,'an image probe must not replay edits, saves or unknown execution');
+ const request=defs.get('houdini_request');
+ const requestArgs={request_ref:requestRef};
+ const blocked=await request.execute(requestArgs,exec);
+ assert.equal(blocked.ok,true);assert.equal(fetched,before);assert.equal(imageBlocks(blocked).length,0);
+ assert.match(blocked.imageAttachments[0].error,/does not declare image input/);
+ const unsupported=await visualCapability(exec,ctx);
+ assert.equal(unsupported.status,'unsupported');
+ assert.match(unsupported.next_action,/DSH model settings/);
+ assert.match(unsupported.next_action,/read existing images with houdini_request/);
+ const capability=defs.get('houdini_capabilities');
+ assert.equal((await capability.execute({},exec)).result.status,'unsupported');
+ modalities=['text','image'];
+ assert.equal((await capability.execute({},exec)).result.status,'available',
+   'the on-demand capability tool observes same-route settings without cache invalidation');
+ assert.equal(fetched,before,'the on-demand capability tool never fetches or renders an image');
+ const recovered=await request.execute(requestArgs,exec);
+ assert.equal(fetched,before+2);assert.equal(imageBlocks(recovered).length,2);
+ assert.equal(sceneCalls,1,'changing the route and retrieving the original receipt never replays the scene operation');
  const missing=await attachImages(value,exec,bridge,{});assert.match(missing.imageAttachments[0].error,/unavailable/);
  modalities=['image'];const failed=await attachImages(value,exec,{fetchMedia:async()=>{throw Error('transport unavailable')}},ctx);
  assert.equal(failed.ok,true,'image failure must not cause scene replay');assert.equal(imageBlocks(failed).length,0);
@@ -66,59 +71,3 @@ try{
  assert.deepEqual(fs.readdirSync(cwd),[]);
 }finally{assert.equal(path.dirname(cwd),path.resolve(os.tmpdir()));fs.rmdirSync(cwd)}
 console.log('native image attachments: current route, nested context, job output, failures, no media files');
-
-// Preflight runs before any render/HOM and before the first model request.
-const hooks={},contexts=[];let lookups=0;
-let model='text-only';const input={agent:{model:{current:()=>({provider:'current',model})},options:{provider:'stale',model:'stale'},
-  session:Object.assign(fixtureSession('vision-preflight'),{requestHeader:()=>({config:{provider:'current',model}})})},
-  signal:new AbortController().signal};
-let visionModalities=['text','image'];
-const services={attachments,llm:{async resolveModelInfo(provider,name){lookups++;assert.equal(provider,'current');return {inputModalities:name==='vision'?visionModalities:['text']}}}};
-const preflightCtx=await fixtureProjectionContext({get:n=>services[n],tools:{register(){},get:()=>({name:'houdini_inspect'})},systemPrompt:{context:c=>contexts.push(c)},on:(n,f)=>hooks[n]=f});
-const beforePreflight=fetched;
-assert.equal((await visualCapability(input,preflightCtx)).status,'unsupported');
-assert.equal(fetched,beforePreflight);
-installSceneContext(preflightCtx,{sceneContext(){throw Error('preflight must not render/query HOM')}});
-async function prepare(modelSelection){
- const assembly={contexts:contexts.map(c=>({name:c.name,text:c.text({agent:input.agent})})),tools:[{name:'houdini_inspect'}],variables:{provider:'stale',model:'stale'}};
- await hooks['system-prompt/assemble'](assembly,{agent:input.agent,scope:input.agent,modelSelection,signal:input.signal},async()=>assembly);
- return {contexts:assembly.contexts};
-}
-let prepared=await prepare();
-assert(prepared.contexts.some(b=>b.text?.includes('"status":"unsupported"')));
-const visionSection=prepared.contexts.find(b=>b.name==='dsh-houdini:visual-capability').text;
-assert(visionSection.length<600,'per-step capability context stays a short projection, not the full recovery answer');
-assert(visionSection.includes('"recovery":["ask_user","probe","config"]'));
-assert(!visionSection.includes('"kind":"ask_user"'),'recovery details stay in the on-demand tool answer');
-const lookedUp=lookups;await prepare();assert.equal(lookups,lookedUp,'unchanged route metadata is cached');
-model='vision';prepared=await prepare();
-assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')));
-assert.equal(lookups,lookedUp+1,'route changes invalidate preflight cache');
-const beforeAdapterUpdate=lookups;
-visionModalities=['text'];
-await prepare();assert.equal(lookups,beforeAdapterUpdate,'unchanged route stays cached until DSH publishes a change');
-hooks['llm/adapters-updated']();
-prepared=await prepare();
-assert(prepared.contexts.some(b=>b.text?.includes('"status":"unsupported"')),
-  'same-route adapter replacement revokes stale image capability');
-assert.equal(lookups,beforeAdapterUpdate+1);
-visionModalities=['text','image'];
-hooks['llm/adapters-updated']();
-prepared=await prepare();
-assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')),
-  'fixing image metadata on the same route refreshes a previously unsupported capability');
-assert.equal(lookups,beforeAdapterUpdate+2);
-await prepare();assert.equal(lookups,beforeAdapterUpdate+2,'stable updated metadata is cached again');
-const defs2=new Map();registerHoudiniTools({...preflightCtx,tools:{register:d=>defs2.set(d.name,d)}},{});
-assert.equal((await defs2.get('houdini_capabilities').execute({},input)).result.status,'available');
-
-assert.equal(fetched,beforePreflight,'capability route never fetches an image');
-const previousAttachments=services.attachments;delete services.attachments;
-prepared=await prepare();
-assert(prepared.contexts.some(b=>b.text?.includes('"status":"unavailable"')),
-  'channel loss invalidates a previously available same-route preflight');
-services.attachments=previousAttachments;
-model='text-only';
-prepared=await prepare({provider:'current',model:'vision'});
-assert(prepared.contexts.some(b=>b.text?.includes('"status":"available"')),
-  'captured step selection outranks both a changed next-step selection and stale request header');

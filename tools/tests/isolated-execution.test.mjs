@@ -152,12 +152,15 @@ try {
   assert.equal(runtimeReads,1,'reading a completed run never resolves the current Houdini')
   assert.equal(tool.output.render({},read).filter(item=>item.type==='image').length,1)
   ctx.llm.resolveModelInfo=async()=>({inputModalities:['text']})
-  const metadataOnly=await executeIsolated(ctx,exec,{operation:'read',output_dir:output,allow_undeclared_image_input:true},runtimeResolver,runner)
-  assert.equal(metadataOnly.imageAttachments[0].capability_status,'unsupported')
-  assert(metadataOnly.imageAttachments[0].attachment,'metadata refusal must not hide a readable isolated image')
-  assert(metadataOnly.imageAttachments[0].image.mediaType==='image/png'&&/re-encode/.test(metadataOnly.imageAttachments[0].image.preview_policy),
-    'isolated images carry stored-dimension and preview-derivation facts')
+  const blockedRead=await tool.execute({operation:'read',output_dir:output},exec)
+  assert.deepEqual(blockedRead.report,read.report,'an unavailable preview does not change the execution report')
+  assert.equal(blockedRead.imageAttachments[0].attachment,undefined)
+  assert.match(blockedRead.imageAttachments[0].error,/does not declare image input/)
   ctx.llm.resolveModelInfo=async()=>({inputModalities:['text','image']})
+  const recoveredRead=await tool.execute({operation:'read',output_dir:output},exec)
+  assert.equal(runtimeReads,1,'changing the route and retrieving an existing run never executes Houdini')
+  assert(recoveredRead.imageAttachments[0].image.mediaType==='image/png'&&/re-encode/.test(recoveredRead.imageAttachments[0].image.preview_policy),
+    'recovered images carry stored-dimension and preview-derivation facts')
   assert.equal(tool.presentResult({}, {meta:{canonical:read},content:[]}).title,'独立 Houdini · 已完成');
   assert.equal(tool.presentResult({}, {meta:{canonical:{report:{finished:true,ok:false}}},content:[]}).title,'独立 Houdini · 失败');
   assert.deepEqual(JSON.parse(JSON.stringify(read)),read,'public returned values remain lossless JSON')

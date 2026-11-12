@@ -187,12 +187,13 @@ __result__={'saved':saved}
     failed_execution=failed_texture['execution']
     assert failed_execution['outcome']['checks']['failed']==1,failed_execution
     diagnostic=failed_execution['native_diagnostics'][0]
-    assert diagnostic['kind']=='texture_load_failed' and diagnostic['renderer'] in ('karma','unknown'),failed_execution
+    assert diagnostic['kind']=='texture_load_failed' and diagnostic['renderer']=='unknown',failed_execution
     expected_missing='texture-undeclared/inputs/textures/roughness.png'
     assert diagnostic['path'].endswith(expected_missing),failed_execution
     assert expected_missing in failed_execution['native_output'],failed_execution
     if hou.applicationVersionString().startswith('22.'):
-        assert diagnostic['renderer']=='karma' and 'Error Summary' in failed_execution['native_output'],failed_execution
+        assert 'Error Summary' in failed_execution['native_output'],failed_execution
+        assert '-R BRAY_HdKarma' in failed_execution['native_output'],failed_execution
     assert not (root/'texture-undeclared/artifacts/later').exists(),'later render must not execute'
     assert runner.digest(texture_hip)==fixture_hash
 

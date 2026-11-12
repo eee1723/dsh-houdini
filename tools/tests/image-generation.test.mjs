@@ -67,9 +67,12 @@ assert.equal(requests.length,1)
 const resolveVision=context.llm.resolveModelInfo
 try {
   context.llm.resolveModelInfo=async()=>({inputModalities:['text']})
-  result=await generateImage(context,exec,{...args('metadata-only.png'),allow_undeclared_image_input:true},success)
-  assert(result.attachment,'missing image metadata must not fabricate an attachment refusal')
+  result=await generateImage(context,exec,args('text-only.png'),success)
+  assert.equal(result.status,'saved');assert.equal(result.attachment,undefined)
+  assert.deepEqual(await fs.readFile(result.output),png,'the original remains readable without an image-capable chat route')
+  assert.equal(result.recovery_file.attachment.id,digest(png))
   assert.equal(result.capability_status,'unsupported')
+  assert.match(result.attachment_error,/read_image/)
 } finally {context.llm.resolveModelInfo=resolveVision}
 
 const input=path.join(root,'source.png');await fs.writeFile(input,png)

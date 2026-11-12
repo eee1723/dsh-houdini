@@ -117,6 +117,7 @@ finally:
 stage=hou.node('/stage')
 py=stage.createNode('pythonscript','framing_stage_test')
 rop=stage.createNode('usdrender_rop','framing_rop_test');rop.setInput(0,py)
+out_rop=hou.node('/out').createNode('usdrender','framing_rop_test')
 scene_code='''from pxr import UsdGeom, UsdRender, Gf
 s=hou.pwd().editableStage()
 UsdGeom.Cube.Define(s,'/asset')
@@ -189,6 +190,9 @@ r.CreateProductsRel().SetTargets(['/Render/product','/Render/product2','/Render/
         rop.parm('loppath').set('../'+py.name())
         rop.parm('rendersettings').set('settings')  # native /Render shorthand
         rop.parm('outputimage').set('')
+        out_rop.parm('loppath').set(py.path())
+        out_rop.parm('rendersettings').set('settings')
+        out_rop.parm('outputimage').set('')
         assert py.stage() is not None,py.errors()
         selected=usd._render_product_files(rop,3)
         expected=[base/'beauty.`1+1`.0003.exr',base/'second.0003.exr']
@@ -222,7 +226,7 @@ r.CreateProductsRel().SetTargets(['/Render/product','/Render/product2','/Render/
         calls=[]
         omitted=set()
         def render_fixture(render_rop,frame_range):
-            assert render_rop==rop and frame_range==(3.0,3.0)
+            assert render_rop in (rop,out_rop) and frame_range==(3.0,3.0)
             assert hou.frame()==3
             override=render_rop.evalParm('outputimage')
             calls.append({'override':override,'frame':hou.frame()})
@@ -258,6 +262,24 @@ r.CreateProductsRel().SetTargets(['/Render/product','/Render/product2','/Render/
                 assert len(inherited['inherited_products']['unverified_products'])==2
                 assert calls[-1]['override']=='' and rop.evalParm('outputimage')==''
                 assert hou.frame()==saved_frame
+
+                # /out USD Render and /stage USD Render ROP share the native
+                # stage, product and framing semantics.
+                inherited_out=h.render_frame(out_rop,frame=3,timeout=.01,framing={'target':'/asset'})
+                assert inherited_out['fresh'] and inherited_out['framing']['ok'],inherited_out
+                assert [pathlib.Path(row['output']) for row in inherited_out['outputs']]==expected,inherited_out
+                assert out_rop.evalParm('outputimage')=='' and hou.frame()==saved_frame
+
+                output_parm=out_rop.parm('outputimage')
+                output_parm.setExpression(repr((base/'animated.').as_posix())+' + str(int(hou.frame())) + ".exr"',
+                                          language=hou.exprLanguage.Python)
+                keys=tuple(output_parm.keyframes())
+                explicit_out=h.render_frame(out_rop,picture=str(base/'override-out.exr'),frame=3,timeout=.01)
+                assert explicit_out['fresh'] and pathlib.Path(explicit_out['output'])==base/'override-out.exr',explicit_out
+                assert tuple(output_parm.keyframes())==keys and hou.frame()==saved_frame
+                animated_out=h.render_frame(out_rop,frame=3,timeout=.01)
+                assert animated_out['fresh'] and pathlib.Path(animated_out['output'])==base/'animated.3.exr',animated_out
+                assert tuple(output_parm.keyframes())==keys and hou.frame()==saved_frame
 
                 # One stale file remains on disk; the other output's success
                 # cannot certify the whole multi-product render.
@@ -321,7 +343,7 @@ r.CreateProductsRel().SetTargets(['/Render/product','/Render/product2','/Render/
         finally:
             hou.setFrame(saved_frame)
 finally:
-    rop.destroy();py.destroy()
+    out_rop.destroy();rop.destroy();py.destroy()
 
 # Repair reloads lazy modules/cache without contacting any server in this test.
 import importlib

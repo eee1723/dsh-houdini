@@ -6,6 +6,10 @@ import hou
 import dsh_node_access
 
 
+def _is_usd_render_rop(node):
+    return isinstance(node, hou.RopNode) and node.type().name() in ('usdrender', 'usdrender_rop')
+
+
 def _lop_stage(node):
     node = dsh_node_access._resolve(node)
     if node.type().category() != hou.lopNodeTypeCategory() or not hasattr(node, "stage"):

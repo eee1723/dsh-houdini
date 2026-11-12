@@ -134,7 +134,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
     固化「设 picture → setFrame → rop.render() → 等产物 → 报大小」的样板：
     ``render()`` 不抛异常**不等于**产物存在（ROP 参数错、输出目录不可写、
     渲染器挂起都是静默失败），所以本动词等到文件落盘且非空才返回
-    ``file_bytes``，否则在 ``errors`` 里说明。
+    ``file_bytes``，否则在 ``errors`` 里说明。原生渲染器日志与视觉效果需要另外核对。
 
     - rop：ROP 节点（hou.Node 或 path）。输出参数按常见名自动解析；图像参数
       ``outputimage`` 优先于 USD ``lopoutput``，Karma/Mantra/geometry 等 ROP 都覆盖。
@@ -186,20 +186,21 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
         raise ValueError('frame must be finite and timeout must be positive/finite')
     # Resolving before any parameter/frame write also rejects extensionless
     # outputs and relative files outside the project with zero scene effects.
-    original_output = p.unexpandedString()
+    from dsh_usd_inspection import _is_usd_render_rop, _render_product_files
+    configured_output = p.evalAtFrame(f) if picture is None else None
     output_role = ('cache' if p.name() in ('sopoutput', 'dopoutput', 'choutput') else
                    'texture' if p.name() == 'copoutput' else 'render')
     original_frame = float(hou.frame())
     inherited = None
-    if n.type().name() == 'usdrender_rop' and picture is None and not p.evalAtFrame(f).strip():
-        from dsh_usd_inspection import _render_product_files
+    if picture is None and _is_usd_render_rop(n) and not configured_output.strip():
         with _render_preflight_frame(f, n):
             inherited = _render_product_files(n, f)
         outputs = [{**row, 'output': dsh_media_output._resolve_output_path(row['output'], frame=f, expand_variables=False)}
                    for row in inherited['products']]
     else:
         outputs = [{'output': dsh_media_output._resolve_output_path(
-            original_output if picture is None else picture, frame=f, default_role=output_role)}]
+            configured_output if picture is None else picture, frame=f, default_role=output_role,
+            expand_variables=picture is not None)}]
     target = outputs[0]['output'] if len(outputs) == 1 else None
     foreground_parm = n.parm("soho_foreground")
     parameter_state = dsh_parameter_values._parameter_snapshot(
@@ -323,8 +324,9 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
         "fresh": file_bytes is not None,
         "pre_fingerprint": pre_fingerprint,
         "post_fingerprint": post_fingerprint,
-        **({'outputs': outputs, 'inherited_products': inherited,
-            'scope': 'File freshness for the listed disk raster products only; delegate/checkpoint products and visual semantics remain unverified'}
+        "scope": ('File freshness for listed disk outputs and errors exposed by the ROP. '
+                  'Native renderer logs, delegate/checkpoint products and visual semantics require separate evidence.'),
+        **({'outputs': outputs, 'inherited_products': inherited}
            if inherited is not None else {}),
         **({'framing': framing_evidence} if framing_evidence is not None else {}),
         "errors": errors,

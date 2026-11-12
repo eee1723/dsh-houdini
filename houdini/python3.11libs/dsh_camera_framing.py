@@ -322,9 +322,10 @@ def usd_check(rop, spec, frame):
     """Resolve the ROP's actual composed stage/settings/products. Never refit."""
     import hou
     from pxr import Usd, UsdGeom
+    from dsh_usd_inspection import _is_usd_render_rop, _render_settings
     if not isinstance(spec, dict) or set(spec)-{'target','coverage'} or not isinstance(spec.get('target'), str):
         raise ValueError('framing must be {target: absolute USD prim path, coverage?: .82}')
-    if rop.type().name() != 'usdrender_rop':
+    if not _is_usd_render_rop(rop):
         raise ValueError('render_frame framing currently supports USD Render ROP only')
     # Husk overrides/run scripts can change what is rendered after stage cook.
     # Reject unsupported overrides rather than validate a different camera/file.
@@ -343,7 +344,6 @@ def usd_check(rop, spec, frame):
     coverage = finite(spec.get('coverage', .82), 'coverage')
     if not .1 <= coverage <= .95:
         raise ValueError('framing coverage must be in .1.. .95')
-    from dsh_usd_inspection import _render_settings
     node, stage, settings = _render_settings(rop)
     settings_path = settings.GetPath()
     from pxr import Sdf

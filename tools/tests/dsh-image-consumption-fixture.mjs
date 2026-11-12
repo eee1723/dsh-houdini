@@ -41,7 +41,7 @@ export function apply(ctx) {
   const route='image-consumption-fixture',model='owned-image-model',secret='owned-fixture-'+randomUUID();
   const files=['reference.png','A.png','B.png'].map(name=>path.join(workspace,name));
   const originals=files.map(file=>({path:file,sha256:sha(fs.readFileSync(file))}));
-  const requests=[],transforms=[],checks=[],network=[];let phase='baseline',failure,first=true,currentSession,ownedOrigin;
+  const requests=[],transforms=[],checks=[],network=[];let phase='text-only',failure,first=true,currentSession,ownedOrigin;
   const report=value=>{fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2));fs.renameSync(output+'.tmp',output)};
   const fail=error=>{failure??=String(error.stack??error);if(currentSession)fs.writeFileSync(output+'.events.json',JSON.stringify(currentSession.snapshotEvents(),null,2));report({ok:false,error:failure,requests,transforms,checks,network})};
   const nativeFetch=globalThis.fetch;
@@ -73,8 +73,12 @@ export function apply(ctx) {
       }
       assert.equal(payload.reasoning_effort,'high','selected high reasoning must reach the real adapter HTTP payload');
       requests.push({phase,path:req.url,payloadBytes:body.length,imageCount:images.length,images,handles,model:payload.model,reasoningEffort:payload.reasoning_effort});
-      if(first){
-        first=false;assert(payload.tools.some(row=>row.function?.name==='read_image'),'real mounted read_image declaration must reach pi-ai');
+      if(phase==='text-only'){
+        assert.equal(images.length,0,'the official text-only route must not send an attachment to the provider');
+        assert.match(JSON.stringify(payload.messages),/image omitted because this model accepts text only/);
+        respond(res,{content:'Owned provider received the text-only placeholder.'},'stop');
+      }else if(first){
+        first=false;assert(payload.tools?.some(row=>row.function?.name==='read_image'),'real mounted read_image declaration must reach pi-ai');
         respond(res,{tool_calls:files.map((file,index)=>({index,id:'owned-read-'+index,type:'function',function:{name:'read_image',arguments:JSON.stringify({file_path:file})}}))},'tool_calls');
       }else respond(res,{content:'Owned provider fixture complete. Image semantics remain unverified.'},'stop');
     }catch(error){fail(error);if(!res.headersSent)res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'Owned fixture assertion failed'}}))}
@@ -88,8 +92,24 @@ export function apply(ctx) {
         ownedOrigin='http://127.0.0.1:'+server.address().port;const baseURL=ownedOrigin+'/v1';
         let setting=ctx.settings.describe().find(row=>row.ns==='llm-pi-ai');assert(setting,'real pi-ai settings section is mounted');
         await ctx.settings.mutate(setting.ns,[{op:'set',path:['providers',route],value:{api:'openai-completions',baseURL,
-          apiKeyEnv:'OWNED_IMAGE_FIXTURE_KEY',reasoning:'high',timeoutMs:10000,retryPolicy:{mode:'normal',maxRetries:0},models:[{id:model,input:['text','image'],reasoningEfforts:{high:'high'},contextWindow:500000,maxTokens:1024}]}}],setting.revision);
+          apiKeyEnv:'OWNED_IMAGE_FIXTURE_KEY',reasoning:'high',timeoutMs:10000,retryPolicy:{mode:'normal',maxRetries:0},models:[{id:model,input:['text'],reasoningEfforts:{high:'high'},contextWindow:500000,maxTokens:1024}]}}],setting.revision);
         await ctx.credentials.set('OWNED_IMAGE_FIXTURE_KEY',secret);
+        assert.deepEqual((await ctx.llm.resolveModelInfo(route,model)).inputModalities,['text']);
+        const image=await ctx.attachments.saveImage({data:fs.readFileSync(files[0]),mediaType:'image/png',name:'reference.png'});
+        const networkBefore=network.length;
+        let finish;
+        for await(const chunk of ctx.llm.stream({provider:route,model,messages:[{role:'user',content:[{type:'image',attachment:image}]}]})){
+          if(chunk.type==='finish')finish=chunk.reason;
+        }
+        assert.equal(finish?.kind,'stop');
+        assert.equal(network.length,networkBefore+1,'the official runtime sent one text-only request with a placeholder');
+        let adapterUpdates=0;
+        ctx.on('llm/adapters-updated',()=>{adapterUpdates++});
+        setting=ctx.settings.describe().find(row=>row.ns==='llm-pi-ai');
+        await ctx.settings.mutate(setting.ns,[{op:'set',path:['providers',route,'models','0','input'],value:['text','image']}],setting.revision);
+        assert.equal(adapterUpdates,0,'a modality edit keeps the same native adapter registration');
+        assert.deepEqual((await ctx.llm.resolveModelInfo(route,model)).inputModalities,['text','image']);
+        phase='baseline';
         const {sessionId}=await ctx.sessionController.create({cwd:workspace,agentPreset:'standard'});
         currentSession=ctx.sessions.get(sessionId);
         await ctx.sessionController.selectModel({sessionId,provider:route,model});
@@ -100,6 +120,7 @@ export function apply(ctx) {
         const session=ctx.sessions.get(sessionId),readResults=session.snapshotEvents().filter(event=>event.type==='tool/result');
         assert.equal(readResults.length,3);assert(readResults.every(event=>!event.data.message.isError),'real filesystem/image tools succeeded');
         const refs=readResults.map(event=>event.data.message.content.find(block=>block.type==='image')?.attachment);assert(refs.every(Boolean));
+        assert.equal(refs[0].attachmentId,image.attachmentId,'the newly image-capable route can read the same original');
         const storedBefore=await Promise.all(refs.map(async ref=>({attachmentId:ref.attachmentId,name:ref.name,sha256:sha((await ctx.attachments.readImage(ref)).data)})));
         for(const [name,budget]of [['one-megapixel',1048576],['restored',4194304]]){
           phase=name;setting=ctx.settings.describe().find(row=>row.ns==='llm-pi-ai');
@@ -132,7 +153,7 @@ export function apply(ctx) {
         const events=session.snapshotEvents();assert(!events.some(event=>event.type==='image/offload'||event.type.startsWith('compaction/')));
         assert(!JSON.stringify(events).includes(secret),'fixture credentials must not enter durable events');
         await ctx.sessions.flush(session);
-        checks.push('real mounted read_image; pi-ai HTTP capture; live native profile mutation; all reference/A/B images retained; exact restored request bytes; unchanged files and durable attachments; no offload or compaction');
+        checks.push('text-only route sent a placeholder without image bytes; native settings enabled image input on the same route; real mounted read_image and pi-ai HTTP capture; all reference/A/B images retained; exact restored request bytes; unchanged files and durable attachments; no offload or compaction');
         report({ok:true,dshVersion:JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version,nodeVersion:process.version,runtimeOwnership:'official-host',sessionId,preset:'standard',workspace,checks,requests,transforms,network,originals,stored:storedAfter,
           boundary:'Exact prepared DSH Web composition and real pi-ai adapter; loopback provider only. No paid model, user secrets, Houdini scene or GUI. Request size/bytes and retention were measured; semantic image quality, model token usage and fees were not measured.'});
       }catch(error){fail(error)}
