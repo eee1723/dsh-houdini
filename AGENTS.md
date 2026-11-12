@@ -39,7 +39,7 @@ hou只存在于Houdini侧，Node Host不直接调用HOM。
 - 启动：官方Desktop内选择Houdini模式，或从Houdini的DSH-Houdini → Open Workspace进入同一宿主。版本信息/本端修复只维护当前Bridge/helper，不管理Desktop生命周期、不重启其他工程；menu/package或helper版本切换须重开对应Houdini。
   不未经用户授权重启live或修改HIP；构建通过不等于live已加载。
 - 部署：main push/tag/Draft不算正式发布；兼容清单与engines.dsh声明经过验证的官方宿主版本，不替换其运行时。交付标准插件与Houdini/媒体资源，本端安装不改profile、会话或账户。
-  后续发布默认按[统一发布流程](docs/development.md#发行操作与信任配置)执行。安装合同见docs/setup.md，未交付部分见docs/handoff.md，不把源码build当成用户发行包安装。
+  每次正式发布须按[统一发布流程](docs/development.md#发行操作与信任配置)完成 GitHub Release、npm `latest` 与 npmmirror 同步，核对三处提供同一份冻结安装包后才算完成。安装合同见docs/setup.md，未交付部分见docs/handoff.md，不把源码build当成用户发行包安装。
 - trace先按houdini-trace-analysis skill跑extract-trace-evidence.mjs，再跑tools/trace-report.mjs；
   区分目录广度、调用含动词率、动词密度、只读裸探针、Gate拦截与成功裸修改。
 

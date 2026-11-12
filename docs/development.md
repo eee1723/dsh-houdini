@@ -90,7 +90,7 @@ npm run docs:check
 
 正式包由 `python tools/build-release.py --output <目录>` 构建；`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或发布。GitHub与npm分发同一个冻结tgz，不为npm另打缺少Houdini/媒体资源的包，不从源码根执行`npm publish`。维护者在验证最终包、获得发布授权后公开发行；下载地址或包名可用性不能由Draft、源码push或本地预演推断。已公开渠道与安装方式见[安装说明](setup.md)，未完成上架只进handoff。
 
-npm首次发布由维护者通过`npm login --registry=https://registry.npmjs.org`完成官方账号授权，并满足npm要求的发布二次验证。对已经验证的同一个tgz先运行`npm publish <完整tgz路径> --dry-run --ignore-scripts --access public --registry=https://registry.npmjs.org`，再去掉`--dry-run`正式发布；不把密码、验证码或token写入仓库。已发布的name/version不可覆盖，发布前先核对`npm view dsh-houdini@<版本> dist.integrity`；若该版本已存在，核对完整性而不重发。发布后读取官方registry的版本、兼容声明和`dist.integrity`，与冻结包的SHA512完整性一致，再核对实际下载的SHA256及原生包名安装。GitHub Actions可信发布可在包建立后作为独立的维护者配置接入；源码CI和候选构建不隐式发布。
+npm发布使用维护者已授权的官方账号会话，失效时通过`npm login --registry=https://registry.npmjs.org`重新登录，并按npm提示完成二次验证。对已经验证的同一个tgz先运行`npm publish <完整tgz路径> --dry-run --ignore-scripts --access public --tag latest --registry=https://registry.npmjs.org`，再去掉`--dry-run`正式发布；不把密码、验证码或token写入仓库。已发布的name/version不可覆盖，发布前先核对`npm view dsh-houdini@<版本> dist.integrity`；若该版本已存在，核对完整性并确认`latest`指向该版本。发布后读取官方registry的版本、兼容声明和`dist.integrity`，与冻结包的SHA512完整性一致，再核对实际下载的SHA256及原生包名安装。GitHub Actions可信发布可在包建立后作为独立的维护者配置接入；源码CI和候选构建不隐式发布。
 
 回执为`202 Accepted`而公开registry尚无该版本时，按[官方版本生命周期接口](https://api-docs.npmjs.com/)用维护者身份读取精确版本的`/-/package/<包名>/version/<版本>/status`，不把CLI成功退出当作公开完成。`validating`表示平台仍在验证，继续观察而不重复上传。只有实际暂存清单列出对应版本时，才用支持`npm stage`的隔离CLI核对暂存包及摘要，并由维护者完成平台要求的批准／二次验证；空暂存清单不证明验证完成。凭据仅由官方配置和鉴权库消费，不打印token或完整配置，不修改用户全局npm安装。
 
@@ -104,7 +104,7 @@ npm分发回访仍使用上述现有入口：分发检查传`--remote-only --npm
 
 包名及精确版本仅在所选registry已公开时作为可用入口；裸包名的latest还须核对`engines.dsh`，不能用GitHub同版可下载、源码版本或切换registry代替上游公开。URL／文件安装保留原来源，不因npm公开自动成为registry安装。原生更新资格、同名添加与来源迁移合同统一见[DSH适配](dsh-update-compatibility.md#第三方插件更新入口)。
 
-中国大陆镜像采用[npmmirror的只读同步服务](https://npmmirror.com/)。npm正式版本可下载后，通过[本包同步页](https://npmmirror.com/sync/dsh-houdini)发起同步，核对任务结果、镜像的精确版本与dist-tag，再下载镜像tgz与同一冻结包比较摘要。镜像任务提交或网页旧缓存不代表版本已可安装；以目标registry实际查询及下载为准。原生分发检查可加`--registry https://registry.npmmirror.com/`，仅在自有profile配置该源、清空回退，并核对实际消费者读到的配置，避免自动选源掩盖未同步问题。同步延迟时仍提供npm官方源和GitHub直链，不修改用户全局registry或另发一份包。
+中国大陆镜像采用[npmmirror的只读同步服务](https://npmmirror.com/)。npm正式版本可下载后，在[镜像包页面](https://npmmirror.com/package/dsh-houdini)发起同步，核对任务结果、镜像的精确版本与`latest`，再下载镜像tgz与同一冻结包比较摘要。镜像任务提交或网页旧缓存不代表版本已可安装；以目标registry实际查询及下载为准。原生分发检查可加`--registry https://registry.npmmirror.com/`，仅在自有profile配置该源、清空回退，并核对实际消费者读到的配置，避免自动选源掩盖未同步问题。同步延迟时仍提供npm官方源和GitHub直链，不修改用户全局registry或另发一份包。
 
 [Gateway心跳反例](../tools/tests/dsh-gateway-heartbeat-check.mjs)接收配套缓存根目录，使用真实loopback WebSocket并在写入边界注入大帧持续排空及停滞，检查排空期间不误断、排队Ping不增长、真正停滞仍退出、正常Pong与立即发包的反例。浏览器连接和原故障的现场复现分别判断；会话日志没有浏览器连接事件时，不能用同一Houdini运行身份或健康检查成功证明页面从未断线。
 
@@ -352,13 +352,13 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 代码推送只运行源码CI；[手动候选构建](../.github/workflows/desktop-plugin.yml)接受现有branch、commit或tag，只以只读仓库权限构建并保存短期Actions产物，不创建tag、Draft/正式Release或发布npm。公开分发须在发行验证通过后，作为维护者明确授权的单独操作执行，不能由main push或候选构建隐式完成。
 
-后续正式发布默认依次完成下列流程，详细命令与渠道检查复用[构建与生成](#构建与生成)，不另建发布账本。已有明确版本与渠道的发布指令即按该范围推进；账号登录及平台要求的二次验证由维护者完成。
+每次正式发行在同一批次完成 GitHub Release、npm 官方源的 `latest` 与 npmmirror 同步。三个渠道均须核对精确版本、实际下载内容和安装入口，全部通过后才算发行完成。详细命令与渠道检查复用[构建与生成](#构建与生成)；账号登录及平台要求的二次验证由维护者完成。
 
 1. **先完成用户指引。** 冻结前同步版本、兼容声明、README、安装/更新说明及发行摘要。npm包页正文来自打包时的README，安装指引须提前准确，并按渠道实际可用性提供入口；包名尚未公开时不把切源写成解决办法。发行说明中的包名和完整tgz地址使用各自独立的Markdown fenced代码块，语言标记为`text`，保留GitHub一键复制按钮；写清各渠道适用条件与可用的完整地址。
 2. **固定一个完整包。** 从明确源码提交构建标准tgz，记录工作树状态、完整资源/许可/来源及校验清单。GitHub与npm使用同一冻结包；内容变化升版本，既有包与标签不覆盖。媒体范围沿现役分发合同，不为上架另打缺资源的包。
 3. **按改动验证最终产物。** 完成构建、文档门和受影响回归，用官方Desktop的CLI、原生插件页面及H21/H22实际加载验证最终包。按[受影响能力](#受影响能力的验证)选择执行内核和领域检查，不为纯文档或重复渠道验证机械重跑整套HOM/模型评测；用户live、真实账号和自然任务质量保持各自验证边界。
-4. **发布并查实公开状态。** npm先预演，再按授权发布；GitHub公开对应源码、标签、同包附件和校验文件。命令成功、处理中提示、占位版本或Draft均不算公开完成；核对真实版本、兼容声明、dist-tag及可下载文件。重新下载GitHub与npm的包，比较SHA256/SHA512与冻结包。
-5. **完成大陆镜像同步。** npm版本实际公开后触发npmmirror同步，等待精确版本和目标dist-tag就绪，再下载镜像包核对同一摘要。排队或网页缓存不是完成证据；尚未就绪时如实报告该渠道待完成，不把官方源可用扩大为镜像可用。
+4. **发布并查实公开状态。** npm官方源先预演，再将冻结包发布为`latest`；GitHub公开对应源码、标签、同包附件和校验文件。命令成功、处理中提示、占位版本或Draft均不算公开完成；核对实际版本、兼容声明、npm的`latest`及可下载文件。重新下载GitHub与npm的包，比较SHA256/SHA512与冻结包。
+5. **完成大陆镜像同步。** npm版本实际公开后触发npmmirror同步，等待精确版本可下载且镜像的`latest`指向该版本，再下载镜像包核对同一摘要。排队或网页缓存不是完成证据；尚未就绪时如实报告该渠道待完成，不把官方源可用扩大为镜像可用。
 6. **核对各实际安装入口与页面。** 回访正式GitHub HTTPS、npm官方源和大陆镜像的包名安装、启停和卸载。镜像验证显式选择该registry并关闭其他源回退，确认消费方实际读到的源，避免自动选源掩盖失败。按实际来源核对原生版本区、更新按钮及同名添加行为；API更新成功不代替按钮路径或URL／文件来源迁移。检查公开发行页的复制按钮、链接及npm包页安装说明；不把渠道可用扩大为其他渠道已公开，也不把Node插件更新写成Houdini热重载。
 7. **收尾同源记录。** 源码、标签、发行清单与公开说明对应；证据由输出管理器保存，未完成动作只进handoff。对用户报告实际可用渠道、版本、验证范围和遗留项；仓库README修改不能冒充已刷新冻结npm包的正文。
 
