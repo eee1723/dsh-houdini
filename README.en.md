@@ -41,16 +41,18 @@ These capabilities can be combined: start by inspecting an existing network, tur
 ### Installation
 
 1. Install a compatible version of the official DSH Desktop and Houdini, then configure the primary model in DSH's native model settings.
-2. In Desktop, open **Plugins → Add Plugin → Package name or address**, enter the full address below, and click **Install**. Alternatively, download the `.tgz` from the official release page and enter its local absolute path.
+2. In Desktop, open **Plugins → Add Plugin → Package name or address**, enter the exact package specifier or GitHub address below, and click **Install**. You can also download the `.tgz` from the release page and enter its local absolute path.
 3. Click **Enable Now**, or enable `dsh-houdini` from the plugin list.
+
+```text
+dsh-houdini@0.1.11
+```
 
 ```text
 https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
 ```
 
-The [GitHub release package and checksum files](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11) provide the complete installation package. Enter the package directly in Desktop. For subsequent updates to an address-installed version, use native plugin management as described in the [update instructions](docs/setup.md#connection--support连接与维护).
-
-Use the GitHub address above to install 0.1.11. [npm](https://www.npmjs.com/package/dsh-houdini) currently provides `dsh-houdini@0.1.8` for the same DSH version. When installing by package name, confirm that the selected registry carries the version and enter the exact package specifier.
+The same complete package is available from [npm](https://www.npmjs.com/package/dsh-houdini/v/0.1.11), [npmmirror](https://npmmirror.com/package/dsh-houdini), and the [GitHub release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11). See the [update instructions](docs/setup.md#connection--support连接与维护) for package-name and address installations.
 
 Newly installed plugins are disabled by default and provide Houdini mode only after being enabled. The full package includes FFmpeg / ffprobe, and a standard Python interpreter is located automatically from the Houdini installation. Using the plugin requires no separate Node installation, source compilation, or FFmpeg PATH configuration.
 

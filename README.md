@@ -41,16 +41,18 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 ### 安装
 
 1. 安装兼容的官方 DSH Desktop 和 Houdini，在 DSH 原生模型设置中配置主模型。
-2. 在 Desktop 的 **插件 → 添加插件 → 包名或地址** 中填写下方完整地址，点击 **安装**；也可下载正式发布页的 `.tgz`，填写文件的本地绝对路径。
+2. 在 Desktop 的 **插件 → 添加插件 → 包名或地址** 中填写精确包名或下方 GitHub 地址，点击 **安装**。也可下载正式发布页的 `.tgz`，填写文件的本地绝对路径。
 3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
+
+```text
+dsh-houdini@0.1.11
+```
 
 ```text
 https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
 ```
 
-[GitHub 正式包及校验文件](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11)提供完整安装包，无须解压或运行脚本。地址安装的后续版本按[更新说明](docs/setup.md#connection--support连接与维护)在原生插件管理中处理。
-
-0.1.11 使用上方 GitHub 安装地址。[npm 包名](https://www.npmjs.com/package/dsh-houdini)目前提供 `dsh-houdini@0.1.8`，同样支持 DSH 0.2.2-rc.1。按包名安装时请确认所选源有该版本并填写精确包名。
+同一份完整包可从 [npm](https://www.npmjs.com/package/dsh-houdini/v/0.1.11)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11) 安装。包名和地址安装的后续升级见[更新说明](docs/setup.md#connection--support连接与维护)。
 
 新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
 
