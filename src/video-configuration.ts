@@ -39,7 +39,7 @@ export function tutorialEndpoint(value:string):URL {
     throw Error('远程转录需要 HTTPS；本机服务可使用明确的 localhost/127.0.0.1 HTTP 地址。局域网明文服务需先提供 HTTPS，不能把音频或凭据无提示发往不安全地址。')
   return endpoint
 }
-export function customVideoCredential(endpoint:string,protocol:string) {
+export function customVideoCredential(endpoint:string) {
   return 'DSH_HOUDINI_ASR_'+createHash('sha256').update(new URL(endpoint).origin).digest('hex').slice(0,16).toUpperCase()+'_API_KEY'
 }
 
@@ -68,7 +68,7 @@ export function resolveVideoRoute(ctx:any,selection:VideoSelection,override:{pro
     endpoint=tutorialEndpoint(selection.endpoint)
     // Origin changes get a different native reference. An agent cannot send
     // another provider's saved key to a newly configured relay by accident.
-    credentialRef=customVideoCredential(endpoint.href,protocol)
+    credentialRef=customVideoCredential(endpoint.href)
   }
   const authentication=selection.authentication
   if(!['bearer','none'].includes(authentication))throw Error('未支持的转录认证方式。')
@@ -143,7 +143,7 @@ export async function configureVideo(ctx:any,input:Record<string,unknown>) {
   }
   // Store one explicit native reference, never its secret value. Keeping it in
   // the Config also lets DSH's own credential surfaces describe this route.
-  if(next.endpoint&&next.protocol)patch.videoCredentialRef=next.authentication==='none'?'':customVideoCredential(tutorialEndpoint(next.endpoint).href,next.protocol)
+  if(next.endpoint&&next.protocol)patch.videoCredentialRef=next.authentication==='none'?'':customVideoCredential(tutorialEndpoint(next.endpoint).href)
   const settings=hostService(ctx,'settings')
   const current=settings?.describe({redactSecrets:true}).find((row:any)=>row.ns==='houdini-frontend')
   if(!current||settings.writable===false||current.writable===false)throw Error('Houdini 教程设置当前不可写；请先确认本插件已经启用。')

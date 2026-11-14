@@ -29,6 +29,8 @@
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
 
+[WFC 建模 skill](../skills/houdini-wfc-modeling/SKILL.md)维护模块规格、可编辑规则与观察、约束求解、Houdini 实例装配和可复现的方案展示，由[src/skill.ts](../src/skill.ts)随包注册。注册与资源验证使用[技能回归](../tools/tests/bundled-skills.test.mjs)及[开发维护](development.md)的技能审计。
+
 [资产接入skill](../skills/houdini-asset-integration/SKILL.md)统一外部／生成资产的取得边界、组件适配、功能状态、LOD与SOP/USD消费者；提供方自身skill仍维护安装／授权／云任务。由[src/skill.ts](../src/skill.ts)注册，实际资料送达沿[Host上下文验证](../tools/tests/dsh-context-loop-fixture.mjs)，效果与长时自然采用不由注册通过推断。
 
 [模拟工作流](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时间与数据接口、缓存/重新修改和动态观察；由[src/skill.ts](../src/skill.ts)注册，机制验证复用[开发维护](development.md)的隔离执行与视口入口，效果与自然采用仍需任务验证。

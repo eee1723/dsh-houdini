@@ -10,7 +10,7 @@ const executor='a'.repeat(32),runtime='b'.repeat(32),epoch='c'.repeat(32),regist
 const first={executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:'e'.repeat(32),registration_id:registration,
   hip_path:'C:/work/ship.hip',hip_is_new:false,houdini_version:'22.0.368',workspace_path:'C:/work',state:'registered',same_workspace:true,pid:9876,workbench:true}
 const second={...first,executor_id:'f'.repeat(32),hip_path:'D:/other/rocks.hip',same_workspace:false,pid:4321}
-let task='task-a',generation={id:1},project=null,preset='houdini',hidden=false,failPresence=false,presenceReply=null,componentSetup=null
+let task='task-a',generation={id:1},project=null,preset='houdini',hidden=false,failPresence=false,presenceReply=null,componentSetup=null,desktopAvailable=true
 const native=new Map(),requests=[],projectionRefreshes=[],intervals=[],visibility=new Set(),generationListeners=new Set()
 const componentHooks=new Map();let currentHooks=null,cursor=0,queued=[]
 const React={
@@ -50,7 +50,7 @@ assert.equal(context.houdiniDisplayProject(pendingReview,fresh),pendingReview)
 let observations=[observed(first),observed(second)]
 const connection={generation:{getSnapshot:()=>generation,subscribe:fn=>{generationListeners.add(fn);return()=>generationListeners.delete(fn)}},rpc:{call:async(_channel,method,payload,signal)=>{
  requests.push({method,payload,signal})
- if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:true,componentSetup}}
+ if(method==='houdiniFrontend/capabilities')return{ok:true,value:{desktop:desktopAvailable,componentSetup}}
  if(method==='houdiniFrontend/windowPin')return{ok:true,value:{pinned:false}}
  if(method==='houdiniFrontend/projectPresence'){if(presenceReply)return presenceReply();if(failPresence)throw Error('connection lost');return{ok:true,value:observations}}
  if(method==='houdiniFrontend/prepareBridge'){componentSetup=null;return{ok:true,value:{message:'Houdini 组件已准备'}}}
@@ -193,8 +193,15 @@ assert.equal(requests.filter(r=>r.method==='houdiniTargets/select').at(-1).paylo
 observations=[observed(first),observed(second)];intervals.at(-1)();await settle();tree=render(menu)
 hidden=true;visibility.forEach(fn=>fn());tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','hidden pages cannot retain a green reachable badge')
 hidden=false;visibility.forEach(fn=>fn());await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'ready')
+desktopAvailable=false;intervals.at(-1)();await settle();tree=render(menu)
+assert.equal(chip(tree).props['data-state'],'unknown','losing the Desktop service invalidates its live observations immediately')
+if(!by(tree,n=>n.props.role==='menu')){chip(tree).props.onClick();await settle();tree=render(menu)}
+assert(by(tree,n=>n.props.role==='menuitem'&&by(n,c=>c.props['data-houdini-project-action']==='new')).props.disabled)
+assert(!by(tree,n=>n.props['data-houdini-target']),'unavailable Desktop service cannot supply selectable windows')
+desktopAvailable=true;intervals.at(-1)();await settle();tree=render(menu)
+assert.equal(chip(tree).props['data-state'],'ready','a fresh observation restores availability')
 failPresence=true;intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','transport failures invalidate reachable state')
-chip(tree).props.onClick();await settle();tree=render(menu)
+if(!by(tree,n=>n.props.role==='menu')){chip(tree).props.onClick();await settle();tree=render(menu)}
 assert(by(tree,n=>n.props.role==='menuitem'&&by(n,child=>child.props['data-houdini-target']===first.executor_id)).props.disabled,true,'known windows stay visible but cannot be selected from a stale refresh')
 failPresence=false;observations[0]={...observed(first),observedAt:Date.now()-20000};intervals.at(-1)();await settle();tree=render(menu);assert.equal(chip(tree).props['data-state'],'unknown','a fresh response cannot refresh an old individual observation')
 observations=[observed(first),observed(second)];intervals.at(-1)();await settle();tree=render(menu)
@@ -230,7 +237,7 @@ assert.equal(prepareCalls().length,0,'observing scenes does not reinstall compon
 componentSetup={state:'failed',message:'自动准备未完成，可重试。',details:'owned installation failure'}
 intervals.at(-1)();await settle();tree=render(menu)
 assert.match(text(tree),/重试组件准备/)
-assert.match(text(tree),/连接与组件/)
+assert.equal(nodes(tree).filter(n=>n.props['data-houdini-project-action']==='prepareBridge').length,1,'the failure notice owns the only repair action')
 const prepareAction=()=>by(tree,n=>n.props.role==='menuitem'&&by(n,c=>c.props['data-houdini-project-action']==='prepareBridge'))
 assert(prepareAction(),'automatic setup failures retain an explicit component repair action')
 prepareAction().props.onClick();await settle();tree=render(menu)

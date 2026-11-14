@@ -14,7 +14,6 @@ assert.equal(manifest.engines.dsh,supported.join(' || '));
 assert.equal(fixture.dependencies['@deepseek-ai/dsh'],policy.preferredVersion);
 assert.equal(policy.runtimeOwnership,'host');
 assert.equal(policy.runtimeFixes,undefined);
-assert.ok(manifest.files.includes('runtime/video'),'formal plugin packaging retains the source-complete tutorial media resources');
 for(const version of supported)assert.equal(evaluatePluginCompatibility(manifest,{},version),undefined,
   `the official host must admit the qualified ${version} using its ordinary compatibility check`);
 for(const version of ['0.2.1-rc.3','0.2.1-rc.5','0.2.2-alpha.2','0.2.0-rc.2','0.2.2-rc.1','0.2.2-rc.2'])
@@ -34,6 +33,7 @@ const packed=spawnSync(process.execPath,[npm,'pack','--dry-run','--ignore-script
 assert.ifError(packed.error);
 assert.equal(packed.status,0,packed.stderr);
 const files=JSON.parse(packed.stdout)[0].files.map(row=>row.path);
+assert.ok(!files.some(file=>file.startsWith('runtime/video/')),'source inventory does not scan local media; release assembly provides verified media separately');
 assert.ok(files.includes('lib/frontend-host.js'));
 assert.ok(files.includes('presets/houdini/cordis.patch.yml'));
 for(const file of ['assets/dsh-houdini-plugin.png','locale/en.json','locale/zh.json'])assert.ok(files.includes(file),'package omits '+file);

@@ -53,6 +53,13 @@ try {
   const value=await exec.execute({code:'set_parms(...)'},context);
   assert.equal(value.details.stored,true);
   assert.equal(path.relative(dir,value.details.path),path.join('dsh-artifacts','results',value.details.sha256+'.json'));
+  const concurrentOriginal={ok:true,stdout:'',stderr:'',result:{payload:'x'.repeat(4*1024*1024)}};
+  const concurrent=await Promise.all(Array.from({length:4},()=>retainResult(concurrentOriginal,dir)));
+  assert(concurrent.every(row=>row.details.stored&&row.details.path===concurrent[0].details.path),
+    'concurrent identical results share one complete archive');
+  assert.deepEqual(fs.readdirSync(path.dirname(value.details.path)).sort(),
+    [path.basename(value.details.path),path.basename(concurrent[0].details.path)].sort(),
+    'successful publication leaves only the two content-addressed files');
   const legacy=path.join(dir,'.dsh-houdini-results',value.details.sha256+'.json');
   fs.mkdirSync(path.dirname(legacy));fs.copyFileSync(value.details.path,legacy);
   assert.equal((await readResultDetail(dir,value.details.sha256,'/result/payload',0,16000,legacy)).result.text,
@@ -138,6 +145,11 @@ try {
     assert.equal(page.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000),
       'native and nested execution/job results survive a saved-project directory change');
   }
+  const laterUnretained=[...native,{type:'tool/call',data:{callId:'later',name:'houdini_exec'}},
+    {type:'tool/result',data:{message:{source:{callId:'later'}},meta:{canonical:noWorkspace}}}];
+  const preserved=await readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>laterUnretained}}});
+  assert.equal(preserved.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000),
+    'a later retention failure does not hide the stored original for the same hash');
   const generic=structuredClone(nativeJob);generic[1].data.meta.canonical.job.kind='bash';
   // Real checker archives use builder/check names and live inside the original
   // run, not the Host's content-addressed results directory. Both run and read

@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import tarfile
+from types import SimpleNamespace
 from unittest.mock import patch
 import zipfile
 
@@ -28,6 +29,18 @@ def rejects(callback, match):
 
 with tempfile.TemporaryDirectory(prefix="dsh-private-media-package-") as temporary:
     root = Path(temporary)
+    existing = root / "existing-release"
+    existing.mkdir()
+    frozen = existing / "dsh-houdini-frozen.tgz"
+    frozen.write_bytes(b"already verified release")
+    with patch.object(builder.shutil, "which", return_value="npm.cmd"), \
+         patch.object(builder, "run", side_effect=AssertionError("existing release must be refused before building")):
+        try:
+            builder.build(SimpleNamespace(output=existing))
+        except FileExistsError:
+            assert frozen.read_bytes() == b"already verified release"
+        else:
+            raise AssertionError("existing release directory was reused")
     cache = root / "cache"
     cache.mkdir()
     source = cache / "ffmpeg-source.zip"

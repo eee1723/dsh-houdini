@@ -11,6 +11,7 @@ import hou
 import dsh_bridge as bridge
 from dsh_execution import _verb_value, _unrecovered_mutation
 from dsh_execution_results import _jsonable, _MAX_RESULT_BYTES
+from dsh_node_access import _val
 
 # Small allocations that used to expand exponentially during snapshotting.
 # Exercise both the public result converter and HOM ledger converter, which
@@ -35,6 +36,11 @@ for convert in (_jsonable, _verb_value):
         depth = [depth]
     assert 'JSON depth exceeds' in json.dumps(convert(depth))
     assert 'JSON value omitted' in convert('x' * (_MAX_RESULT_BYTES + 1))
+native_values = [hou.Color((0.25, 0.5, 0.75)), hou.Matrix3(1), hou.Matrix4(1)]
+expected_values = [[0.25, 0.5, 0.75], [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                   [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]]
+assert _verb_value(native_values) == expected_values
+assert [_val(value) for value in native_values] == expected_values
 assert _unrecovered_mutation({'verb': 'set_parms', 'ok': False, 'summary': _jsonable(cycle)}), 'unavailable recovery evidence never proves restoration'
 print('bounded cyclic/shared/nested/custom serialization seconds:', round(time.monotonic() - started, 3))
 

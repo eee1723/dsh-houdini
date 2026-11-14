@@ -28,7 +28,7 @@ assert.equal(writes.length,before,'invalid/secret configuration is rejected befo
 status=await configureVideo(ctx,{endpoint:'https://speech.example/custom-asr',model:'exact-asr',protocol:'openai-transcriptions',authentication:'bearer'})
 const firstRef=status.service.credentialRef
 assert.match(firstRef,/^DSH_HOUDINI_ASR_[A-F0-9]{16}_API_KEY$/)
-assert.equal(firstRef,customVideoCredential('https://speech.example/another-path','qwen-chat-asr'),'same origin can reuse its saved key across explicit models/protocols')
+assert.equal(firstRef,customVideoCredential('https://speech.example/another-path'),'same origin can reuse its saved key across paths')
 status=await configureVideo(ctx,{endpoint:'https://relay.example/custom-asr',model:'relay-asr',protocol:'openai-transcriptions'})
 assert.notEqual(status.service.credentialRef,firstRef,'a new origin cannot inherit the previous saved credential')
 assert.equal(status.service.credential.configured,false)

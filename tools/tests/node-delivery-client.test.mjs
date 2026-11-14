@@ -122,6 +122,11 @@ assert.equal(JSON.stringify(projection.forClosing(assemble(restored.snapshotEven
   'real native and PTC delivery projection survives durable DSH replay')
 
 const fake=(type,data,seq=100,surfaceOp='append')=>({type,data,seq,time:seq,surfaceOp})
+const deliverySnapshot=assembler.snapshot(projection.view.target)
+assembler.append({type:'event',event:fake('turn/start',{turn:2},events.at(-1).seq+1)})
+assembler.flush()
+assert.equal(assembler.snapshot(projection.view.target),deliverySnapshot,
+  'a native timeline update without deliveries does not re-render the existing turn tails')
 const liveValue=structuredClone(receipt);
 liveValue.verbs[0].result.nodes[0].path='/obj/bicycle/CTRL_FROM_JOB';
 const nativeRead={job:{kind:LIVE_JOB_KIND,id:'houdini-live-delivery'},text:JSON.stringify({

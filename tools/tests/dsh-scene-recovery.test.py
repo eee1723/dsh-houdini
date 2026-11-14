@@ -166,7 +166,9 @@ def worker(mode, folder):
         recovery._LOADED, recovery._PROVEN = None, None
         assessment = call('assess')['value']
         warning_operation = uuid.uuid4().hex
-        prepared_warning = call('prepare', operation_id=warning_operation, expected=assessment, reload_saved=True)['value']
+        with patch.object(recovery, 'capture_loaded', wraps=recovery.capture_loaded) as captured:
+            prepared_warning = call('prepare', operation_id=warning_operation, expected=assessment, reload_saved=True)['value']
+        assert captured.call_count == 1, captured.call_count
         assert prepared_warning['load_warnings'] and 'compatibility warning' in prepared_warning['load_warnings'][0]
         assert not ownership.records(), 'a loaded warning does not bypass explicit activation'
         assert 'load_warnings' not in recovery.facts(), 'later scene receipts contain references, not repeated preview text'
@@ -181,6 +183,17 @@ def worker(mode, folder):
         assert fatal_operation not in recovery._OPERATIONS
     finally:
         hou.hipFile.load, recovery.facts = original_load, original_facts
+    # An explicit load still fences queued operations if native callbacks
+    # were skipped, as happens with some H21 backslash paths.
+    epoch = recovery.scene_epoch()
+    hou.hipFile.removeEventCallback(recovery._CALLBACK)
+    try:
+        with patch.object(recovery, 'capture_loaded', wraps=recovery.capture_loaded) as captured:
+            recovery._load_checkpoint(hip.as_posix())
+        assert captured.call_count == 1 and recovery.scene_epoch() != epoch
+        assert recovery.facts()['loaded_checkpoint'] == original['checkpoint']
+    finally:
+        recovery.install()
     load()
     assert recovery.facts()['load_warning_details'] is None
     # Old records may include regenerated locked-definition members. Classify

@@ -31,9 +31,9 @@ def _val(v):
     if isinstance(v, (hou.Vector2, hou.Vector3, hou.Vector4)):
         return [float(x) for x in v]
     if isinstance(v, hou.Color):
-        return [float(v.r()), float(v.g()), float(v.b()), float(v.a())]
+        return [float(x) for x in v.rgb()]
     if isinstance(v, (hou.Matrix3, hou.Matrix4)):
-        return [[float(x) for x in row] for row in v]
+        return [[float(x) for x in row] for row in v.asTupleOfTuples()]
     return v
 
 

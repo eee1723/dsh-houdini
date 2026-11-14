@@ -7,7 +7,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP网络。�
 
 ## 构造分工
 
-交付形体、关系与性能符合要求，用户能继续修改的网络。先确定用户要改的路径、截面、源部件与局部工序；参数面板或可改源码不能替代这些入口。模块可以是重复组件、独有零件或连续形体的一段构造/形变过程；按编辑目标和依赖选择边界，完整源与布局的方法用于重复构造。已有工程保留有效结构，只改相关部分。
+交付形体、关系与性能符合要求，用户能继续修改的网络。先确定用户要改的路径、截面、源部件与局部工序；参数面板或可改源码不能替代这些入口。模块按编辑目标和依赖划分。同一[接口与装配方法](references/modeling-methods.md#完整源组件与布局)适用于原生、导入和生成资产。需要在 Houdini 成形的部分按下表选择；已有合适的网格可直接用作源。
 
 | 构造职责 | 普通可编辑建模的默认方法 |
 |---|---|
@@ -30,6 +30,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP网络。�
 | 复杂任务如何拆分、逐个观察并集成 | 按名加载[任务拆分skill](../houdini-task-decomposition/SKILL.md) |
 | 前帧反馈、模拟耦合、缓存与重新计算 | [模拟工作流](../houdini-simulation-workflow/SKILL.md)，维护时间/状态及实际消费者；不把普通SOP方法代替求解方法 |
 | 完整重复组件、内部细化与布局的边界 | [完整源组件与布局](references/modeling-methods.md#完整源组件与布局) |
+| 该直接接线、用 Subnet，还是跨功能区引用 | [容器选择](references/modeling-methods.md#逻辑模块与容器选择)与[几何引用](references/modeling-methods.md#跨功能区的几何引用) |
 | 用生成／外部资产替换已有组件，保持尺度、状态与布局 | 按名加载[资产接入skill](../houdini-asset-integration/SKILL.md)；本skill继续负责所需SOP构造 |
 | 路径、截面、重复源如何组合 | [建模方法](references/modeling-methods.md#1-从表示和构造选方法) |
 | 曲线不平滑、穿插、贴附偏离或扫掠扭转；需要可手调路径与净空反馈 | [可编辑路径与曲线](references/curves-and-routing.md)，分别选择造型、走向、采样和截面朝向；`sop_recipe('curve_path')`给原生可编辑路径，`geo_curve_clearance`仅查实际折线半径包络 |
@@ -48,7 +49,7 @@ description: 设计、构建、修改和交付可编辑的Houdini SOP网络。�
 
 ## 构建、观察与继续修改
 
-读取相关现场、要求和参考；复杂任务的粒度与推进使用[任务拆分skill](../houdini-task-decomposition/SKILL.md)。尺寸、厚度、间隙和连接基准共享来源；新资产使用米制与Y-up，`modeling_dimensions`可换算原始单位，已有工程按现场适配。同层模块默认沿数据流组织；稳定公共接口或独立替换需要时再用Subnet。
+读取相关现场、要求和参考。复杂任务的粒度与推进使用[任务拆分skill](../houdini-task-decomposition/SKILL.md)。尺寸、厚度、间隙和连接基准共享来源。新资产使用米制与 Y-up，`modeling_dimensions` 可换算原始单位，已有工程按现场适配。区内短链保留直连。跨功能区复用独立的源或数据时，优先在源端标明 `OUT_*`，在使用侧用 `IN_*` Object Merge 引用同一出口。需要上层独立替换的多步源组件按需用 SOP Subnet。
 
 用`build_module`或一批动词组合构建当前单元；`None`保留空输入槽。重复对象默认先形成符合编辑目标的完整源组件，再由独立布局复制；源内部可以继续使用Box/Tube、Copy和局部工序。单件与实例的检查、改源后的消费者复查见上表。`build_module`的批次成功不判断组件划分和外观质量。
 

@@ -107,6 +107,16 @@ function fixture(){
 }
 
 {
+ const f=fixture(),metadata=initial();metadata.writable=false;f.metadata(metadata);f.mutable(false);await f.ready()
+ assert.match(f.text(),/当前转录配置为只读/,'a loaded read-only configuration is distinct from a pending read')
+ assert.equal(f.find('data-houdini-video-model').props.disabled,true)
+ assert.equal(f.find('data-houdini-video-save-config').props.disabled,true)
+ assert.equal(f.find('data-houdini-video-key').props.disabled,true)
+ assert.equal(f.find('data-houdini-video-refresh').props.disabled,false)
+ f.cleanup()
+}
+
+{
  const f=fixture();await f.ready()
  f.find('data-houdini-video-key').props.onClick()
  const field=f.nodes(f.render()).find(node=>node.tag==='input'&&node.props.type==='password')

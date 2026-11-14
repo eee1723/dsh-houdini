@@ -126,6 +126,8 @@ def build(args):
     else:
         output = args.output.resolve()
         output.mkdir(parents=True, exist_ok=True)
+        if any(output.glob('*.tgz')) or any((output / name).exists() for name in ('release-manifest.json', 'SHA256SUMS.txt')):
+            raise FileExistsError(f"Use a new release output directory. Existing release files were preserved: {output}")
         run([*artifact_tool, "begin", output, "--label", "release-" + version,
              "--kind", "release", "--isolation", "unknown"])
     try:
@@ -149,7 +151,7 @@ def package_staged(args, npm, output, inventory, work):
     plugin.mkdir()
     for entry in inventory:
         name = entry["path"]
-        if "__pycache__" in Path(name).parts or name.endswith(".pyc") or name.startswith("runtime/video/"):
+        if "__pycache__" in Path(name).parts or name.endswith(".pyc"):
             continue
         source, destination = ROOT / name, plugin / name
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -159,6 +161,7 @@ def package_staged(args, npm, output, inventory, work):
     # of the Host's dependencies. Peer requirements remain the Desktop contract.
     for name in ("scripts", "devDependencies", "overrides", "private"):
         package.pop(name, None)
+    package["files"].append("runtime/video")
     package["os"] = ["win32"]
     package["cpu"] = ["x64"]
     (plugin / "package.json").write_text(json.dumps(package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -166,12 +169,13 @@ def package_staged(args, npm, output, inventory, work):
     print("Preparing verified tutorial media distribution", flush=True)
     media = stage_video_runtime(plugin / "runtime/video", work / "media", config,
                                 cache=args.media_cache, prepared=args.media_runtime, distribution=True)
-    packed = json.loads(run([npm, "pack", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache", "--pack-destination", output], cwd=plugin, capture=True))[0]
+    packed = json.loads(run([npm, "pack", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache", "--pack-destination", work], cwd=plugin, capture=True))[0]
     packed_files = {row["path"] for row in packed["files"]}
     if not {"runtime/video/ffmpeg/bin/ffmpeg.exe", "runtime/video/ffmpeg/bin/ffprobe.exe"}.issubset(packed_files):
         raise RuntimeError("Plugin package omitted the required tutorial media executables")
     artifact = output / packed["filename"]
-    with artifact.open("rb") as stream:
+    staged_artifact = work / packed["filename"]
+    with staged_artifact.open("rb") as stream:
         sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     result = {"kind": "dsh-plugin-bundle", "version": package["version"],
               "requiresDsh": package["engines"]["dsh"], "runtimeOwnership": "host",
@@ -180,9 +184,15 @@ def package_staged(args, npm, output, inventory, work):
                   + package["version"] + "/" + packed["filename"],
               "platform": {"os": "win32", "cpu": "x64"},
               "mediaVersion": media["version"], "mediaLicense": media["license"]}
-    (output / "release-manifest.json").write_text(json.dumps({**result, "file": artifact.name}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (output / "SHA256SUMS.txt").write_text(sha256 + "  " + artifact.name + "\n", encoding="ascii")
+    with staged_artifact.open("rb") as source, artifact.open("xb") as destination:
+        shutil.copyfileobj(source, destination)
+    with (output / "SHA256SUMS.txt").open("x", encoding="ascii") as stream:
+        stream.write(sha256 + "  " + artifact.name + "\n")
+    with (output / "release-manifest.json").open("x", encoding="utf-8") as stream:
+        json.dump({**result, "file": artifact.name}, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+    return result
 
 
 if __name__ == "__main__":

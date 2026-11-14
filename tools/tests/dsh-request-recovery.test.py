@@ -133,10 +133,25 @@ try:
     handler('/jobs/'+cancel_id+'/cancel',lambda *a,**k:None)._route({'owner_session':owner,'owner_call':'cancel-call',
         'expected_contract':{'version':b._EXECUTION_CONTRACT_VERSION,'hash':b._VERB_CATALOG_HASH}})
     assert b._jobs[cancel_id]['status']=='cancelled'
+    # A cancelled queued job still has a worker waiting for the main thread.
+    # Its terminal user status cannot be used to admit unlimited queued work.
+    original_max = b._MAX_ACTIVE_JOBS
+    b._MAX_ACTIVE_JOBS = 1
+    next_ref, responses = ref(), []
+    try:
+        handler('/jobs', lambda value, status=200: responses.append(status))._route(body(next_ref, 'pass'))
+        assert responses == [429] and b._request_registry.status(next_ref, owner)['status'] == 'not_executed'
+    finally:
+        b._MAX_ACTIVE_JOBS = original_max
     deadline=time.monotonic()+3
     while b._work_queue.empty() and time.monotonic()<deadline:time.sleep(.01)
     b._pump()
     assert b._jobs[cancel_id]['status']=='cancelled'
+    deadline = time.monotonic() + 3
+    while not b._request_registry.status(cancel_ref, owner)['job_finished'] and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert b._request_registry.status(cancel_ref, owner)['job_finished']
+    assert not b._jobs[cancel_id].get('_worker_pending')
     # Queue failure and a just-dequeued callback can race. The Registry must
     # arbitrate the execution claim, not merely change a display status.
     late_ref=ref();late_payload=body(late_ref,'raise RuntimeError("cancelled request must not run")');late=[]

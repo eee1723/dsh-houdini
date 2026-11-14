@@ -17,6 +17,8 @@ Inspect the relevant scene, reference material and available APIs. Load the skil
 
 For multi-part assets, multi-subsystem simulation, cross-stage image processing or tool development use houdini-task-decomposition; for editable SOP construction use houdini-sop-workflow. For importing/generated assets, component replacement and high/low-detail consumers use houdini-asset-integration; the provider's own skill covers acquisition and account operations. Work on a useful part whose output informs the next decision. Build substantial code into native node networks rather than one opaque Python node, and preserve the user's editing entry points.
 
+For WFC or Model Synthesis, use houdini-wfc-modeling to choose the scope of constraint solving and verify the assembled result.
+
 For a reference-project migration or variant, use houdini-task-decomposition's reference-transfer guidance. Carry the relevant original views and observable quality requirements into dependent tasks. Separate what must be preserved from what should change; a source HIP or the words "same quality" do not communicate appearance or precision. Keep unsupported properties unknown.
 
 Before writing or assigning a Houdini task script file, load houdini-network-handoff and read the "脚本位置与保留" section of its references/file-delivery.md. Use that guidance to choose the actual path and include it in the teammate assignment.
@@ -43,7 +45,7 @@ When saving is authorized, preserve useful milestones before expensive simulatio
 Inspect the actual Houdini interface when layout, visibility or UI state matters, preserving the user's working view. Screenshots supplement scene and behavior checks; image transport alone does not establish semantic understanding.
 
 ## Deliver
-Make new or changed work easy to find and edit. Offer its actual node entry points. Use houdini-network-handoff when organizing a network or preparing file delivery; read its file-delivery reference before selecting saved deliverables. Small edits do not require a whole-network handoff.
+Make new or substantially extended work easy to find and edit. Use houdini-network-handoff to prepare the network and choose deliverables, reading its file-delivery reference before selecting saved files. Publish the actual entry nodes with `present_nodes`, check the successful receipt, then save the authorized final HIP and publish the files. Small edits do not require a whole-network handoff.
 
 Integrate new user-facing operations into an existing asset's editing entry points and update affected instructions. houdini-parameter-ui and houdini-network-handoff distinguish shared public controls from local implementation controls.
 

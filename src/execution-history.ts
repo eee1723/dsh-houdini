@@ -1,7 +1,7 @@
 /** Offline history inspection; live consumers read the registered DSH projection. */
 import {executorIdentityProjection,transitionExecutorState} from './executor-identity-projection.js'
 import {executionCall,executionResult} from './dsh-adapter.js'
-import {executionOutstanding,initExecutionScope,transitionExecutionScope,resultOrigin,resultJob,type ScopeDelta,type ExecutionScope,type HistoricalExecutionOrigin} from './execution-facts.js'
+import {executionOutstanding,initExecutionScope,transitionExecutionScope,resultOrigin,resultJob,type ScopeDelta,type HistoricalExecutionOrigin} from './execution-facts.js'
 export {mergeRequestStatus,isPendingRequestStatus} from './execution-facts.js'
 export type {HistoricalExecutionOrigin} from './execution-facts.js'
 export type SessionEvent = {type:string;seq?:number;time?:number;data?:any;ignorable?:boolean;surfaceOp?:string|{op:string}}

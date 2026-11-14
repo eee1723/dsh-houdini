@@ -167,8 +167,7 @@ def read_parms(node, changed_only: bool = True, *, names: list | None = None) ->
             if isinstance(value, hou.Ramp):
                 entry['value'] = {'type': 'ramp', 'basis': [str(b).rsplit('.', 1)[-1] for b in value.basis()],
                                   'keys': [float(k) for k in value.keys()],
-                                  'values': [[float(v.r()),float(v.g()),float(v.b())] if isinstance(v,hou.Color)
-                                             else dsh_node_access._val(v) for v in value.values()]}
+                                  'values': [dsh_node_access._val(v) for v in value.values()]}
                 entry['value_scope'] = 'evaluated ramp knots only; not animation, callbacks or a setter payload'
             else:
                 entry["value"] = dsh_node_access._val(value)

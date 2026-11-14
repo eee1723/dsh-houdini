@@ -154,7 +154,7 @@ npm run runtime:prepare
 npm run docs:check
 ```
 
-官方宿主准备器仅用于隔离开发验证。开发/测试必须显式使用临时 DSH_HOME、profile、依赖缓存和浏览器数据；不要把未验证的 checkout 安装进用户正在使用的 Desktop。源码 Houdini Package 可用 python houdini/install.py --print 预览或安装；该命令不改 DSH profile。
+官方宿主准备器仅用于隔离开发验证。开发/测试必须显式使用临时 DSH_HOME、profile、依赖缓存和浏览器数据；不要把未验证的 checkout 安装进用户正在使用的 Desktop。用 `python houdini/install.py --print` 预览源码 Houdini Package，用 `python houdini/install.py --packages-dir <隔离目录>` 登记。已有其他同名注册时，安装器保留原文件并提示选择隔离目录。
 
 具体职责、替代方案比较和宿主共存纪律见[开发维护](development.md#插件职责与方案选择)。受支持版本与公开接口见[DSH 适配](dsh-update-compatibility.md)，未完成验收只维护于[交接](handoff.md)。
 

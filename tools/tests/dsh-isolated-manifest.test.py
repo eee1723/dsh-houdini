@@ -33,6 +33,20 @@ with tempfile.TemporaryDirectory(prefix='dsh-isolated-manifest-') as raw:
     save(valid)
 
     assert runner.load_manifest(file)==valid
+    # The report, archive and Host-facing CLI must round-trip arbitrary result text.
+    unicode_run = root / 'unicode-result'
+    unicode_run.mkdir()
+    original = '界面 \ud800'
+    runner.write_json(unicode_run / 'report.json', {'run_id': 'a' * 32, 'ok': False,
+                      'finished': True, 'error': original})
+    observed = subprocess.run([sys.executable, str(ROOT / 'tools/isolated-houdini-check.py'),
+                               '--status', '--output-dir', str(unicode_run)], capture_output=True, check=True)
+    assert json.loads(observed.stdout)['error'] == original
+    original_envelope = {'ok': True, 'result': original * runner.DETAIL_THRESHOLD}
+    projected_envelope = runner.execution_projection(unicode_run, 'builder', original_envelope)
+    assert projected_envelope['details']['stored']
+    assert runner.read_execution(unicode_run, projected_envelope) == original_envelope
+
     def chatty_native_call():
         os.write(1,b'prefix\n'+b'x'*200000+b'\n')
         os.write(1,b"[12:34:56] mantra: Unable to load texture 'E:/missing.png'\n")

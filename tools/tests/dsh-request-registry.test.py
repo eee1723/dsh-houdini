@@ -174,6 +174,18 @@ class Requests(unittest.TestCase):
         self.registry.complete(refused, {'must_not_replace': True})
         self.assertEqual(self.registry.status(refused, self.owner)['status'], 'not_executed')
 
+    def test_result_with_non_ascii_text_and_lone_surrogate_can_complete(self):
+        ref = self.admit()
+        self.registry.running(ref)
+        payload = {'stdout': 'Houdini 中文 \udcff'}
+        self.registry.complete(ref, payload)
+        receipt = self.registry.status(ref, self.owner)
+        self.assertEqual(receipt['status'], 'done')
+        self.assertEqual(receipt['result'], payload)
+        self.assertEqual(self.registry.active_count(), 0)
+        expected = '{"stdout": "Houdini 中文 \\udcff"}'.encode('utf-8')
+        self.assertEqual(self.registry.bytes, len(expected))
+
     def test_running_request_cannot_be_declared_not_executed(self):
         ref = self.admit()
         self.assertTrue(self.registry.running(ref))

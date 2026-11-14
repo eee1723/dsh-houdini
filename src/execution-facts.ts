@@ -5,7 +5,7 @@ import {executionCall,executionResult} from './dsh-adapter.js'
 import {HOUDINI_SCENE_TOOLS} from './tool-catalog.js'
 import type {SessionEvent,ExecutionRow} from './execution-history.js'
 import {z} from 'zod'
-const RECOVERABLE=new Set(['houdini_exec','houdini_ui_list','houdini_ui_screenshot','houdini_job_submit'])
+const RECOVERABLE=new Set(['houdini_exec','houdini_inspect','houdini_ui_list','houdini_ui_screenshot','houdini_job_submit'])
 const OBSERVED=new Set(['done','not_executed','job_submitted'])
 const UNAVAILABLE=new Set(['result_expired','result_unavailable'])
 const TERMINAL_REQUESTS=new Set([...OBSERVED,...UNAVAILABLE])
@@ -164,7 +164,8 @@ export function transitionExecutionScope(previous:ExecutionScope,event:SessionEv
   if(row) {
     delta.row=row
     if(newer(row,state.anchor))state.anchor=row
-    if(Array.isArray(value.verbs)&&value.verbs.some((verb:any)=>verb?.verb==='scene_save_as'&&verb.ok===true))state.saveAs=row
+    if(newer(row,state.saveAs)&&Array.isArray(value.verbs)
+      &&value.verbs.some((verb:any)=>verb?.verb==='scene_save_as'&&verb.ok===true))state.saveAs=row
   } else if(receipt&&name!=='houdini_request'&&!TERMINAL_REQUESTS.has(receipt.status))
     state.uncertain=put(state.uncertain,outcome.callId,{seq:event.seq??0,callId:outcome.callId,ref:receipt.request_ref})
   return finish(state,delta)

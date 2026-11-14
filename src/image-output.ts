@@ -67,16 +67,17 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
     const attachments = ctx.get?.('attachments')
     const capability = await visualCapability(exec,ctx)
     if (capability.status !== 'available') throw new Error(capability.reason)
-    let totalBytes = 0
+    let totalBytes = 0, attachedCount = 0
     for (const from of paths) {
       try {
-        if (imageAttachments.filter(item => item.attachment).length >= attachments.imageLimits.maxImagesPerMessage) throw new Error('native image message count limit reached')
+        if (attachedCount >= attachments.imageLimits.maxImagesPerMessage) throw new Error('native image message count limit reached')
         const mediaType = ({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif'} as Record<string,string>)[path.extname(from).toLowerCase()]
         if (!mediaType || !attachments.imageLimits.mediaTypes.includes(mediaType)) throw new Error('format unsupported by native image channel; use a PNG/JPEG preview for visual inspection')
         const cap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes - totalBytes)
         if (cap <= 0) throw new Error('native image message byte limit reached')
         const data = await bridge.fetchMedia(from, exec.signal, cap)
         const attachment = await attachments.saveImage({ data, mediaType, name: path.basename(from.replaceAll('\\', '/')) })
+        attachedCount++
         totalBytes += attachment.bytes
         imageAttachments.push({ from, attachment, image:imageAttachmentFacts(attachment), semantic_status: 'unverified', capability_status: capability.status })
       } catch (error) {

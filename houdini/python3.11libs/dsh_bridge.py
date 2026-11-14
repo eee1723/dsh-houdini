@@ -100,7 +100,7 @@ _MAX_JOBS = 1000                         # terminal-job registry cap
 _MAX_ACTIVE_JOBS = 32                    # bound queued workers, not only history
 _JOB_RETENTION_SECONDS = 600             # keep terminal job results for polling
 
-_jobs: dict[str, dict] = {}              # API-visible job payloads (schema-exact)
+_jobs: dict[str, dict] = {}              # job payloads with internal owner/worker state
 _job_meta: dict[str, float] = {}         # jobId -> created/finished timestamp
 _jobs_lock = threading.Lock()
 
@@ -297,14 +297,15 @@ def _prune_jobs() -> None:
     now = time.time()
     with _jobs_lock:
         for job_id in list(_jobs):
-            if _jobs[job_id]["status"] in ("done", "failed", "cancelled"):
+            job = _jobs[job_id]
+            if job['status'] in ('done', 'failed', 'cancelled') and not job.get('_worker_pending'):
                 if now - _job_meta.get(job_id, now) > _JOB_RETENTION_SECONDS:
                     _jobs.pop(job_id, None)
                     _job_meta.pop(job_id, None)
         if len(_jobs) > _MAX_JOBS:
             terminal = sorted(
                 (jid for jid, j in _jobs.items()
-                 if j["status"] in ("done", "failed", "cancelled")),
+                 if j['status'] in ('done', 'failed', 'cancelled') and not j.get('_worker_pending')),
                 key=lambda jid: _job_meta.get(jid, 0),
             )
             for job_id in terminal[: len(_jobs) - _MAX_JOBS]:
@@ -315,7 +316,8 @@ def _prune_jobs() -> None:
 def _public_job(job: dict) -> dict:
     """API-visible snapshot of a job record; internal owner fields never leak
     into status/cancel responses or tool output schemas."""
-    return {key: value for key, value in job.items() if key not in ("owner_session", "owner_call")}
+    return {key: value for key, value in job.items()
+            if key not in ('owner_session', 'owner_call', '_worker_pending')}
 
 
 def _request_status(ref, owner):
@@ -384,6 +386,10 @@ def _run_job(job_id: str, code: str, allow_raw: str | None = None,
             job["status"] = "done" if outcome["ok"] else "failed"
             _job_meta[job_id] = time.time()
     finally:
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+            if job is not None:
+                job.pop('_worker_pending', None)
         if request_ref is not None:
             _request_registry.finish_job(request_ref)
 
@@ -795,13 +801,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rejection = 400, "request_ref ticket is required; untracked HTTP execution is not supported"
             if rejection is None and body.get('request_kind') == 'node_navigation':
                 rejection = 400, 'Node navigation tickets are accepted only by the fixed node navigation route'
+            allow_raw = body.get('allow_raw')
+            if rejection is None and allow_raw is not None and (not isinstance(allow_raw, str) or not allow_raw.strip()):
+                rejection = 400, 'allow_raw must be a nonempty explicit exemption reason string, or null'
             if rejection is not None:
                 self._send({"ok": False, "error": rejection[1]}, status=rejection[0])
                 return
         if self.path == "/exec":
             code = body.get("code")
-            allow_raw = body.get("allow_raw")
-            allow_raw = str(allow_raw) if allow_raw else None
             owner_session = body["owner_session"]
             owner_call = body["owner_call"]
             ref = body["request_ref"]
@@ -809,7 +816,7 @@ class _Handler(BaseHTTPRequestHandler):
             if type(read_only_value) not in (bool, str, type(None)) or read_only_value not in (None, True, False, "true", "false"):
                 self._send({"ok": False, "error": "read_only must be a boolean or true/false string"}, status=400)
                 return
-            read_only = read_only_value is True or str(read_only_value).strip().lower() in ("1", "true", "yes", "on")
+            read_only = read_only_value is True or read_only_value == 'true'
             if structured:
                 invoke=lambda: _runtime.run_queries(body['queries'], owner_session, owner_call)
             else:
@@ -861,22 +868,23 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             job_id = uuid.uuid4().hex[:12]
             with _jobs_lock:
-                overloaded = sum(j['status'] in ('queued', 'running') for j in _jobs.values()) >= _MAX_ACTIVE_JOBS
+                # Cancelling a queued job is terminal for its caller, but its
+                # worker still occupies the main-thread queue until drained.
+                overloaded = sum(j['status'] in ('queued', 'running') or j.get('_worker_pending', False)
+                                 for j in _jobs.values()) >= _MAX_ACTIVE_JOBS
                 if not overloaded:
                     # owner_session/owner_call are internal authorization fields:
                     # they must never reach a public snapshot (see _public_job).
                     _jobs[job_id] = {
                         "jobId": job_id, "status": "queued",
                         "ok": False, "stdout": "", "stderr": "",
-                        "owner_session": owner_session, "owner_call": owner_call,
+                        "owner_session": owner_session, "owner_call": owner_call, '_worker_pending': True,
                     }
                     _job_meta[job_id] = time.time()
             if overloaded:
                 _request_registry.fail_before_dispatch(ref,'job admission refused: active job limit')
                 self._send({"ok": False, "error": "too many active Houdini jobs; await existing work"}, status=429)
                 return
-            allow_raw = body.get("allow_raw")
-            allow_raw = str(allow_raw) if allow_raw else None
             worker=threading.Thread(
                 target=_run_job,
                 args=(

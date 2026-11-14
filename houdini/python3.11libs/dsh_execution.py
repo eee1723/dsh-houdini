@@ -30,6 +30,7 @@ import dsh_component_contracts
 import dsh_network_boxes
 import dsh_network_notes
 import dsh_network_navigation
+import dsh_node_access
 import dsh_tool_catalog
 import dsh_tool_packages
 import dsh_package_discovery
@@ -398,15 +399,8 @@ def _hom_json_leaf(value):
             return {"node": value.path()}
         except Exception:
             return {"node": repr(value)}
-    if isinstance(value, (hou.Vector2, hou.Vector3, hou.Vector4)):
-        return [float(x) for x in value]
-    if isinstance(value, hou.Color):
-        return [float(x) for x in (
-            value.r(), value.g(), value.b(), value.a(),
-        )]
-    if isinstance(value, (hou.Matrix3, hou.Matrix4)):
-        return [[float(x) for x in row] for row in value]
-    return NotImplemented
+    converted = dsh_node_access._val(value)
+    return converted if converted is not value else NotImplemented
 
 
 def _verb_value(value, _depth: int = 0):
@@ -437,7 +431,7 @@ def _unrecovered_mutation(entry):
 
 
 def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, *,
-                 read_only=False, before_dispatch=None):
+                 read_only=False, before_dispatch=None, prior_unrecovered=None):
     # Give a precise, zero-write recovery path for repeated discovery mistakes;
     # do not label TypeErrors raised inside the implementation as argument errors.
     discovery_signature = _verb_signature(name, fn)
@@ -460,7 +454,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, 
                     {'ok': False, 'phase': 'access_mode', 'scene_writes': 0,
                      'dispatched': False, 'requested_access': 'query'})
             if name in _MUTATING_VERB_NAMES:
-                failed = next((entry for entry in ledger if _unrecovered_mutation(entry)), None)
+                failed = (prior_unrecovered() if prior_unrecovered is not None else
+                          next((entry for entry in ledger if _unrecovered_mutation(entry)), None))
                 if failed is not None:
                     raise _DispatchBlockedError(
                         f"{name} blocked before dispatch: earlier verb {failed['verb']} failed; "
@@ -591,6 +586,19 @@ def _request_dispatcher(ledger, observed_nodes, impact, *, read_only, extra=None
     """One request's wrappers serve injected calls and public facade aliases."""
     traced = {}
     registry = _VERBS if not extra else {**_VERBS, **extra}
+    checked = 0
+    first_unrecovered = None
+
+    def prior_unrecovered():
+        nonlocal checked, first_unrecovered
+        # The request's ledger is append-only. Inspect each completed row once,
+        # including failures caught by a nested public verb or by user code.
+        while first_unrecovered is None and checked < len(ledger):
+            entry = ledger[checked]
+            checked += 1
+            if _unrecovered_mutation(entry):
+                first_unrecovered = entry
+        return first_unrecovered
 
     def dispatch(name, args, kwargs):
         fn = registry.get(name)
@@ -599,7 +607,8 @@ def _request_dispatcher(ledger, observed_nodes, impact, *, read_only, extra=None
         entry = traced.get(name)
         if entry is None or entry[0] is not fn:
             entry = (fn, _make_tracer(name, fn, ledger, observed_nodes, impact,
-                                     read_only=read_only, before_dispatch=before_dispatch))
+                                     read_only=read_only, before_dispatch=before_dispatch,
+                                     prior_unrecovered=prior_unrecovered))
             traced[name] = entry
         return entry[1](*args, **kwargs)
 

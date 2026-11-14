@@ -99,12 +99,17 @@ def read_json(path, max_bytes=MAX_MANIFEST_BYTES, *, expected_sha256=None):
 
 def write_json(path, value):
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
-    temporary.write_text(_encoded(value), encoding='utf-8')
+    temporary.write_bytes(_utf8(_encoded(value)))
     os.replace(temporary, path)
 
 
 def _encoded(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+
+
+def _utf8(json_text):
+    # Preserve lone surrogates as JSON escapes without expanding ordinary Unicode.
+    return json_text.encode('utf-8', errors='backslashreplace')
 
 
 def _pointer(parent, key):
@@ -163,7 +168,7 @@ def execution_projection(directory, identifier, envelope, *, inline_budget=None)
         return envelope
     details = {'stored': False}
     try:
-        data = text.encode('utf-8')
+        data = _utf8(text)
         if len(data) > MAX_ARCHIVE_BYTES:
             raise ValueError('returned envelope exceeds result retention budget')
         relative = 'executions/' + relative_file(identifier + '.json')
@@ -182,7 +187,7 @@ def execution_projection(directory, identifier, envelope, *, inline_budget=None)
         budget = MAX_ARCHIVE_BYTES - 65536 if inline_budget is None else inline_budget
         details['fallback'] = 'Full returned envelope retained inline; no separate execution archive'
         fallback = {**envelope, 'details': details}
-        if len(_encoded(fallback).encode('utf-8')) <= budget:
+        if len(_utf8(_encoded(fallback))) <= budget:
             return fallback
         details['fallback'] = 'Complete execution data could not be retained; unavailable fields are explicit'
         details['full_retained'] = False
@@ -648,8 +653,8 @@ def worker(request_file):
             remaining = len(request['manifest']['checks']) - len(result['checks'])
             # Reserve room for future bounded projections and the outer report.
             # The raw fallback consumes one shared run budget, not 32 MiB per call.
-            reserve = 65536 + len(_encoded(request).encode('utf-8')) + remaining * DETAIL_THRESHOLD * 80
-            budget = MAX_ARCHIVE_BYTES - len(_encoded(result).encode('utf-8')) - reserve
+            reserve = 65536 + len(_utf8(_encoded(request))) + remaining * DETAIL_THRESHOLD * 80
+            budget = MAX_ARCHIVE_BYTES - len(_utf8(_encoded(result))) - reserve
             return execution_projection(directory, identifier, envelope, inline_budget=budget)
 
         def run():
@@ -1015,7 +1020,7 @@ def main():
     parser.add_argument('--cancel',action='store_true',help='Request cancellation of this run only; does not start or retry work')
     args = parser.parse_args()
     if args.status or args.cancel:
-        print(json.dumps(status(args.output_dir,cancel=args.cancel),ensure_ascii=False,separators=(',',':')))
+        print(_encoded(status(args.output_dir, cancel=args.cancel)))
         return 0
     if args.manifest is None or args.hython is None:parser.error('--manifest and --hython required for execution')
     try:
@@ -1025,9 +1030,10 @@ def main():
                        reserved_output=args.reserved_output)
     except Exception as error:
         result = {'ok': False, 'phase': 'preflight', 'error': str(error) or type(error).__name__}
-    print(json.dumps(status(args.output_dir) if result.get('run_id') else result, ensure_ascii=False, separators=(',',':')))
+    print(_encoded(status(args.output_dir) if result.get('run_id') else result))
     return 0 if result['ok'] else 1
 
 
 if __name__ == '__main__':
+    sys.stdout.reconfigure(encoding='utf-8', errors='backslashreplace')
     raise SystemExit(main())

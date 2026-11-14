@@ -1,6 +1,6 @@
 {
   "name": "dsh-houdini",
-  "version": "0.1.12",
+  "version": "0.1.13-dev.1",
   "private": true,
   "description": "DeepSeek Harness plugin that lets the agent control SideFX Houdini",
   "homepage": "https://github.com/eee1723/dsh-houdini#readme",
@@ -58,8 +58,7 @@
     "tools/houdini-help.py",
     "tools/isolated-houdini-check.py",
     "tools/houdini_test_environment.py",
-    "tools/isolated-worker.py",
-    "runtime/video"
+    "tools/isolated-worker.py"
   ],
   "scripts": {
     "build": "npm run docs:generate && node tools/gen-verb-contract.mjs && node tools/gen-node-delivery-client.mjs && node tools/clean-build.mjs && tsc -p tsconfig.json",

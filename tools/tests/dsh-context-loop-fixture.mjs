@@ -76,6 +76,7 @@ export function apply(ctx) {
     ['skill','houdini-sop-workflow','houdini-sop-workflow/SKILL.md'],
     ['skill','houdini-asset-integration','houdini-asset-integration/SKILL.md'],
     ['read',null,'houdini-sop-workflow/references/modeling-methods.md'],
+    ['nested',null,'houdini-asset-integration/references/source-adaptation.md'],
     ['skill','houdini-isolated-execution','houdini-isolated-execution/SKILL.md'],
     ['nested',null,'houdini-sop-workflow/references/sop-patterns.md'],
     ['skill','houdini-surface-workflow','houdini-surface-workflow/SKILL.md'],
@@ -94,6 +95,11 @@ export function apply(ctx) {
     ['skill','houdini-solaris-karma-workflow','houdini-solaris-karma-workflow/SKILL.md'],
     ['nested',null,'houdini-solaris-karma-workflow/references/karma-patterns.md'],
     ['read',null,'houdini-task-decomposition/references/reference-transfer.md'],
+    ['skill','houdini-wfc-modeling','houdini-wfc-modeling/SKILL.md'],
+    ['read',null,'houdini-wfc-modeling/references/modules.md'],
+    ['read',null,'houdini-wfc-modeling/references/rules.md'],
+    ['nested',null,'houdini-wfc-modeling/references/solving.md'],
+    ['nested',null,'houdini-wfc-modeling/references/houdini-workflow.md'],
   ].map(([kind,name,relative])=>{
     const file=fileURLToPath(new URL('../../skills/'+relative,import.meta.url))
     const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')

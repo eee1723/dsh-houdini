@@ -17,6 +17,24 @@ spec.loader.exec_module(installer)
 with patch.dict(os.environ, {'HOUDINI_USER_PREF_DIR': 'D:/Fixture/houdini__HVER__'}):
     assert installer.default_packages_dirs() == [Path('D:/Fixture/houdini21.0/packages'), Path('D:/Fixture/houdini22.0/packages')]
 
+with tempfile.TemporaryDirectory(prefix='dsh-source-registration-') as temporary:
+    root = Path(temporary)
+    first, second = [root / version / 'packages' for version in ('houdini21.0', 'houdini22.0')]
+    second.mkdir(parents=True)
+    target = second / 'dsh-houdini.json'
+    existing = b'{"fixture":"a different registration"}'
+    target.write_bytes(existing)
+    command = [sys.executable, str(ROOT / 'houdini/install.py')]
+    env = dict(os.environ, HOUDINI_USER_PREF_DIR=str(root / 'houdini__HVER__'))
+    conflict = subprocess.run(command, env=env, capture_output=True, timeout=15)
+    assert conflict.returncode != 0
+    assert target.read_bytes() == existing and not first.exists()
+    equivalent = json.dumps(installer.build_package(), indent=4).encode('utf-8')
+    target.write_bytes(equivalent)
+    subprocess.run(command, env=env, capture_output=True, check=True, timeout=15)
+    assert target.read_bytes() == equivalent
+    assert json.loads((first / 'dsh-houdini.json').read_bytes()) == installer.build_package()
+
 if os.name == 'nt':
     with tempfile.TemporaryDirectory(prefix='dsh-helper-install-中文 空格-') as temporary:
         # Windows CI can expose TEMP through an 8.3 user-directory alias.

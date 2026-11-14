@@ -48,6 +48,8 @@ if '_PROVEN' not in globals():
     _PROVEN = None
 if '_SAVE_SERIAL' not in globals():
     _SAVE_SERIAL = 0
+if '_LOAD_EVENT_SERIAL' not in globals():
+    _LOAD_EVENT_SERIAL = 0
 if '_LOADED_NOTES' not in globals():
     _LOADED_NOTES = {}
 if '_LOADED_BOXES' not in globals():
@@ -304,12 +306,14 @@ def install():
         except hou.Error:
             pass
     def changed(kind, **kwargs):
+        global _LOAD_EVENT_SERIAL
         if kind == hou.hipFileEventType.BeforeSave:
             before_save()
         elif kind in (hou.hipFileEventType.BeforeLoad, hou.hipFileEventType.BeforeClear):
             invalidate()
         elif kind == hou.hipFileEventType.AfterLoad:
             capture_loaded()
+            _LOAD_EVENT_SERIAL += 1
         # AfterSave has no success flag and is broken for some H21 backslash
         # paths. Native afterscenesave.py is the authoritative success hook.
     _CALLBACK = changed
@@ -413,11 +417,20 @@ def _load_checkpoint(path):
     """A LoadWarning reports a loaded HIP, not a failed load; identity is checked by the caller."""
     global _LOAD_WARNINGS
     warning = None
+    previous_epoch = _EPOCH
+    load_event = _LOAD_EVENT_SERIAL
     try:
         hou.hipFile.load(path.replace('\\', '/'), suppress_save_prompt=True)
     except hou.LoadWarning as error:
         warning = LoadWarning(str(error))
-    capture_loaded()
+    # A native AfterLoad already captured this load, including its worker hash.
+    # H21 may skip callbacks on paths containing backslashes. Establish the
+    # new scene fence ourselves if BeforeLoad never did.
+    missing_fence = _EPOCH == previous_epoch
+    if missing_fence:
+        invalidate()
+    if missing_fence or _LOAD_EVENT_SERIAL == load_event:
+        capture_loaded()
     _LOAD_WARNINGS = warning
 
 

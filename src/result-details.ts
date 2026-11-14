@@ -32,7 +32,8 @@ export function recordedResultReference(events:readonly SessionEvent[],ref:strin
       const detail=execution?.details
       if(detail?.sha256!==ref||detail.format!=='returned_bridge_envelope_json')continue
       if(detail.stored===false&&detail.storage==='unavailable') {
-        retained={...detail,...(typeof execution.requestReceipt?.request_ref==='string'?{request_ref:execution.requestReceipt.request_ref}:{})}
+        // A failed retention attempt cannot invalidate an earlier copy of the same bytes.
+        if(!retained?.stored)retained={...detail,...(typeof execution.requestReceipt?.request_ref==='string'?{request_ref:execution.requestReceipt.request_ref}:{})}
         continue
       }
       if(detail.stored!==true)continue
@@ -69,6 +70,26 @@ async function directory(workspace: string, create = false): Promise<string> {
   return current
 }
 
+async function publishResult(dir:string,filename:string,content:string,digest:string):Promise<void> {
+  // Publish the hash only after the staged bytes are complete. A hard link
+  // installs that name without replacing any existing file at the same path.
+  const staging=await fs.mkdtemp(path.join(dir,'.pending-'))
+  const temporary=path.join(staging,'result.json')
+  try {
+    await fs.writeFile(temporary,content,{flag:'wx'})
+    try {await fs.link(temporary,filename)}
+    catch(error) {
+      if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error
+      const stat=await fs.lstat(filename)
+      if(!stat.isFile()||stat.size>MAX_BYTES||hash(await fs.readFile(filename))!==digest)
+        throw Error('existing result artifact does not match its content hash')
+    }
+  } finally {
+    await fs.unlink(temporary).catch(()=>{})
+    await fs.rmdir(staging).catch(()=>{})
+  }
+}
+
 export async function retainResult<T extends ExecResult>(value: T, workspace: string | null,
   filePolicyMode?: () => string | undefined,spill?: (content:string)=>Promise<NativeResultSpill>): Promise<T> {
   if (value.details !== undefined && typeof value.details==='object' && value.details!==null
@@ -83,15 +104,7 @@ export async function retainResult<T extends ExecResult>(value: T, workspace: st
     if (byteLength > MAX_BYTES) throw new Error('returned envelope exceeds workspace result archive budget')
     const dir = await directory(workspace, true)
     const filename = path.join(dir, `${digest}.json`)
-    try { await fs.writeFile(filename, bytes, { flag: 'wx' }) }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      // Do not trust preexisting files or symlinks at a content-addressed name.
-      const stat = await fs.lstat(filename)
-      if (!stat.isFile() || stat.size > MAX_BYTES || hash(await fs.readFile(filename)) !== digest) {
-        throw new Error('existing result artifact does not match its content hash')
-      }
-    }
+    await publishResult(dir,filename,bytes,digest)
     return { ...value, details: { stored: true, sha256: digest, path: filename,
       bytes: byteLength, format: 'returned_bridge_envelope_json',
       read: 'houdini_resource(kind="result", ref=sha256, pointer="/evidence", offset=0, limit=6000). JSON Pointer selects a field; pages contain JSON text. No Houdini execution.' } }

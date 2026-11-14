@@ -59,6 +59,7 @@
 
 - 状态：待验证
 - 用户加载与质量：正式入口仍须核对长结果/错误/详情读取、效果视频分流和外观/模拟skill的自然采用。以同模型新任务观察效果相似度、连续播放和改参重算，不以功能小样或全帧缓存代替整体质量。
+- 模块套件与 WFC 自然采用仍需跨内容实测。从代表性的重复、端头和换源检查接合及布局保持，再观察规则编辑是否进入实际求解、生成范围和网络是否符合意图、预览是否影响生产输出及重算。注册与上下文传递仅覆盖加载。方法入口为 [SOP 完整源与布局](../skills/houdini-sop-workflow/references/modeling-methods.md#完整源组件与布局) 和 [WFC skill](../skills/houdini-wfc-modeling/SKILL.md)。
 - 反馈与返工：候选交付后须在新任务核对资产接入、功能状态、安装覆盖、材质因子、实例消费者与连续改稿；比较发现/详情读取往返、验证范围与协作成本。机制和历史回放不证明自然采用、总时长或长期质量提升。
 - 仍需定位的执行问题：重开后同一VEX出现`Preloaded shader is invalid`，加注释后可编译仅是线索，须用自有最小工程区分源码、缓存与运行代际，不自动加盐或重启live。导入实例方法的来源未证明已通过准确反馈及原有单次`allow_raw`路径处理。
 - 表面外观：自然任务已有表面/COP/拆分skill和完整源组件采用，仍须验证连续UV分区、切割新面、构造边界倒角及微细节判断。程序多通道与生成图片经File COP的SOP消费有隔离入口；真实任务自然采用仍待验证。首次显示Constant后切换COP的旧色问题未定位；复杂网络同进程“无警告”与重开后警告不一致的触发仍待定位。入口见[表面外观skill](../skills/houdini-surface-workflow/SKILL.md)。
@@ -85,6 +86,8 @@
 
 - 状态：待验证
 - 现状：源码候选的回执和恢复覆盖隔离检查，用户正在使用的 Desktop 和 Houdini 组合仍缺现场证据。
+- 待核对的执行边界：历史图像查回仍从原路径读取，须验证同路径文件替换后如何维持原回执身份。视口捕获分阶段派发，须用隔离 GUI 核对切换场景时的代际检查。原生 jobs 拒绝准入时，须核对提交前的写入者申请和权限恢复是否已改变现场状态。
 - 下一步：在官方 DSH Desktop 加载当前候选，沿真实 Houdini 对话核对零写与未确认恢复、历史选区与当前目标、原请求图片查回，以及后台执行中断后的同源恢复。自然任务质量和长时内存见 H-03。
+- 节点交付还需在新建或大幅扩展工程的自然任务中确认收尾会主动发布节点回执，并在对应回复与重新打开的 HIP 上验证卡片导航。历史回放与隔离路由只覆盖已发布回执的消费。
 - 移除条件：真实入口的原生工具结果、选中任务、现场身份及重开后的恢复记录一致；动态与裸 HOM 的影响保持有界表述。
 - 入口：[execution runtime](../tools/tests/dsh-execution-runtime.test.py)、[isolated host](../tools/tests/isolated-execution.test.mjs)、[manifest](../tools/tests/dsh-isolated-manifest.test.py)、[real isolated](../tools/tests/dsh-isolated-houdini.test.py)、[snapshot budget](../tools/tests/scene-snapshot-budget.test.mjs)、[delivery audit](../tools/tests/delivery-audit.test.mjs)。

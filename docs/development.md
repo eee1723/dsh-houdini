@@ -88,7 +88,7 @@ npm run docs:check
 
 `docs:check` 只检查生成漂移、文档索引、模块覆盖和 Markdown 链接，不自动修文档。改动生成源后先 build，再检查最终一致性。
 
-正式包由 `python tools/build-release.py --output <目录>` 构建；`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或发布。GitHub与npm分发同一个冻结tgz，不为npm另打缺少Houdini/媒体资源的包，不从源码根执行`npm publish`。维护者在验证最终包、获得发布授权后公开发行；下载地址或包名可用性不能由Draft、源码push或本地预演推断。已公开渠道与安装方式见[安装说明](setup.md)，未完成上架只进handoff。
+正式包由 `python tools/build-release.py --output <新批次目录>` 构建。每次使用新的批次目录，构建器会保留已有的安装包及校验文件。`--media-runtime`仅复用通过完整输入、构建来源与文件摘要核对的媒体资源。源码根保留`private`以防直接误发未构建源码，发行tarball去掉开发脚本与依赖并声明Windows x64。构建器输出同一包的`release-manifest.json`与`SHA256SUMS.txt`，自身不创建tag或发布。GitHub与npm分发同一个冻结tgz，不为npm另打缺少Houdini/媒体资源的包，不从源码根执行`npm publish`。维护者在验证最终包、获得发布授权后公开发行；下载地址或包名可用性不能由Draft、源码push或本地预演推断。已公开渠道与安装方式见[安装说明](setup.md)，未完成上架只进handoff。
 
 npm发布使用维护者已授权的官方账号会话，失效时通过`npm login --registry=https://registry.npmjs.org`重新登录，并按npm提示完成二次验证。对已经验证的同一个tgz先运行`npm publish <完整tgz路径> --dry-run --ignore-scripts --access public --tag latest --registry=https://registry.npmjs.org`，再去掉`--dry-run`正式发布；不把密码、验证码或token写入仓库。已发布的name/version不可覆盖，发布前先核对`npm view dsh-houdini@<版本> dist.integrity`；若该版本已存在，核对完整性并确认`latest`指向该版本。发布后读取官方registry的版本、兼容声明和`dist.integrity`，与冻结包的SHA512完整性一致，再核对实际下载的SHA256及原生包名安装。GitHub Actions可信发布可在包建立后作为独立的维护者配置接入；源码CI和候选构建不隐式发布。
 
@@ -244,7 +244,7 @@ UV与拓扑的机制范围由[dsh-uv-construction](../tools/tests/dsh-uv-constru
 
 ```powershell
 # $tutorialPython 指向目标安装的 python311/python.exe；不需要导入 hou 或启动 GUI。
-& $tutorialPython tools/tests/video-tutorial.test.py VideoTests.test_concurrent_http_requests_overlap_within_bound_and_resume_skips_successes VideoTests.test_concurrent_failure_drains_inflight_success_without_dispatching_next_and_retries_explicitly VideoTests.test_dispatch_rate_uses_spacing_without_delaying_inflight_completion VideoTests.test_rate_wait_saves_completed_response_before_the_next_dispatch
+& $tutorialPython tools/tests/video-tutorial.test.py VideoTests.test_concurrent_http_requests_overlap_within_bound_and_resume_skips_successes VideoTests.test_concurrent_failure_drains_inflight_before_lowering_to_one_and_retries_only_explicitly VideoTests.test_dispatch_rate_uses_spacing_without_delaying_inflight_completion VideoTests.test_rate_wait_saves_completed_response_before_the_next_dispatch
 & $tutorialPython tools/tests/video-timestamps.test.py
 ```
 

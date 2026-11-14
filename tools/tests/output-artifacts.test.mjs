@@ -38,6 +38,7 @@ try {
   const running=await createRun({label:'in-progress',kind:'tmp'},{root})
   const unknown=path.join(root,'old-unknown');await fs.mkdir(unknown);await fs.writeFile(path.join(unknown,'shot.png'),'unreviewed legacy')
   const unknownManaged=path.join(root,'tmp','unknown');await fs.mkdir(unknownManaged)
+  await fs.writeFile(path.join(unknownManaged,manifestName),'null')
   const outside=path.join(fixture,'outside');await fs.mkdir(outside);await fs.writeFile(path.join(outside,'sentinel.txt'),'keep')
   await fs.symlink(outside,path.join(first.directory,'external'),process.platform==='win32'?'junction':'dir')
   const plan=await prune({root,now})
@@ -73,6 +74,7 @@ try {
   await fs.writeFile(path.join(release.directory,'release-manifest.json'),JSON.stringify({kind:'dsh-plugin-bundle',file:'plugin.tgz'}))
   await release.finish('success');await age(release)
   const secondRelease=await createRun({label:'0.1.5-dev',kind:'release'},{root})
+  await fs.writeFile(path.join(secondRelease.directory,'release-manifest.json'),'null')
   await secondRelease.finish('success');await age(secondRelease)
   assert.equal((await prune({root,now,cacheDays:0})).candidates.some(row=>row.kind==='release'),false,
     'release artifacts never inherit evidence or cache expiry')

@@ -643,16 +643,20 @@ class VideoTests(unittest.TestCase):
     def test_dispatch_rate_uses_spacing_without_delaying_inflight_completion(self):
         self.args.concurrency, self.args.max_chunks, self.args.requests_per_second = 3, 3, 20
         starts = []
-        guard = threading.Lock()
+        first_two = threading.Barrier(2)
+        submit = ThreadPoolExecutor.submit
+        def record_submit(executor, fn, *args):
+            starts.append(time.monotonic())
+            return submit(executor, fn, *args)
         def paced(audio, model, key):
-            with guard:
-                starts.append(time.monotonic())
-            time.sleep(.09)
+            if audio in (b'synthetic test chunk 0', b'synthetic test chunk 1'):
+                first_two.wait(timeout=5)
             return self.sender(audio, model, key)
-        result = self.transcribe(paced)
+        with patch.object(ThreadPoolExecutor, 'submit', record_submit):
+            result = self.transcribe(paced)
         self.assertEqual((result["submitted"], result["completed"]), (3, 3))
         self.assertEqual(result["requests_per_second"], 20)
-        self.assertEqual(result["peak_inflight"], 2)
+        self.assertGreaterEqual(result["peak_inflight"], 2)
         self.assertTrue(all(b - a >= .045 for a, b in zip(starts, starts[1:])), starts)
 
     def test_rate_wait_saves_completed_response_before_the_next_dispatch(self):
@@ -1975,7 +1979,8 @@ class MediaIngestTests(unittest.TestCase):
 
     def test_cli_accepts_explicit_single_silent_video(self):
         result = json.loads(video.run([sys.executable, str(Path(video.__file__)), "ingest", "--video", str(self.visual),
-                                      "--output", self.args.output]).decode("utf-8"))
+                                      "--output", self.args.output, "--ffmpeg", shutil.which("ffmpeg"),
+                                      "--ffprobe", shutil.which("ffprobe")]).decode("utf-8"))
         self.assertFalse(result["has_audio"])
         self.assertEqual(len(result["sources"]), 1)
 
@@ -1992,8 +1997,10 @@ class MediaTimingTests(unittest.TestCase):
                 result = video.run([sys.executable, str(Path(video.__file__)), *map(str, args)])
                 return json.loads(result.decode("utf-8").splitlines()[-1])
             frames = root / "frames"
-            cli("scan", "--video", source, "--output", frames, "--interval", 1)
-            result = cli("index-init", "--frames-dir", frames, "--output", root / "catalog")
+            cli("scan", "--video", source, "--output", frames, "--interval", 1,
+                "--ffmpeg", shutil.which("ffmpeg"), "--ffprobe", shutil.which("ffprobe"))
+            result = cli("index-init", "--frames-dir", frames, "--output", root / "catalog",
+                         "--ffprobe", shutil.which("ffprobe"))
             index = Path(result["index"])
             data = video.read(index)
             data["chapters"] = [{"id": "chapter", "title": "Silent demonstration", "ranges": [[0, 3]]}]
@@ -2015,6 +2022,7 @@ class MediaTimingTests(unittest.TestCase):
             self.assertEqual(cli("read-transcript", "--index", index)["chunks"], [])
             self.assertEqual(cli("read-index", "--index", index, "--module", "module")["observations"][0]["step"]["id"], "state")
             compared = cli("changes", "--frames-dir", frames, "--output", root / "changes", "--region-mode", "crop-first",
+                           "--ffmpeg", shutil.which("ffmpeg"),
                            "--region", "panel:0.1:0.1:0.5:0.5")
             self.assertEqual(compared["semantic_inspection"], "not_performed")
             self.assertEqual(video.read(root / "changes/changes.json")["settings"]["region_mode"], "crop-first")

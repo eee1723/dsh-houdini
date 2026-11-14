@@ -42,7 +42,7 @@ profile.baseURL='https://speech.example/v1';selected.protocol='openai-transcript
 chatProfiles=false
 result=await configureVideo(context,{endpoint:'https://asr-only.example/custom-asr',protocol:'openai-transcriptions',model:'ASR-not-a-chat-model',authentication:'bearer'})
 assert.equal(selected.provider,'');assert.equal(result.service.provider,null);assert.deepEqual(result.routes,[]);assert.equal(result.service.credential.configured,false)
-const firstRef=result.service.credentialRef;assert.equal(firstRef,customVideoCredential(result.service.endpoint,result.service.protocol))
+const firstRef=result.service.credentialRef;assert.equal(firstRef,customVideoCredential(result.service.endpoint))
 await assert.rejects(()=>transcribeVideo(context,exec,args,runner),/API key|密钥/);vault.set(firstRef,secret)
 const ambientNames=['OPENAI_API_KEY','DEEPSEEK_API_KEY','DSH_API_TOKEN','dsh_test_identity','DSH_VIDEO_TRANSCRIPTION_KEY']
 const beforeEnv=Object.fromEntries(ambientNames.map(name=>[name,process.env[name]]))

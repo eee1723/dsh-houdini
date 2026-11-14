@@ -146,8 +146,10 @@ class RequestRegistry:
             return True
 
     def complete(self, ref, payload):
-        encoded = json.dumps(payload, ensure_ascii=False)
-        size = len(encoded.encode('utf-8'))
+        # Keep non-ASCII text compact and preserve lone surrogates as JSON
+        # escapes. A result that HTTP can deliver must also reach a terminal receipt.
+        encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8', errors='backslashreplace')
+        size = len(encoded)
         with self.lock:
             self._expire_payloads()
             record = self.records[ref]
@@ -197,13 +199,18 @@ class RequestRegistry:
             if record is None or record['owner'] != owner:
                 return {**base, 'status': 'unknown',
                         'note': 'Receipt unavailable or outside the retained window; missing does not prove not executed.'}
-            return {**base, 'status': record['status'],
-                    'owner_call': record['owner_call'], 'kind': record['kind'],
-                    **({'jobId': record['job_id'], 'job_finished': bool(record.get('job_finished'))}
-                       if record.get('job_id') else {}),
-                    **({'result': json.loads(record['payload'])} if record['payload'] is not None else {}),
-                    **({'reason': record['reason']} if 'reason' in record else {}),
-                    'note': 'Same-runtime receipt only. Read status/results; never repeat a mutation to retrieve its result.'}
+            receipt = {
+                **base, 'status': record['status'],
+                'owner_call': record['owner_call'], 'kind': record['kind'],
+                **({'jobId': record['job_id'], 'job_finished': bool(record.get('job_finished'))}
+                   if record.get('job_id') else {}),
+                **({'reason': record['reason']} if 'reason' in record else {}),
+                'note': 'Same-runtime receipt only. Read status/results; never repeat a mutation to retrieve its result.',
+            }
+            payload = record['payload']
+        if payload is not None:
+            receipt['result'] = json.loads(payload)
+        return receipt
 
     def recent(self, owner):
         """Recover references lost with a Host result, within the bounded window."""

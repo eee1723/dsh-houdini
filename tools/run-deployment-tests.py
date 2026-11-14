@@ -43,29 +43,29 @@ for binary, suites, hom in targets:
     if not Path(binary).is_file():
         raise RuntimeError("Hython/interpreter not found: " + binary)
     # Explicitly isolated user preferences; never inherit installed user packages.
-    prefs = tempfile.mkdtemp(prefix="dsh-deployment-regression-")
-    env = isolated_environment(prefs, executable=binary if hom else None)
-    env['DSH_HOUDINI_RECOVERY_ROOT'] = str(Path(prefs) / 'recovery')
-    cwd = launch_directory(binary) if hom else ROOT
-    if hom:
-        probe = subprocess.run([binary, "-c", "import hou; print('DSH_TEST_HOUDINI=' + '.'.join(map(str,hou.applicationVersion()[:2])))"],
-                               cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
-                               timeout=120, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        match = re.search(r"DSH_TEST_HOUDINI=(\d+\.\d+)", probe.stdout)
-        if match is None or match[1] not in ("21.0", "22.0") or match[1] in observed_versions:
-            raise RuntimeError("Expected distinct supported H21/H22 interpreters, not duplicate or mislabeled paths")
-        observed_versions.add(match[1])
-    for suite in suites:
-        print(f"[{Path(binary).parent.parent.name}] {suite}", flush=True)
-        completed = subprocess.run([binary, str(ROOT / "tools/tests" / (suite + ".test.py"))],
-                                   cwd=cwd, env=env, capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace", timeout=300,
-                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        if completed.returncode:
-            print(f"{suite} exited {completed.returncode}", flush=True)
-            if completed.stdout:
-                print("stdout:\n" + completed.stdout[-4000:], flush=True)
-            if completed.stderr:
-                print("stderr:\n" + completed.stderr[-4000:], flush=True)
-            raise subprocess.CalledProcessError(completed.returncode, completed.args)
+    with tempfile.TemporaryDirectory(prefix="dsh-deployment-regression-") as prefs:
+        env = isolated_environment(prefs, executable=binary if hom else None)
+        env['DSH_HOUDINI_RECOVERY_ROOT'] = str(Path(prefs) / 'recovery')
+        cwd = launch_directory(binary) if hom else ROOT
+        if hom:
+            probe = subprocess.run([binary, "-c", "import hou; print('DSH_TEST_HOUDINI=' + '.'.join(map(str,hou.applicationVersion()[:2])))"],
+                                   cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+                                   timeout=120, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            match = re.search(r"DSH_TEST_HOUDINI=(\d+\.\d+)", probe.stdout)
+            if match is None or match[1] not in ("21.0", "22.0") or match[1] in observed_versions:
+                raise RuntimeError("Expected distinct supported H21/H22 interpreters, not duplicate or mislabeled paths")
+            observed_versions.add(match[1])
+        for suite in suites:
+            print(f"[{Path(binary).parent.parent.name}] {suite}", flush=True)
+            completed = subprocess.run([binary, str(ROOT / "tools/tests" / (suite + ".test.py"))],
+                                       cwd=cwd, env=env, capture_output=True, text=True,
+                                       encoding="utf-8", errors="replace", timeout=300,
+                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if completed.returncode:
+                print(f"{suite} exited {completed.returncode}", flush=True)
+                if completed.stdout:
+                    print("stdout:\n" + completed.stdout[-4000:], flush=True)
+                if completed.stderr:
+                    print("stderr:\n" + completed.stderr[-4000:], flush=True)
+                raise subprocess.CalledProcessError(completed.returncode, completed.args)
 print("Deployment regression suites passed", flush=True)

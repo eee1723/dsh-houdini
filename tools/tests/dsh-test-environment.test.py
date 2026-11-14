@@ -20,6 +20,8 @@ contaminated = dict(os.environ, HOUDINI_PACKAGE_DIR='foreign-packages',
                     HOUDINI_LICENSE_SERVER='test-license-host')
 calls = []
 def record_run(args, **kwargs):
+    assert Path(kwargs['env']['APPDATA']).is_dir()
+    assert Path(kwargs['env']['LOCALAPPDATA']).is_dir()
     calls.append(kwargs)
     return subprocess.CompletedProcess(args, 0, '', '')
 with patch.dict(os.environ, contaminated, clear=True), \
@@ -35,8 +37,8 @@ for call in calls:
         assert key not in env, f'test runner inherited {key}'
     assert env['HOUDINI_PACKAGE_DIR'] != 'foreign-packages'
     assert env['DSH_HOME'] != 'foreign-dsh'
-    assert Path(env['APPDATA']).is_dir() and env['APPDATA'] != 'foreign-roaming'
-    assert Path(env['LOCALAPPDATA']).is_dir() and env['LOCALAPPDATA'] != 'foreign-local'
+    assert env['APPDATA'] != 'foreign-roaming' and not Path(env['APPDATA']).exists()
+    assert env['LOCALAPPDATA'] != 'foreign-local' and not Path(env['LOCALAPPDATA']).exists()
     assert env['HOUDINI_LICENSE_SERVER'] == 'test-license-host'
 print('deployment runner rejects inherited Houdini/Python/Qt/DSH configuration')
 

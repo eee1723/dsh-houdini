@@ -59,7 +59,30 @@ assert.match(context.launchTicketMessage({phase:'detached'}),/不会取消启动
  f.handlers.projectLaunchStatus=()=>{throw Error('Status temporarily unavailable')};await observer.reconnect()
  const originalId=f.calls.find(row=>row.name==='projectAction').input.requestId
  await observer.submit(parameters)
- assert(f.calls.filter(row=>row.name==='projectAction').every(row=>row.input.requestId===originalId),'an explicit transport retry preserves one user-action identity')
+ assert.equal(f.calls.filter(row=>row.name==='projectAction').length,1,'retrying a confirmed launch only rereads its ticket')
+ assert.equal(f.calls.at(-1).name,'projectLaunchStatus')
+ assert.equal(f.calls.at(-1).input.id,originalId)
+ f.close(observer)
+}
+
+{
+ const f=fixture(),observer=f.observer(),reusedId='b'.repeat(32)
+ f.handlers.projectAction=()=>({id:reusedId,phase:'waiting',stage:'registering'})
+ f.handlers.projectLaunchStatus=()=>{throw Error('Status temporarily unavailable')}
+ await observer.submit(parameters);await observer.reconnect();await observer.submit(parameters)
+ assert.equal(f.calls.filter(row=>row.name==='projectAction').length,1,'retrying an existing Host ticket cannot admit a new process')
+ assert.equal(f.calls.at(-1).input.id,reusedId,'retry observes the ticket identity actually returned by the Host')
+ f.close(observer)
+}
+
+{
+ const f=fixture(),observer=f.observer()
+ f.handlers.projectAction=()=>{throw Error('Admission temporarily unavailable')}
+ f.handlers.projectLaunchStatus=()=>{throw Error('No ticket found')}
+ await observer.submit(parameters);await observer.submit(parameters)
+ const submissions=f.calls.filter(row=>row.name==='projectAction')
+ assert.equal(submissions.length,2,'a launch without a confirmed admission can still be explicitly retried')
+ assert.equal(submissions[1].input.requestId,submissions[0].input.requestId)
  f.close(observer)
 }
 

@@ -58,7 +58,7 @@ async function readManifest(directory,kind) {
     const filename=path.join(directory,manifestName),stat=await fs.lstat(filename)
     if(stat.isSymbolicLink()||!stat.isFile()||stat.size>65536)return null
     const value=JSON.parse(await fs.readFile(filename,'utf8'))
-    if(value.schemaVersion!==1||value.tool!==marker||typeof value.label!=='string'||!labelPattern.test(value.label)||!kinds.includes(value.kind)
+    if(!value||value.schemaVersion!==1||value.tool!==marker||typeof value.label!=='string'||!labelPattern.test(value.label)||!kinds.includes(value.kind)
       ||kind&&value.kind!==kind||!isolations.includes(value.isolation)||value.reuse!=='unreviewed'
       ||!['running',...completed].includes(value.status)||!Number.isFinite(Date.parse(value.createdAt))
       ||completed.includes(value.status)&&!Number.isFinite(Date.parse(value.completedAt)))return null
@@ -211,7 +211,7 @@ async function releaseLink(directory) {
     const filename=path.join(directory,'release-manifest.json'),stat=await fs.lstat(filename)
     if(!stat.isFile()||stat.isSymbolicLink()||stat.size>65536)return null
     const manifest=JSON.parse(await fs.readFile(filename,'utf8'))
-    if(manifest.kind!=='dsh-plugin-bundle'||typeof manifest.file!=='string'
+    if(!manifest||manifest.kind!=='dsh-plugin-bundle'||typeof manifest.file!=='string'
       ||path.basename(manifest.file)!==manifest.file||!manifest.file.endsWith('.tgz'))return null
     const artifact=await fs.lstat(path.join(directory,manifest.file))
     return artifact.isFile()&&!artifact.isSymbolicLink()?{file:manifest.file}:null

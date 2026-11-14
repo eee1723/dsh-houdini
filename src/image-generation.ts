@@ -11,7 +11,7 @@ import { workspaceOf, HoudiniToolRuntime, type HoudiniConnection } from './tool-
 import { imageOutputLocation, verifyManagedImageDirectory, type ImageOutputOptions } from './project-paths.js'
 import { visualCapability } from './image-output.js'
 import { IMAGE_TOOLS } from './tool-catalog.js'
-import {configuredApiRoutes,apiEndpoint,apiCredential} from './api-route.js'
+import {configuredApiRoutes,apiEndpoint,apiCredential,hostService} from './api-route.js'
 
 const LIMIT = 64 * 1024 * 1024
 const formats: Record<string, {format: string; mediaType: string}> = {
@@ -19,7 +19,6 @@ const formats: Record<string, {format: string; mediaType: string}> = {
   '.jpeg': {format:'jpeg',mediaType:'image/jpeg'}, '.webp': {format:'webp',mediaType:'image/webp'},
 }
 const hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex')
-const service = (ctx:any, name:string) => ctx.get?.(name) ?? ctx[name]
 
 async function isReservedFile(local:string, file:fs.FileHandle) {
   try {
@@ -35,10 +34,6 @@ function encodedType(data:Buffer) {
   return null
 }
 
-function routes(ctx:any) {
-  return configuredApiRoutes(ctx)
-}
-
 function endpoint(baseURL:string, operation:string) {
   return apiEndpoint(baseURL,`images/${operation}`,'Image')
 }
@@ -46,9 +41,9 @@ function endpoint(baseURL:string, operation:string) {
 /** Lists configured IDs, not a claim that a chat catalog certifies Images API support. */
 export async function imageModels(ctx:any, query='image', provider?:string) {
   const result=[]
-  for (const route of routes(ctx).filter((r:any) => !provider || r.provider === provider)) {
+  for (const route of configuredApiRoutes(ctx).filter(r => !provider || r.provider === provider)) {
     const url=endpoint(route.profile.baseURL,'generations')
-    const models = await service(ctx,'llm').listModels(route.provider)
+    const models = await hostService(ctx,'llm').listModels(route.provider)
     result.push({provider:route.provider,origin:url.origin,
       models:models.filter((m:any) => `${m.id} ${m.name ?? ''}`.toLowerCase().includes(query.toLowerCase()))
         .map((m:any) => ({id:m.id,name:m.name ?? m.id})),
@@ -58,12 +53,8 @@ export async function imageModels(ctx:any, query='image', provider?:string) {
   return {routes:result,query,scope:'Configured API routes only; no network request, credential values or model inference.'}
 }
 
-async function credential(ctx:any, provider:string, profile:any) {
-  return apiCredential(ctx,profile,'Images')
-}
-
 async function outputTarget(ctx:any, exec:any, args:ImageGenerateArgs, connection?:HoudiniConnection) {
-  const filesystem=service(ctx,'fs'), policyService=service(ctx,'sandboxPolicy')
+  const filesystem=hostService(ctx,'fs'), policyService=hostService(ctx,'sandboxPolicy')
   const cwd=workspaceOf(exec)
   if (!cwd || !filesystem || !policyService) throw Error('Image output requires a DSH session workspace, filesystem and file policy')
   const policy=policyService.resolve({session:exec.agent.session})
@@ -120,11 +111,11 @@ export async function generateImage(ctx:any, exec:any, args:ImageGenerateArgs, r
   const format=formats[path.extname(args.output ?? 'image.png').toLowerCase()]
   if (!format) throw Error('output must end in .png, .jpg, .jpeg or .webp')
   if (args.background === 'transparent' && format.format === 'jpeg') throw Error('Transparent images require PNG or WebP')
-  const matching=routes(ctx).filter((r:any)=>r.provider===args.provider)
+  const matching=configuredApiRoutes(ctx).filter(route=>route.provider===args.provider)
   if (matching.length!==1) throw Error('Image provider is not an unambiguous configured OpenAI-compatible API route; inspect image_models')
   const {profile}=matching[0]
   const edit=Boolean(args.references?.length), url=endpoint(profile.baseURL,edit?'edits':'generations')
-  const attachments=service(ctx,'attachments')
+  const attachments=hostService(ctx,'attachments')
   if (!attachments?.saveFile) throw Error('DSH image and verbatim file attachment services are required')
   const output=await outputTarget(ctx,exec,args,connection)
   const sourceImages=[]
@@ -139,7 +130,7 @@ export async function generateImage(ctx:any, exec:any, args:ImageGenerateArgs, r
     if (total>LIMIT) throw Error('Reference image batch exceeds 64 MiB')
     sourceImages.push({path:target.displayPath,bytes:Buffer.from(bytes),mediaType:type.mediaType,sha256:hash(bytes)})
   }
-  const key=await credential(ctx,args.provider,profile)
+  const key=await apiCredential(ctx,profile,'Images')
   const privateValues=[key,...Object.values(profile.headers ?? {}).filter((v):v is string=>typeof v==='string' && v.length>3)]
   const redact=(value:unknown)=>privateValues.reduce((text,secret)=>text.split(secret).join('[redacted]'),String(value)).slice(0,1500)
   const headers=new Headers(profile.headers ?? {})

@@ -1,4 +1,4 @@
-// Handwritten factory embedded by tools/gen-trace-client.mjs.
+// Handwritten factory embedded by tools/gen-node-delivery-client.mjs.
 // DSH owns history, Session lifetime and the completed-Turn slot. This module
 // projects only declared execution facts; node addresses remain Host-owned.
 function createNodeDelivery(React, readHoudiniCanonical) {
@@ -89,6 +89,7 @@ function createNodeDelivery(React, readHoudiniCanonical) {
           return publish();
         },
         apply: function (input) {
+          if (!input.upserts.length) return snapshot;
           input.upserts.forEach(function (node) { byCall.set(node.key, node.data); });
           return publish();
         }

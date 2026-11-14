@@ -39,7 +39,7 @@ apply('tool/result',{message:{source:{callId:'old-pending'}},meta:{canonical:{ex
 assert.equal(state.project.hipPath,'C:/reopened/rock.hip','a late old-executor result cannot relabel a recovered task')
 const view=executorIdentityProjection.wire.view(state)
 assert.deepEqual(Object.keys(view).sort(),['executorId','hipIsNew','hipPath','label','needsReview','sceneEpoch','sceneId'])
-assert.equal(executorIdentityProjection.wire.view(executorIdentityProjection.init()),null,'an unbound task has no project mark')
+assert.equal(executorIdentityProjection.wire.view(executorIdentityProjection.init()),null,'an unbound task has no selected project')
 assert.equal(executorIdentityProjection.wire.view({...state,conflict:true}).needsReview,true)
 
 const source=fs.readFileSync('client.js','utf8')
@@ -49,19 +49,19 @@ const uiContext={React,require:()=>({Tooltip:props=>React.createElement('tooltip
 vm.createContext(uiContext)
 vm.runInContext(fragment,uiContext)
 let currentProject=view
-const props={sessionId:'a',useSessions:select=>select({projectionsBySession:{a:{values:{houdiniExecutorIdentity:currentProject}}}})}
+const props={sessionId:'a',useSessions:select=>select({byId:{a:{blank:false,projectionValues:{agentPreset:'houdini'}}},
+  projectionsBySession:{a:{values:{houdiniExecutorIdentity:currentProject}}}})}
 const text=element=>typeof element==='string'?element:Array.isArray(element)?element.map(text).join(''):element?.children?.map(text).join('')??''
-assert.equal(uiContext.HoudiniProjectMark(props).props['data-houdini-project-mark'],true)
-assert.match(text(uiContext.HoudiniProjectLabel(props)),/rock.hip/)
-assert.match(text(uiContext.HoudiniProjectDetail(props)),/C:\/reopened\/rock.hip/)
-assert.match(text(uiContext.HoudiniProjectDetail(props)),/连接|确认/)
+const label=presence=>uiContext.HoudiniProjectLabel({project:currentProject,status:uiContext.houdiniPresence(currentProject,presence)})
+assert.match(text(label()),/rock.hip/)
+assert.match(label().props.title,/C:\/reopened\/rock.hip/)
+assert.match(label().props.title,/连接|确认/)
 currentProject={executorId:executor,hipPath:'C:/folder/<img src=x>.hip',hipIsNew:false,needsReview:false}
-assert.match(text(uiContext.HoudiniProjectLabel(props)),/<img src=x>.hip/,'untrusted filename stays React text, not HTML')
+assert.match(text(label()),/<img src=x>.hip/,'untrusted filename stays React text, not HTML')
 currentProject={executorId:executor,hipPath:'C:/untitled.hip',hipIsNew:true,needsReview:false}
-assert.match(text(uiContext.HoudiniProjectLabel(props)),/未保存工程/)
+assert.match(text(label()),/未保存工程/)
 currentProject=null
-assert.equal(uiContext.HoudiniProjectMark(props),null)
-assert.match(text(uiContext.HoudiniProjectLabel(props)),/未绑定工程/)
+assert.match(text(label()),/未绑定工程/)
 assert(!fragment.includes('dangerouslySetInnerHTML'))
 const liveView={...view,runtimeId:'8'.repeat(32),target:{executor_id:view.executorId,runtime_id:'8'.repeat(32),scene_epoch:view.sceneEpoch,hip_path:view.hipPath,hip_is_new:false}}
 const live={available:true,observedAt:Date.now(),records:{[view.executorId]:{status:'online',runtimeId:'8'.repeat(32),sceneEpoch:view.sceneEpoch,observedAt:Date.now()}}}
@@ -90,11 +90,7 @@ assert.match(compatibleRestart.detail,/可以继续使用/)
 assert.equal(uiContext.houdiniPresence(liveView,componentSnapshot({contractMismatch:true,runtimeId:'different',componentUpdate:{state:'restart'}})).state,'changed',
   'a replaced scene is reselected before any component advice')
 assert.equal(uiContext.houdiniComponentNotice({componentUpdate:{state:'unknown'}}),null,'unknown helper identity alone is not evidence of a required update')
-const liveProps={...props,usePresence:()=>live}
 currentProject=liveView
-const liveMark=uiContext.HoudiniProjectMark(liveProps)
-assert.equal(liveMark.props['data-houdini-presence'],'online','the closed-state project mark paints live presence')
-assert.match(liveMark.props['aria-label'],/已就绪/)
 const findNode=(node,predicate)=>{
   if(!node||typeof node==='string')return null
   if(Array.isArray(node)){for(const child of node){const found=findNode(child,predicate);if(found)return found}return null}
@@ -102,7 +98,7 @@ const findNode=(node,predicate)=>{
   for(const child of node.children??[]){const found=findNode(child,predicate);if(found)return found}
   return null
 }
-const liveLabel=uiContext.HoudiniProjectLabel(liveProps)
+const liveLabel=label(live)
 const liveLabelNode=findNode(liveLabel,node=>node.props?.['data-houdini-project-label']===true)
 assert(liveLabelNode,'the project label renders')
 assert.equal(liveLabelNode.props['data-houdini-presence'],'online','a closed project menu still exposes live presence')
@@ -113,6 +109,8 @@ assert.match(source,/\[data-houdini-presence="offline"\][^{]*\{color:/,'offline 
 assert.equal(uiContext.houdiniProjectName({hipIsNew:true,label:'未保存工程 2'}),'未保存工程 2')
 React.useSyncExternalStore=(_subscribe,get)=>get()
 React.useEffect=callback=>callback()
+React.useState=value=>[value,()=>{}]
+React.useRef=current=>({current})
 Object.assign(uiContext,{AbortController,AbortSignal,setTimeout,clearTimeout})
 const presenceCalls=[]
 let intervalCallback=null
@@ -149,14 +147,15 @@ const boundedUi=uiContext.createHoudiniDesktopUi({
 },{adapter:{current:{subscribe:()=>()=>{},getSnapshot:()=>null}}})
 boundedUi.Lifecycle()
 await new Promise(resolve=>setTimeout(resolve,0))
-assert.equal(boundedUi.Mark(props).props['data-houdini-presence'],'online')
+const chip=()=>findNode(boundedUi.Label(props),node=>node.props?.['data-houdini-project-label']===true)
+assert.equal(chip().props['data-houdini-presence'],'online')
 stalled=true;intervalCallback();deadlineCallback()
 await new Promise(resolve=>setTimeout(resolve,0))
-assert.equal(boundedUi.Mark(props).props['data-houdini-presence'],'unknown','timed-out polling cannot leave a green stale mark')
+assert.equal(chip().props['data-houdini-presence'],'unknown','timed-out polling cannot leave a green stale label')
 stalled=false;intervalCallback()
 await new Promise(resolve=>setTimeout(resolve,0))
 assert.equal(pollCount,3)
-assert.equal(boundedUi.Mark(props).props['data-houdini-presence'],'online')
+assert.equal(chip().props['data-houdini-presence'],'online')
 Object.assign(uiContext,{setTimeout,clearTimeout})
 uiContext.require=()=>({Tooltip:'tooltip',Button:'button',Toast:'toast'})
 console.log('Houdini project: single-source labels, saved untitled, Save As, nested/stale recovery, escaped filenames and bounded live presence passed')
