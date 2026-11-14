@@ -34,7 +34,7 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 | 项目 | 支持范围 |
 |---|---|
 | 操作系统 | Windows x64 |
-| 宿主 | 插件 0.1.11 需要 DSH 0.2.2-rc.1。DSH 0.2.1-rc.5 / rc.3 用户须精确选择旧版 0.1.6，升级插件前先确认宿主版本。精确兼容范围与验证边界见[兼容清单](dsh-runtime-compatibility.json) |
+| 宿主 | 插件 0.1.12 需要 DSH 0.2.2-rc.3。DSH 0.2.2-rc.1 用户可继续使用插件 0.1.11，DSH 0.2.1-rc.5 / rc.3 用户使用 0.1.6，升级插件前先确认宿主版本。精确兼容范围与验证边界见[兼容清单](dsh-runtime-compatibility.json) |
 | Houdini | 21.0 / 22.0；构建兼容信息见[安装说明](docs/setup.md) |
 | 模型 | 在 DSH 中配置可用的主聊天模型；图像理解、生图和语音按所用模型与服务的实际能力配置 |
 
@@ -45,14 +45,14 @@ dsh-houdini 将 Houdini 的真实场景接入 [DeepSeek Harness Desktop](https:/
 3. 点击 **立即启用**，或在插件列表启用 `dsh-houdini`。
 
 ```text
-dsh-houdini@0.1.11
+dsh-houdini@0.1.12
 ```
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.12/dsh-houdini-0.1.12.tgz
 ```
 
-同一份完整包可从 [npm](https://www.npmjs.com/package/dsh-houdini/v/0.1.11)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11) 安装。包名和地址安装的后续升级见[更新说明](docs/setup.md#connection--support连接与维护)。
+正式发布后，同一份完整包可从 [npm](https://www.npmjs.com/package/dsh-houdini/v/0.1.12)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.12) 安装。包名和地址安装的后续升级见[更新说明](docs/setup.md#connection--support连接与维护)。
 
 新装插件默认停用，启用后才会提供 Houdini 模式。完整包包含 FFmpeg / ffprobe，普通 Python 自动从 Houdini 安装定位；使用插件无需另装 Node、编译源码或配置 FFmpeg PATH。
 

@@ -17,14 +17,9 @@ const original=await fs.readFile(path.join(dist,'index.html'),'utf8')
 const script=original.match(/src="\.\/([^\"]+\.js)"/)[1]
 const css=[...original.matchAll(/href="\.\/([^\"]+\.css)"/g)].map(match=>match[1])
 const source=await fs.readFile(path.join(root,'client.js'),'utf8')
-// Use the exact official palette instead of a fixture palette that accidentally
-// made the translucent native menu-material token fully opaque.
-const themeSource=await fs.readFile(path.join(runtime,'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'),'utf8')
-const nativeThemeCss=['base_css_default','design_platform_css_default'].map(name=>{
- const literal=themeSource.match(new RegExp('var '+name+' = (\"(?:\\\\.|[^\"\\\\])*\");'))?.[1]
- assert(literal,'Official theme CSS export missing: '+name)
- return JSON.parse(literal)
-}).join('\n')
+// The theme package publishes the same palette sources that its client injects.
+const themeStyles=path.join(runtime,'node_modules/@deepseek-ai/dsh-client-ui-theme/src/styles')
+const nativeThemeCss=(await Promise.all(['base.css','design-platform.css'].map(name=>fs.readFile(path.join(themeStyles,name),'utf8')))).join('\n')
 const code=source.slice(source.indexOf('    function Button('),source.indexOf('    // >>> houdini-node-delivery'))
 const videoCode=source.slice(source.indexOf('    function createVideoSettings('),source.indexOf('    function createSupportReporter('))
 const styles=source.slice(source.indexOf('    var shellCss ='),source.indexOf('    var shellCssId ='))
@@ -166,11 +161,12 @@ try{
  const menuColors=[]
  for(const dark of [false,true]){
   await evaluate('fixture.dark('+dark+')')
-  const material=await evaluate(`(()=>{const e=document.querySelector('.dsh-houdini-menu-surface');const c=getComputedStyle(e);const probe=document.createElement('div');probe.style.background='var(--dsw-alias-bg-layer-2)';document.body.appendChild(probe);const expected=getComputedStyle(probe).backgroundColor;probe.remove();return{background:c.backgroundColor,opacity:c.opacity,expected,material:getComputedStyle(document.body).getPropertyValue('--dsw-menu-surface-fill').trim()}})()`)
+  const material=await evaluate(`(()=>{const e=document.querySelector('.dsh-houdini-menu-surface');const c=getComputedStyle(e);const probe=document.createElement('div');probe.style.background='var(--dsw-alias-bg-layer-2)';document.body.appendChild(probe);const expected=getComputedStyle(probe).backgroundColor;probe.style.background='var(--dsw-menu-surface-fill)';const material=getComputedStyle(probe).backgroundColor;probe.remove();return{background:c.backgroundColor,opacity:c.opacity,expected,material}})()`)
   assert.equal(material.background,material.expected,'menu uses the official opaque surface, not its translucent menu material')
   assert.equal(material.opacity,'1')
   assert(!material.background.startsWith('rgba('),'popup backing is fully opaque')
-  assert.match(material.material,/^#[0-9a-f]{8}$/i,'fixture consumes the actual alpha-valued official menu material')
+  const alpha=Number(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/.exec(material.material)?.[1])
+  assert(alpha>0&&alpha<1,'fixture consumes the actual translucent official menu material')
   menuColors.push({dark,...material});await screenshot('choose-'+(dark?'dark':'light')+'-opaque')
  }
  await evaluate('fixture.dark(false)')
@@ -367,5 +363,12 @@ finally{
  if(socket?.readyState===1){try{await call('Browser.close')}catch{}socket.close()}
  if(browser){for(let n=0;n<50&&!browserDidClose;n++)await sleep(100);if(!browserDidClose)browser.kill();await browserClosed}
  if(server.listening)await new Promise(resolve=>server.close(resolve))
- try{await scratch.finish(succeeded?'success':'failed')}finally{await evidence.finish(succeeded?'success':'failed')}
+ const status=succeeded?'success':'failed'
+ try{
+  await scratch.finish(status)
+ }catch(error){
+  // Edge can hold the isolated profile open after its browser process exits.
+  if(error.code!=='EBUSY')throw error
+  console.warn('Edge still holds a lock on the isolated profile. Scratch remains at '+scratch.directory)
+ }finally{await evidence.finish(status)}
 }

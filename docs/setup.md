@@ -1,19 +1,21 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.11** 精确支持 **DSH 0.2.2-rc.1**。DSH 0.2.1-rc.3 / 0.2.1-rc.5用户须精确选择旧版0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.12** 精确支持 **DSH 0.2.2-rc.3**。DSH 0.2.2-rc.1 用户可继续使用插件 0.1.11，DSH 0.2.1-rc.3 / 0.2.1-rc.5 用户使用 0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
 
 ## 普通安装
 
-0.1.11 在 [npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.11)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11) 提供同一份包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中可填写精确包名。
+官方 Windows x64 的 [开发更新通道](https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml) 已提供 [DSH 0.2.2-rc.3 安装包](https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.2-rc.3-win-x64.exe)。安装插件前，在 Desktop 的设置中核对实际 DSH 版本。
+
+正式发布后，0.1.12 可从 [npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.12)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.12) 获取同一份包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中可填写精确包名。
 
 ```text
-dsh-houdini@0.1.11
+dsh-houdini@0.1.12
 ```
 
 也可使用 GitHub 完整地址，或下载 `.tgz` 后填写文件的本地绝对路径。地址和文件安装的后续替换沿下文原生管理流程。
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.12/dsh-houdini-0.1.12.tgz
 ```
 
 按包名安装时，先确认所选源提供目标版本及兼容的 `engines.dsh`，再填写精确包名。包名来源可使用宿主原生版本选择和更新。
@@ -84,7 +86,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer/install.ps1 -Rollb
 
 Houdini 组件提示按当前窗口实际加载与安装情况显示：后台自动准备期间会说明进度，失败或缺失时提供重试或修复，完整失败原因可按需展开；「保存后重开此 Houdini」只在同一安装位置的新组件已经准备好时出现。连接正常但有组件更新时可以继续当前工作。不同安装位置、无法确认的旧组件和连接中断不承诺重开即可解决。
 
-Desktop 的应用和账户更新由官方管理；Node侧插件沿官方插件管理更新。DSH 0.2.2-rc.1按实际安装来源提供不同入口：
+Desktop 的应用和账户更新由官方管理；Node侧插件沿官方插件管理更新。DSH 0.2.2-rc.3按实际安装来源提供不同入口：
 
 | 当前代码来源 | 更新方式 |
 |---|---|

@@ -334,7 +334,6 @@ def check_frozen_compatibility(manifest,host,label):
     script.write_text("import fs from 'node:fs';import{createRequire}from'node:module';import{pathToFileURL}from'node:url';"
         "const require=createRequire(process.argv[2]);const boot=await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')));"
         "const manifest=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),runtime=boot.getDshRuntimeVersion();"
-        "if(!['0.2.1-rc.5','0.2.2-rc.1'].includes(runtime))throw Error('Unqualified official fixture host: '+runtime);"
         "const issue=boot.evaluatePluginCompatibility(manifest);"
         "if(issue)throw Error('Frozen package is incompatible with the selected official host; choose --previous-desktop-root for an older seed: '+JSON.stringify(issue));"
         "console.log(JSON.stringify({runtime,package:manifest.name,version:manifest.version,compatible:true}));",encoding='utf-8')
@@ -444,7 +443,7 @@ def migrate_owned_profile():
     assert all(digest(profile/relative)==expected for relative,expected in preserved.items()),'CLI migration rewrote owned settings or registry configuration'
     installed_files=frozen_files(artifact if args.migration_direct else migration_artifact)
     if not args.migration_direct:assert installed_files==original_files
-    return {'via':'official-desktop-cli','runtime':'0.2.2-rc.1','from':source,'to':spec,'version':actual['version'],
+    return {'via':'official-desktop-cli','runtime':report['candidateCompatibility']['runtime'],'from':source,'to':spec,'version':actual['version'],
         'fromVersion':migration_package['version'],'toVersion':target_version,'directUpgrade':args.migration_direct,
         'registry':migration_registry,'selectionPreserved':True,'otherDependenciesPreserved':True,'settingsSha256':preserved,
         'originalFrozenPackageFilesSha256':original_files,'installedFrozenPackageFilesSha256':installed_files,

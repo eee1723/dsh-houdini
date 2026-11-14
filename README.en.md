@@ -34,7 +34,7 @@ These capabilities can be combined: start by inspecting an existing network, tur
 | Item | Supported range |
 |---|---|
 | Operating system | Windows x64 |
-| Host | Plugin 0.1.11 requires DSH 0.2.2-rc.1. Users on DSH 0.2.1-rc.5 / rc.3 must explicitly select older plugin version 0.1.6. Confirm the host version before upgrading the plugin. See the [compatibility matrix](dsh-runtime-compatibility.json) for exact supported combinations and validation boundaries. |
+| Host | Plugin 0.1.12 requires DSH 0.2.2-rc.3. Use plugin 0.1.11 with DSH 0.2.2-rc.1, or plugin 0.1.6 with DSH 0.2.1-rc.5 / rc.3. Confirm the host version before upgrading the plugin. See the [compatibility matrix](dsh-runtime-compatibility.json) for exact supported combinations and validation boundaries. |
 | Houdini | 21.0 / 22.0; see the [installation guide](docs/setup.md) for build compatibility information. |
 | Models | Configure an available primary chat model in DSH. Image understanding, image generation, and speech features depend on the actual capabilities of the selected models and services. |
 
@@ -45,14 +45,14 @@ These capabilities can be combined: start by inspecting an existing network, tur
 3. Click **Enable Now**, or enable `dsh-houdini` from the plugin list.
 
 ```text
-dsh-houdini@0.1.11
+dsh-houdini@0.1.12
 ```
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.11/dsh-houdini-0.1.11.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.12/dsh-houdini-0.1.12.tgz
 ```
 
-The same complete package is available from [npm](https://www.npmjs.com/package/dsh-houdini/v/0.1.11), [npmmirror](https://npmmirror.com/package/dsh-houdini), and the [GitHub release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.11). See the [update instructions](docs/setup.md#connection--support连接与维护) for package-name and address installations.
+After publication, the same complete package is available from [npm](https://www.npmjs.com/package/dsh-houdini/v/0.1.12), [npmmirror](https://npmmirror.com/package/dsh-houdini), and the [GitHub release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.12). See the [update instructions](docs/setup.md#connection--support连接与维护) for package-name and address installations.
 
 Newly installed plugins are disabled by default and provide Houdini mode only after being enabled. The full package includes FFmpeg / ffprobe, and a standard Python interpreter is located automatically from the Houdini installation. Using the plugin requires no separate Node installation, source compilation, or FFmpeg PATH configuration.
 

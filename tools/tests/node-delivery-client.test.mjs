@@ -3,7 +3,8 @@ import {fixtureProjectionContext} from './fixture-session.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
-import {Context} from '@deepseek-ai/cordis'
+import * as cordis from '@deepseek-ai/cordis'
+import {z} from 'zod'
 import {SystemPrompt} from '@deepseek-ai/dsh-system-prompt'
 import {ToolRuntime} from '@deepseek-ai/dsh-tools'
 import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native'
@@ -30,12 +31,25 @@ const factory = vm.runInNewContext('('+generatedNodeDeliveryFactory()+')',{Abort
 const readCanonical = vm.runInNewContext(parser+'\nreadHoudiniCanonical;',{liveJobResult})
 const projection = factory({},readCanonical)
 
-// Execute the released public DSH assembler itself. Its browser bundle includes
-// React/DOM code; load just the unchanged target-neutral contract and assembly
-// regions so the check does not replace DSH grouping or Location resolution.
+// Load DSH's exported assembler through its client factory. The assembly check
+// needs no renderer, so the unused DOM and React entry points are stubs.
 const dshSource = fs.readFileSync('node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js','utf8')
-const core = dshSource.slice(dshSource.indexOf('//#region lib/types/client/contract/conversation.js'),dshSource.indexOf('//#region lib/types/client/conversation/definition-registry.js'))
-const Assembler = vm.runInNewContext(core+'\nConversationNodeAssembler;',{})
+let conversationFactory
+vm.runInNewContext(dshSource,{window:{__ModuleLoader__:{load(module){conversationFactory=module.factory}}}})
+const browserModules = {
+  '@deepseek-ai/dsh-client-ui-primitives': {},
+  '@deepseek-ai/dsh-client-store': {},
+  '@deepseek-ai/dsh-client-ui-slots': {},
+  '@deepseek-ai/cordis': cordis,
+  react: {memo:component=>component,forwardRef:component=>component,createContext:()=>({})},
+  'react/jsx-runtime': {},
+  'react-dom': {},
+  zod: {z},
+}
+const {ConversationNodeAssembler: Assembler} = conversationFactory(name=>{
+  assert.ok(Object.hasOwn(browserModules,name),'Unexpected client dependency '+name)
+  return browserModules[name]
+})
 function assemble(events) {
   const assembler = new Assembler({entries:()=>[projection.definition],fallbackEntry:()=>undefined},{entries:()=>[projection.view]})
   assembler.replaceWindow(events.map(event=>({type:'event',event})),false)
@@ -44,7 +58,7 @@ function assemble(events) {
   return assembler
 }
 const executorId='a'.repeat(32), uuid='c'.repeat(32)
-const ctx=await fixtureProjectionContext(new Context())
+const ctx=await fixtureProjectionContext(new cordis.Context())
 ctx.provide('workingDirectory',{ensure:async()=>process.cwd()})
 new SystemPrompt(ctx,{})
 const runtime=new ToolRuntime(ctx)

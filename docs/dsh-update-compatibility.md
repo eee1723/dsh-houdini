@@ -1,6 +1,6 @@
 # DSH 与插件版本适配
 
-插件是官方DSH Desktop的标准bundle，使用宿主原生会话、模型、任务与文件权限。当前发行面向 **0.2.2-rc.1**；旧版0.1.6仍使用其发行包内声明的rc.3/rc.5，不自动升级既有用户。新版本按下述资格流程核对，不以浮动npm标签推断兼容。当前支持源为[兼容清单](../dsh-runtime-compatibility.json)，开发依赖锁为[package-lock](../package-lock.json)；候选验证、正式发布和用户已加载分别表达，地址以[安装说明](setup.md)为准。
+插件是官方DSH Desktop的标准bundle，使用宿主原生会话、模型、任务与文件权限。插件 0.1.12 面向 **0.2.2-rc.3**，插件 0.1.11 面向 0.2.2-rc.1；旧版0.1.6仍使用其发行包内声明的rc.3/rc.5，不自动升级既有用户。新版本按下述资格流程核对，不以浮动npm标签推断兼容。当前支持源为[兼容清单](../dsh-runtime-compatibility.json)，开发依赖锁为[package-lock](../package-lock.json)；候选验证、正式发布和用户已加载分别表达，地址以[安装说明](setup.md)为准。
 
 ## 宿主所有权与数据兼容边界
 
@@ -77,13 +77,15 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 0.2.2 接口边界
 
-[官方0.2.2-rc.1](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1)的合同由当前插件直接消费，不保留旧disposer/新handle或旧工具mode的猜测分支；旧用户沿原插件发行版使用。实际资格范围由兼容清单维护，剩余验收只进[交接](handoff.md#h-06-官方dsh共存与插件边界)。
+当前插件直接使用 [官方 0.2.2-rc.3](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.3) 的运行接口，宿主、运行依赖和开发夹具精确对齐。实际资格范围由兼容清单维护，剩余验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)。
+
+rc.3 的实验性 DeepSeek 会话导入及 Windows 应用内更新由宿主负责。Houdini 现场仍由当前对话的原生模式、显式选择和 Bridge 回执确定。导入文本不会赋予节点归属或现场权限。从 rc.1 跨过 [rc.2](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.2) 时，原生日志格式维持 v4，宿主支持批量写事件；插件继续使用公开的 `appendPluginRecord`。宿主处理新版工具错误和 PTC 调用限额，插件按原生回执与 Bridge 终态分别追踪。rc.2 调整的浮层定位接口适用于引用宿主定位 API 的组件；Houdini 工程菜单使用自身的定位和键盘逻辑。
 
 | 官方合同 | 插件消费与验证 |
 |---|---|
-| [工具按步骤准入](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/core/tools/src/index.ts)通过resolve生成本步集合，executable决定实际可执行定义 | 现场上下文消费本步toolSet；注册存在不等于获准，本步禁用时移除先前自身上下文。原生与PTC使用宿主同一步选择 |
-| [投影注册](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/session/session-projection/README.md)须await取得handle，再暴露同步消费者；按key读取已弃用 | executor-host在启动阶段持有私有handle，控制器、上下文与前端通过所属服务读状态；不加延时轮询或再建历史扫描器 |
-| [提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.1/packages/core/system-prompt/src/index.ts)区分呈现与工具声明，Agent在本步固定模型 | scene/execution/vision消费捕获的modelSelection，诊断组装才读agent.model.current()；保留宿主覆盖、取消及PTC作用域，不在agent/request改模型 |
+| [工具按步骤准入](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/core/tools/src/index.ts)通过resolve生成本步集合，executable决定实际可执行定义 | 现场上下文消费本步toolSet；注册存在不等于获准，本步禁用时移除先前自身上下文。原生与PTC使用宿主同一步选择 |
+| [投影注册](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/session/session-projection/README.md)须await取得handle，再暴露同步消费者；按key读取已弃用 | executor-host在启动阶段持有私有handle，控制器、上下文与前端通过所属服务读状态；不加延时轮询或再建历史扫描器 |
+| [提示词组装](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.2-rc.3/packages/core/system-prompt/src/index.ts)区分呈现与工具声明，Agent在本步固定模型 | scene/execution/vision消费捕获的modelSelection，诊断组装才读agent.model.current()；保留宿主覆盖、取消及PTC作用域，不在agent/request改模型 |
 | 原生/PTC执行插件与配置overlay、run_code取消分类、官方组合包导出发生变化 | 更新隔离Host/原生与嵌套回执夹具和取消断言；生产插件不接管宿主PTC bootstrap或组合包安装 |
 | Cordis 4.1.0、Schemastery 3.19.0及Node最低24.9 | 按实际官方发行组合验证依赖单例、根客户端、热重载和原生安装；不从插件升级共享依赖或替换Desktop运行时 |
 
@@ -99,13 +101,13 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 第三方插件更新入口
 
-Node侧插件的安装、启停、卸载、升级与失败恢复只使用Desktop原生插件管理。用户从Desktop原生「插件」页进入；Houdini工程菜单不再重复提供全局插件管理导航。DSH 0.2.2-rc.1的registry原生更新要求：当前profile中可管理的第三方包、有效semver版本，以及按自身包名记录的registry来源；Host由这些事实产生`updatable`，客户端只为符合条件的包显示版本区。GitHub tgz URL、本地文件和源码链接不取得这一资格，`homepage`／`repository`也不是更新来源。安装页再次添加已有包名会拒绝；新的tgz URL可能走普通安装路径，不能据此承诺`updateBundle`的旧版恢复保证。npm发布不会自动转换已有依赖来源。
+Node侧插件的安装、启停、卸载、升级与失败恢复只使用Desktop原生插件管理。用户从Desktop原生「插件」页进入；Houdini工程菜单不再重复提供全局插件管理导航。DSH 0.2.2-rc.3 向可管理、版本有效且以自身包名从 npm 源安装的第三方包返回 `update: "registry"`，原生插件页据此显示版本区。固定提交的合规 Git 安装可获得 `update: "git"`。GitHub tgz URL、本地文件和源码链接没有更新资格，`homepage`／`repository`也不是更新来源。安装页再次添加已有包名会拒绝；新的tgz URL可能走普通安装路径，不能据此承诺`updateBundle`的旧版恢复保证。npm发布不会自动转换已有依赖来源。
 
 registry中的精确版本、dist-tag和宿主兼容声明必须实际公开可查；裸包名查询latest不能证明它支持当前DSH。URL／文件来源可通过官方管理流程明确替换；迁移为registry来源后须核对真实依赖来源、版本、启用状态与页面资格。安装与更新入口见[安装说明](setup.md#connection--support连接与维护)，未完成的具体组合只进[交接](handoff.md#h-01-标准插件发布与用户加载)。
 
 当前官方组合捆绑pnpm 11.28.5，默认`minimumReleaseAge=1440`分钟且忽略缺失的发布时间。registry元数据是否提供`time`会影响裸包名的实际解析；预检展示latest而安装选择成熟旧版是已观察到的宿主消费差异。用户明确选择精确版本或原生更新目标时，pnpm可按其原生合同记录该精确版本的`minimumReleaseAgeExclude`，插件不人工调低全局年龄或信任策略。默认与明确版本行为见[pnpm 11发行说明](https://pnpm.io/blog/releases/11.0)及[供应链策略](https://pnpm.io/supply-chain-security)。当前最小路径是沿原生管理选择已核对的精确版本；预检与实际目标一致性的进一步改进应落在宿主确认／解析接口，避免插件另建版本选择器或修改宿主安装。
 
-官方管理器负责包名来源的版本选择、更新及恢复。候选包配置无效或入口模块加载失败时，0.2.2-rc.1 可尝试重新安装此前版本。恢复回执要求重启时，正常退出并打开 Desktop，再核对实际加载和原会话。插件使用公开管理流程并验证冻结包实际加载，避免重复实现更新、配置和回退。
+官方管理器负责包名来源的版本选择、更新与失败处理。若更新中断且没有恢复回执，重新打开 Desktop 后核对实际安装版本；必要时用官方 CLI 安装当前宿主兼容的完整包。恢复回执要求重启时，正常退出并重新打开 Desktop，再核对实际加载和原会话。
 
 原生更新验收须实际打开详情、检查版本、点击更新和确认，并核对结果、来源、启用状态和运行根目录。测试资料和进程工作目录须位于源码包目录之外，避免宿主重新解析时选中源码入口。直接调用`listVersions`／`updateBundle`只能证明API机制，不能证明按钮可达。URL／文件来源无版本区、重复包名的添加拒绝、新URL换包和来源迁移须分别观察，方法见[开发维护](development.md#受影响能力的验证)。Houdini helper在插件加载或明确新建／打开时准备；运行观察只读，缺失或失败通过已有修复入口处理。实际加载版本与重开要求由插件判断，因为Desktop不知道进程内Python模块身份。
 

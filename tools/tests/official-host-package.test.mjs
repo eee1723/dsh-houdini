@@ -17,7 +17,7 @@ assert.equal(policy.runtimeFixes,undefined);
 assert.ok(manifest.files.includes('runtime/video'),'formal plugin packaging retains the source-complete tutorial media resources');
 for(const version of supported)assert.equal(evaluatePluginCompatibility(manifest,{},version),undefined,
   `the official host must admit the qualified ${version} using its ordinary compatibility check`);
-for(const version of ['0.2.1-rc.3','0.2.1-rc.5','0.2.2-alpha.2','0.2.0-rc.2'])
+for(const version of ['0.2.1-rc.3','0.2.1-rc.5','0.2.2-alpha.2','0.2.0-rc.2','0.2.2-rc.1','0.2.2-rc.2'])
   assert.ok(evaluatePluginCompatibility(manifest,{},version),
     `unqualified ${version} is rejected by the official check, without replacing its runtime`);
 assert.equal(Object.keys(manifest.dependencies??{}).some(name=>name==='@deepseek-ai/dsh'||name.startsWith('@deepseek-ai/dsh-')),false,

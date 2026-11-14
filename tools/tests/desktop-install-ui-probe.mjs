@@ -68,7 +68,7 @@ async function verifyRuntime(label,version,hashes){
   'actual loaded plugin root and frozen runtime entries '+version,30000)
 }
 async function directSourceUpdateEligibility(installed,label){
- assert.equal(installed.updatable,false,'A tarball dependency must not inherit registry update eligibility')
+ assert.equal(installed.update,undefined,'A tarball dependency must not inherit registry update eligibility')
  const before=await bundle()
  await plugins()
  await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native tarball package details')
@@ -80,7 +80,7 @@ async function directSourceUpdateEligibility(installed,label){
  assert.equal(duplicate.status,'refused');assert.equal(duplicate.problem,'already-installed')
  const unchanged=await bundle()
  assert.deepEqual([unchanged.version,unchanged.source,unchanged.enabled],[before.version,before.source,before.enabled])
- report.directSourceUpdate={source:installed.source,updatable:false,nativeVersionSectionAbsent:true,
+ report.directSourceUpdate={source:installed.source,nativeVersionSectionAbsent:true,
   listingRefusal:listing.problem,duplicatePackageNameRefusal:duplicate.problem}
  await shot(label+'-no-registry-update');await plugins()
 }
@@ -133,9 +133,9 @@ async function nativeState(check=false,kind='migration'){
 async function directMigrationLatest(before){
  const migrated=await bundle()
  assert.equal(migrated.source,'dsh-houdini@'+config.expectedVersion)
- assert.equal(migrated.version,config.expectedVersion);assert.equal(migrated.enabled,false);assert.equal(migrated.updatable,true)
+ assert.equal(migrated.version,config.expectedVersion);assert.equal(migrated.enabled,false);assert.equal(migrated.update,'registry')
  await nativeState(true)
- report.migrationRegistrySource={version:migrated.version,source:migrated.source,enabled:migrated.enabled,updatable:migrated.updatable}
+ report.migrationRegistrySource={version:migrated.version,source:migrated.source,enabled:migrated.enabled,update:migrated.update}
  const updatesBefore=report.uiMethods['pluginManager/updateBundle']??0
  await plugins()
  await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native migrated current-release details')
@@ -154,7 +154,7 @@ async function directMigrationLatest(before){
  await until(switchState(true),'Directly migrated switch reflects explicit enablement')
  await preservedRoster(before,true);await nativeState(true)
  const current=await bundle()
- report.migrationFinalSource={version:current.version,source:current.source,enabled:current.enabled,updatable:current.updatable}
+ report.migrationFinalSource={version:current.version,source:current.source,enabled:current.enabled,update:current.update}
  report.otherModesAndDefaultPreserved=true
 }
 async function plugins(){await click(button('/^(插件|Plugins)$/'),'Native Plugins navigation')}
@@ -297,22 +297,22 @@ try{
   else assert.equal(source.source,config.migrationSourceSpec)
   await directSourceUpdateEligibility(source,'migration-original-'+config.migrationSource)
   await nativeState()
-  report.migrationOriginalSource={version:source.version,source:source.source,enabled:source.enabled,updatable:source.updatable}
+  report.migrationOriginalSource={version:source.version,source:source.source,enabled:source.enabled}
  }else if(config.migrationPhase==='after'&&config.migrationDirect){
   await directMigrationLatest(before)
  }else{
  if(config.migrationPhase==='after'){
   const migrated=await bundle()
   assert.equal(migrated.source,'dsh-houdini@'+config.migrationVersion)
-  assert.equal(migrated.version,config.migrationVersion);assert.equal(migrated.enabled,false);assert.equal(migrated.updatable,true)
+  assert.equal(migrated.version,config.migrationVersion);assert.equal(migrated.enabled,false);assert.equal(migrated.update,'registry')
   await nativeState(true)
-  report.migrationRegistrySource={version:migrated.version,source:migrated.source,enabled:migrated.enabled,updatable:migrated.updatable}
+  report.migrationRegistrySource={version:migrated.version,source:migrated.source,enabled:migrated.enabled,update:migrated.update}
  }
  if(config.updateFromVersion){
   const previous=await bundle()
   assert.equal(previous.version,config.updateFromVersion);assert.equal(previous.enabled,config.seedEnabled===true)
   assert(previous.source.startsWith('dsh-houdini@'),'the previous official CLI must seed a registry dependency')
-  assert.equal(previous.updatable,true,'An older registry bundle must remain eligible for a compatible update')
+  assert.equal(previous.update,'registry','An older registry bundle must remain eligible for a compatible update')
   report.previousOfficialCli={version:previous.version,enabled:previous.enabled,source:previous.source}
   if(!config.migrationPhase)await nativeState(false,'update')
   await plugins()
@@ -387,9 +387,9 @@ try{
   if(config.migrationPhase==='after'){
    const current=await bundle()
    assert.equal(current.source,'dsh-houdini@'+config.expectedVersion)
-   assert.equal(current.updatable,true)
+   assert.equal(current.update,'registry')
    await nativeState(true)
-   report.migrationFinalSource={version:current.version,source:current.source,enabled:current.enabled,updatable:current.updatable}
+   report.migrationFinalSource={version:current.version,source:current.source,enabled:current.enabled,update:current.update}
   }
   if(!config.migrationPhase){await nativeState(true,'update');report.updateHistoryVerifiedAfterFault=true}
  }else{
