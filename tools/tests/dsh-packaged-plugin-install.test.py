@@ -133,21 +133,12 @@ command=[str(cli),'plugin','--profile','web','add',install_spec,'--store-dir',st
 if args.npm:command.extend(['--registry','https://registry.npmjs.org/'])
 # Invoke the public carrier exactly as a user would. There is no direct pnpm,
 # manually authored profile, compatibility exemption or source junction here.
-# cmd strips its outer command quotes; keep the quoted CLI path inside them.
-# Node must pass that command verbatim instead of escaping its quotes for CRT.
-native_command=[os.environ.get('COMSPEC','C:/Windows/System32/cmd.exe'),'/d','/s','/c','"'+subprocess.list2cmdline(command)+'"']
-installer_wrapper=fixture/'run-native-cli.mjs'
-installer_arguments=fixture/'native-cli-arguments.json'
-installer_arguments.write_text(json.dumps(native_command),encoding='utf-8')
-installer_wrapper.write_text("import fs from 'node:fs';import {spawn} from 'node:child_process';"
-    "const [command,...args]=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));"
-    "const child=spawn(command,args,{stdio:'inherit',env:process.env,windowsHide:true,windowsVerbatimArguments:true});"
-    "child.once('error',error=>{console.error(error);process.exitCode=1});"
-    "child.once('exit',code=>process.exitCode=code??1);",encoding='utf-8')
+# Invoke the public .cmd directly. An extra Node/cmd forwarding layer changes
+# quoting on paths containing spaces and is not part of the installation contract.
 with (fixture/'plugin-install.log').open('wb') as output:
-    test_node=shutil.which('node');assert test_node
-    installation=runtime.spawn_frontend([test_node,str(installer_wrapper),str(installer_arguments)],node=test_node,
-        cwd=fixture,env=env,stdout=output,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    installation=subprocess.Popen(command,cwd=fixture,env=env,stdout=output,stderr=subprocess.STDOUT,
+        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    runtime.own_process(installation)
     try:exit_code=installation.wait(timeout=args.timeout)
     finally:runtime.stop_owned(installation)
 assert exit_code==0,'Native plugin installation failed; inspect '+str(fixture/'plugin-install.log')
@@ -637,7 +628,10 @@ with log.open('wb') as output:
         assert 'error' not in facts,facts
         installed=Path(facts['root']).resolve(strict=True)
         assert installed.is_relative_to(fixture),'Plugin must be installed into the owned data/store tree'
-        assert not installed.is_relative_to(ROOT),'Formal tgz test cannot resolve to the checkout'
+        # Owned evidence may live inside the checkout. Compare file identity,
+        # rather than rejecting every installed path below the workspace root.
+        assert installed!=ROOT.resolve(),'Formal tgz test cannot resolve to the checkout'
+        assert not (installed/'lib/frontend-host.js').samefile(ROOT/'lib/frontend-host.js'),'Installed Host must not be the checkout file'
         manifest=facts['manifest']
         assert manifest['name']=='dsh-houdini' and manifest['engines']['dsh']==expected_manifest['engines']['dsh'],manifest
         if args.expected_helper_id:

@@ -154,6 +154,7 @@ Existing DSH providers can be explicitly reused, and standalone speech services 
 | [Isolated execution](skills/houdini-isolated-execution/SKILL.md) | Build and validate in an isolated Houdini process |
 | [SOP](skills/houdini-sop-workflow/SKILL.md) | Procedural modeling, curves, and geometry operations |
 | [External asset integration](skills/houdini-asset-integration/SKILL.md) | Component replacement, materials, instancing, and high/low-poly workflows for generated or imported models; includes offline GLB asset preparation |
+| [WFC](skills/dsh-wfc/SKILL.md) | Modular structural constraints, visual variants, style hot-swapping, and native packed instances |
 | [Simulation](skills/houdini-simulation-workflow/SKILL.md) | Feedback solving, timing, caching, and simulation modifications |
 | [Surface appearance](skills/houdini-surface-workflow/SKILL.md) | Reference images, surface details, UVs, and textures |
 | [COP](skills/houdini-cop-workflow/SKILL.md) | On-demand layer and image processing |

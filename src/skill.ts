@@ -22,6 +22,7 @@ const SKILLS = [
   { name: 'houdini-isolated-execution', dir: 'houdini-isolated-execution' },
   { name: 'houdini-sop-workflow', dir: 'houdini-sop-workflow' },
   { name: 'houdini-asset-integration', dir: 'houdini-asset-integration' },
+  { name: 'dsh-wfc', dir: 'dsh-wfc' },
   { name: 'houdini-simulation-workflow', dir: 'houdini-simulation-workflow' },
   { name: 'houdini-surface-workflow', dir: 'houdini-surface-workflow' },
   { name: 'houdini-cop-workflow', dir: 'houdini-cop-workflow' },

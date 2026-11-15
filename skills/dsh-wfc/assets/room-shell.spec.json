@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "name": "room-shell",
+  "shape": [3, 1, 3],
+  "cell_size": [3, 3, 3],
+  "directions": {
+    "px": {"opposite": "nx", "delta": [1, 0, 0]},
+    "nx": {"opposite": "px", "delta": [-1, 0, 0]},
+    "pz": {"opposite": "nz", "delta": [0, 0, 1]},
+    "nz": {"opposite": "pz", "delta": [0, 0, -1]}
+  },
+  "modules": [
+    {
+      "id": "floor",
+      "asset_key": "floor",
+      "tags": ["interior"],
+      "sockets": {"px": "inside", "nx": "inside", "pz": "inside", "nz": "inside"}
+    },
+    {
+      "id": "corner",
+      "asset_key": "wall_corner",
+      "tags": ["corner"],
+      "yaw_variants": [0, 90, 180, 270],
+      "sockets": {"px": "wall", "nx": "outside", "pz": "wall", "nz": "outside"}
+    },
+    {
+      "id": "wall",
+      "asset_key": "wall",
+      "weight": 2,
+      "tags": ["facade"],
+      "yaw_variants": [0, 90, 180, 270],
+      "sockets": {"px": "wall", "nx": "wall", "pz": "inside", "nz": "outside"}
+    },
+    {
+      "id": "window",
+      "asset_key": "wall_window",
+      "weight": 3,
+      "tags": ["facade", "glazing"],
+      "yaw_variants": [0, 90, 180, 270],
+      "sockets": {"px": "wall", "nx": "wall", "pz": "inside", "nz": "outside"}
+    },
+    {
+      "id": "door",
+      "asset_key": "wall_door",
+      "tags": ["facade", "entrance"],
+      "yaw_variants": [0, 90, 180, 270],
+      "sockets": {"px": "wall", "nx": "wall", "pz": "inside", "nz": "outside"}
+    }
+  ],
+  "boundary_sockets": {"px": "outside", "nx": "outside", "pz": "outside", "nz": "outside"},
+  "counts": [
+    {"id": "one_entrance", "tags": ["entrance"], "min": 1, "max": 1},
+    {"id": "window_range", "tags": ["glazing"], "min": 2, "max": 3}
+  ],
+  "seed": 42,
+  "budget": {"max_steps": 10000, "max_backtracks": 2000, "max_seconds": 10}
+}

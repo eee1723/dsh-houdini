@@ -218,11 +218,22 @@ try{
  await fs.mkdir(outside);await fs.writeFile(path.join(outside,'uiready.py'),source)
  await fs.unlink(path.join(startup,'python3.11libs/uiready.py'));await fs.rmdir(path.join(startup,'python3.11libs'))
  await fs.symlink(outside,path.join(startup,'python3.11libs'),process.platform==='win32'?'junction':'dir')
- const rr=r.create();await rr.start();await until(async()=>(await r.disk(rt)).bootstrapRetired===true)
- assert.equal(await fs.readFile(path.join(outside,'uiready.py'),'utf8'),source);assert.ok(await fs.stat(path.join(r.home,'dsh-houdini/launches',rt.id+'.log')))
- assert.equal((await rr.project(r.action(),new AbortController().signal)).phase,'error','ended request identity remains terminal')
- assert.equal(r.state.spawns,1,'a network retry of a retired operation cannot launch another window')
- await rr.dispose()
+ const ticketFile=path.join(r.home,'dsh-houdini/launches',rt.id+'.json'),rename=fs.rename
+ let injected=false
+ fs.rename=async(from,to)=>{
+  if(!injected&&to===ticketFile&&JSON.parse(await fs.readFile(from,'utf8')).bootstrapRetired===true){
+   injected=true;throw Object.assign(new Error('fixture: transient Windows replacement lock'),{code:'EPERM'})
+  }
+  return rename(from,to)
+ }
+ try {
+  const rr=r.create();await rr.start();await until(async()=>(await r.disk(rt)).bootstrapRetired===true)
+  assert.ok(injected,'the retirement write must exercise the observed transient replacement failure')
+  assert.equal(await fs.readFile(path.join(outside,'uiready.py'),'utf8'),source);assert.ok(await fs.stat(path.join(r.home,'dsh-houdini/launches',rt.id+'.log')))
+  assert.equal((await rr.project(r.action(),new AbortController().signal)).phase,'error','ended request identity remains terminal')
+  assert.equal(r.state.spawns,1,'a network retry of a retired operation cannot launch another window')
+  await rr.dispose()
+ }finally{fs.rename=rename}
  console.log('Desktop launch recovery: cross-generation admission, explicit resume, commit fence, concurrent receipt, installation aliases with identity rejection, retryable identity, prepare failure, stale selection and safe cleanup passed')
 }finally{
  for(const f of fixtures)for(const s of f.services)await s.dispose()

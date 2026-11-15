@@ -154,6 +154,7 @@ Houdini 的 Python API（HOM）只在 Houdini 侧运行。媒体准备在普通 
 | [独立执行](skills/houdini-isolated-execution/SKILL.md) | 在独立 Houdini 进程中构建与验证 |
 | [SOP](skills/houdini-sop-workflow/SKILL.md) | 程序化建模、曲线与几何操作 |
 | [外部资产接入](skills/houdini-asset-integration/SKILL.md) | 生成／导入模型的组件替换、材质、实例与高低模；含离线GLB资源整理 |
+| [WFC](skills/dsh-wfc/SKILL.md) | 模块化结构约束、外观变体、风格热替换与原生packed实例 |
 | [模拟](skills/houdini-simulation-workflow/SKILL.md) | 反馈求解、时序、缓存与模拟修改 |
 | [表面外观](skills/houdini-surface-workflow/SKILL.md) | 参考图、表面细节、UV 与贴图 |
 | [COP](skills/houdini-cop-workflow/SKILL.md) | 按需进行图层与图像处理 |

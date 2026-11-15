@@ -155,6 +155,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/result-policy.ts](../src/result-policy.ts) | 结果归档阈值与64KiB展示/事实预算的唯一Host读取源；不把省略解释为执行缺失或语义结论 |
 | [src/result-details.ts](../src/result-details.ts) | 完整JSON的工作区hash长期归档、DSH原生opaque spill与明确durable unavailable；原生日志同源定位，文件hash校验和JSON Pointer分页仅用于可读归档，原生后端消费其真实读取指导；不执行HOM |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域模块与反馈方法，[模拟skill](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时序与缓存消费，[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
+| [dsh-wfc](../skills/dsh-wfc/SKILL.md) | simple-tiled结构约束、确定性与预算、独立外观catalog和风格替换；[纯Python求解器](../skills/dsh-wfc/scripts/wfc.py)不调用HOM，[薄适配器](../skills/dsh-wfc/scripts/houdini_bridge.py)经现有动词建立原生packed实例；[算法回归](../tools/tests/dsh-wfc.test.py)与[H21/H22实例回归](../tools/tests/dsh-wfc-houdini.test.py)分别核对声明范围 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |
