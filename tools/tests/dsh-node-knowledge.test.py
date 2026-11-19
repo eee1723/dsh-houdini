@@ -5,6 +5,7 @@ the separate stool-repair regression exercises the actual Sweep shelf script.
 """
 
 from pathlib import Path
+import ast
 import math
 import base64
 import json
@@ -140,15 +141,18 @@ try:
             folder=Path(asset_dir)
             png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==')
             positions_data=struct.pack('<9f',0,0,0,1,0,0,0,1,0)
-            binary=positions_data+png
+            uv_data=struct.pack('<6f',0,0,1,0,0,1)
+            binary=positions_data+uv_data+png
             document={'asset':{'version':'2.0'},'scene':0,'scenes':[{'nodes':[0]}],'nodes':[{'mesh':0}],
                 'buffers':[{'byteLength':len(binary)}],
                 'bufferViews':[{'buffer':0,'byteOffset':0,'byteLength':36},
-                               {'buffer':0,'byteOffset':36,'byteLength':len(png)}],
-                'accessors':[{'bufferView':0,'componentType':5126,'count':3,'type':'VEC3','min':[0,0,0],'max':[1,1,0]}],
-                'images':[{'bufferView':1,'mimeType':'image/png'}], 'textures':[{'source':0}],
+                               {'buffer':0,'byteOffset':36,'byteLength':24},
+                               {'buffer':0,'byteOffset':60,'byteLength':len(png)}],
+                'accessors':[{'bufferView':0,'componentType':5126,'count':3,'type':'VEC3','min':[0,0,0],'max':[1,1,0]},
+                             {'bufferView':1,'componentType':5126,'count':3,'type':'VEC2'}],
+                'images':[{'bufferView':2,'mimeType':'image/png'}], 'textures':[{'source':0}],
                 'materials':[{'pbrMetallicRoughness':{'baseColorTexture':{'index':0},'baseColorFactor':[1,1,1,1]}}],
-                'meshes':[{'primitives':[{'attributes':{'POSITION':0},'material':0}]}]}
+                'meshes':[{'primitives':[{'attributes':{'POSITION':0,'TEXCOORD_0':1},'material':0}]}]}
             encoded=json.dumps(document).encode();encoded+=b' '*((-len(encoded))%4)
             binary+=b'\0'*((-len(binary))%4)
             glb=struct.pack('<III',0x46546c67,2,12+8+len(encoded)+8+len(binary))
@@ -173,9 +177,26 @@ try:
                 assert info['operation_card']['id']=='principled-texture-factors-v1'
                 assert imported.geometry().findPrimAttrib('material_override') is not None
                 assert imported.geometry().findPrimAttrib('shop_materialpath') is not None
+                translated=make('gltf::2.0','material_only',{'gltffile':(folder/'external.gltf').as_posix(),
+                    'loadby':'material','materialid':0,'importmaterialas':'principledshader::2.0'}).geometry()
+                assert translated.intrinsicValue('pointcount')==1 and translated.intrinsicValue('primitivecount')==0
+                values=ast.literal_eval(translated.point(0).stringAttribValue('material_override'))
+                assert Path(values['basecolor_texture']).resolve() == (folder/'image.png').resolve(), values
+                h.set_parms(shader,values)
+                h.set_parm(imported,'enablematerialimport',False)
+                bound=make('material','bind_before_pack',{'num_materials':1,'shop_materialpath1':shader.path()},[imported])
+                points=make('line','targets',{'points':2})
+                copied=make('copytopoints::2.0','shared_import',{'pack':True},[bound,points])
+                assert len(copied.geometry().prims())==2 and copied.geometry().prim(0).type()==hou.primType.PackedGeometry
+                consumer=make('unpack','inspect_shared_import',inputs=[copied]).geometry()
+                assert consumer.findPointAttrib('uv') is not None
+                assert all(prim.stringAttribValue('shop_materialpath')==shader.path() for prim in consumer.prims())
+                override=consumer.findPrimAttrib('material_override')
+                if override is not None:
+                    assert all(not ast.literal_eval(prim.attribValue(override) or '{}') for prim in consumer.prims())
             finally:
                 imported.destroy();shader.destroy()
-        done('H22 embedded GLB texture warning and external image material import')
+        done('H22 embedded GLB warning, external texture translation and persistent material on packed consumers')
 
     # Cross-OBJ assembly must choose its transform space explicitly.  A path by
     # itself reads SOP-local geometry; Into This Object preserves the source OBJ

@@ -11,7 +11,7 @@ import dsh_bridge as bridge
 with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as temporary:
     root = Path(temporary)
     paths = {name: root / name for name in ('scene.hip', 'piece.dshcomponent', 'preview.png',
-                                           'final.exr', 'viewport.png', 'unreported.png', 'tool.hda', 'tool.json')}
+                                           'final.exr', 'unreported.png', 'tool.hda', 'tool.json')}
     for item in paths.values():
         item.write_bytes(b'fixture')
     missing = root / 'missing.png'
@@ -21,8 +21,6 @@ with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as tempo
         {'verb': 'render_view', 'ok': True, 'result': {'ok': True, 'output': str(paths['preview.png']),
             'artifact': {'actual_path': str(paths['preview.png']), 'output_policy': 'managed'}}},
         {'verb': 'render_frame', 'ok': True, 'result': {'output': str(paths['final.exr']), 'fresh': True}},
-        {'verb': 'viewport_screenshot', 'ok': True, 'result': {'ok': True, 'path': str(paths['viewport.png']),
-            'artifact': {'actual_path': str(paths['viewport.png']), 'output_policy': 'managed'}}},
         {'verb': 'render_frame', 'ok': True, 'result': {'output': str(missing), 'fresh': True}},
         {'verb': 'hda_fork', 'ok': True, 'result': {'hda_file': str(paths['tool.hda'])}},
         {'verb': 'tool_package_create', 'ok': True, 'result': {'package_file': str(paths['tool.json'])}},
@@ -34,7 +32,6 @@ with tempfile.TemporaryDirectory(prefix='dsh-artifacts-中文 空格-') as tempo
     assert by_name['scene.hip']['role'] == 'delivery-candidate'
     assert by_name['piece.dshcomponent']['kind'] == 'component'
     assert by_name['preview.png']['role'] == 'visual-check'
-    assert by_name['viewport.png']['role'] == 'diagnostic'
     assert by_name['final.exr']['role'] == 'delivery-candidate'
     assert by_name['unreported.png']['source'] == 'reported-image'
     assert by_name['tool.hda']['kind'] == 'asset' and by_name['tool.json']['kind'] == 'tool-package'

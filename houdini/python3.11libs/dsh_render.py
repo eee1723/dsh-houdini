@@ -449,7 +449,9 @@ def render_view(node, direction="iso", frame=None,
                 framing_frame=None, *, output_policy: str = "managed",
                 focus_group=None, isolate: bool = False,
                 projection: str = 'perspective', framing_bounds=None, depth_bounds=None) -> dict:
-    """显式 SOP → agent proxy → viewport ROP → render_check 的隔离验证。
+    """Offscreen viewport preview of an explicit SOP using an independent camera.
+    Managed previews are for model inspection even without a rendered deliverable.
+    This service does not frame, navigate or resize the active Scene Viewer.
     H22使用Flipbook/Vulkan及独立Work Lights；H21保持原OpenGL ROP设置。
 
     用户可随时把源 OBJ 的 display/render flag 切到空节点：本动词不跟随它，

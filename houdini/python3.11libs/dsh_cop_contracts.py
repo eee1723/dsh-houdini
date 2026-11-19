@@ -53,12 +53,15 @@ _DEPENDENCY_SECONDS = 2.0
 def _cache_evidence(node):
     """Bounded native dependencies; not proof against dynamic/external effects."""
     pending, seen, sticky = [node], {node.sessionId()}, []
-    edges = 0
+    edges = inspected = 0
+    stopped = None
     deadline = time.monotonic() + _DEPENDENCY_SECONDS
-    while pending:
-        current = pending.pop()
+    while pending and stopped is None:
         if time.monotonic() > deadline:
-            raise ValueError('COP dependency inspection time budget exceeded; freshness unverified')
+            stopped = 'time_limit'
+            break
+        current = pending.pop()
+        inspected += 1
         if isinstance(current, hou.CopNode) and current.type().nameComponents()[2] == 'cache':
             parm = current.parm('clearonchange')
             if parm is None or not parm.eval():
@@ -66,17 +69,20 @@ def _cache_evidence(node):
         for dependency in (*current.inputs(), *current.references()):
             if dependency is None:
                 continue
+            if edges >= _DEPENDENCY_EDGE_LIMIT:
+                stopped = 'edge_limit'
+                break
             edges += 1
-            if edges > _DEPENDENCY_EDGE_LIMIT:
-                raise ValueError('COP dependency inspection edge budget exceeded; freshness unverified')
             identity = dependency.sessionId()
             if identity not in seen:
                 if len(seen) >= _DEPENDENCY_NODE_LIMIT:
-                    raise ValueError(f'COP dependency inspection exceeds {_DEPENDENCY_NODE_LIMIT} nodes; freshness unverified')
+                    stopped = 'node_limit'
+                    break
                 seen.add(identity)
                 pending.append(dependency)
-    return {'sticky_cache_nodes': sorted(sticky), 'nodes_inspected': len(seen),
+    return {'sticky_cache_nodes': sorted(sticky), 'nodes_inspected': inspected,
             'edges_inspected': edges, 'node_limit': _DEPENDENCY_NODE_LIMIT,
+            'complete': stopped is None, 'stopped_by': stopped,
             'scope': 'native input/reference graph only; dynamic dependencies and external changes unverified'}
 
 
@@ -135,7 +141,7 @@ def _read(node, output, max_pixels):
         digest = hashlib.sha256(json.dumps(meta, sort_keys=True, allow_nan=False).encode())
         digest.update(raw)
         meta.update(sha256=digest.hexdigest(), checked_at=time.time(), warnings=cooked['warnings'],
-                    cache=cache, freshness='unverified' if cache['sticky_cache_nodes'] else 'evaluated_current_graph',
+                    cache=cache, freshness='evaluated_current_graph' if cache['complete'] and not cache['sticky_cache_nodes'] else 'unverified',
                     scope='full current buffer; no semantic, external-source freshness or whole-asset guarantee')
         return meta, data
     finally:
@@ -165,7 +171,7 @@ def layer_stats(node, output=0, *, max_pixels=4194304):
     meta, data = _read(node, output, max_pixels)
     stats = _stats(data)
     finite = all(s['nonfinite_count'] == 0 for s in stats)
-    return dict(meta, ok=finite, status=('unverified' if meta['cache']['sticky_cache_nodes'] else 'pass') if finite else 'fail', statistics=stats,
+    return dict(meta, ok=finite, status=('unverified' if meta['freshness']=='unverified' else 'pass') if finite else 'fail', statistics=stats,
                 semantic_status='unverified', sample_count=data.shape[0] * data.shape[1], sampled=False)
 
 
@@ -202,7 +208,7 @@ def compare_layers(before, after, *, before_output=0, after_output=0, expected_d
         dm, d = _read(expected_delta['node'], expected_delta.get('output', 0), max_pixels)
         _aligned(am, dm); _require_finite(d)
         error = float(np.max(np.abs(difference - d.astype(np.float64))))
-        fresh = not any(m['cache']['sticky_cache_nodes'] for m in (am, bm, dm))
+        fresh = all(m['freshness'] == 'evaluated_current_graph' for m in (am, bm, dm))
         result.update(expected_delta=dm, formula='(after - before) - expected_delta',
                       max_abs_error=error, tolerance=tolerance,
                       ok=(error <= tolerance) if fresh else None,
@@ -274,8 +280,11 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
         raise dsh_errors.CheckpointError('baseline evaluation changed controller/frame; stop editing',
                                dict(ok=False, restored=False, controller=ctrl.path(), output=meta['node']))
     _require_finite(baseline)
-    if meta['cache']['sticky_cache_nodes']:
-        raise ValueError('sticky upstream Cache cannot certify control/restoration; zero parameter writes')
+    if meta['freshness'] == 'unverified':
+        cause = meta['cache']['stopped_by'] or 'sticky upstream Cache'
+        raise dsh_errors.CheckpointError(f'{cause}: cannot certify control/restoration; zero parameter writes',
+            dict(ok=False, status='unverified', restored=True, parameter_writes=0,
+                 baseline=meta, controller=ctrl.path(), output=meta['node'], results=[]))
     baselines = {}
     for test in tests:
         for e in test['expectations']:
@@ -298,7 +307,7 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
                 raise ValueError('requested perturbation not applied exactly')
             current_meta, current = _read(output, output_port, max_pixels)
             _aligned(meta, current_meta); _require_finite(current)
-            if current_meta['cache']['sticky_cache_nodes']: raise ValueError('sticky cache appeared during test')
+            if current_meta['freshness'] == 'unverified': raise ValueError('cache freshness became unverified during test')
             checks = []
             for e, base in zip(test['expectations'], baselines[test['id']]):
                 value = _measure(current, baseline, e)
@@ -321,7 +330,7 @@ def test_controls(controller, output, tests, *, output_port=0, max_pixels=419430
                 except Exception as error: errors.append('frame restore: ' + str(error))
             try:
                 restored_meta, _ = _read(output, output_port, max_pixels)
-                same = restored_meta['sha256'] == meta['sha256'] and not restored_meta['cache']['sticky_cache_nodes']
+                same = restored_meta['sha256'] == meta['sha256'] and restored_meta['freshness'] == 'evaluated_current_graph'
             except Exception as error:
                 errors.append('output restore: ' + str(error)); same = False
             evidence = dsh_parameter_values._parameter_restore_evidence(snapshots)

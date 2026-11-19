@@ -53,7 +53,7 @@ reader 显式读取。薄片植物的双面行为应由 MaterialX/Karma 几何�
 Material Library中固定枚举的Geometry Path不会因材质身份相同而自动包含新图元；新增材质身份还需对应有效USD材质。
 保留当前有效着色器，按任务选择范围清楚的规则／集合，或更新实际目标列表；材质定义与赋值可用Assign Material／Material Linker分开维护。
 需要从SOP subset身份映射时读取Custom Data的`partitionValue`，不从合法化后的prim名称反解原属性值。
-核对最终Mesh及GeomSubset的有效绑定和面覆盖；绑定关系存在、材质数量或SOP属性齐全都不单独证明全表面被正确消费。
+用[usd_prim_info](../../../docs/verb-contracts.md#usd_prim_info)的`effective_material_binding`核对请求Mesh／GeomSubset在all-purpose下实际解析的材质、来源关系与强度，再按需要核对面覆盖；这个字段不遍历后代，也不认证纹理与视觉。绑定关系存在、材质数量或SOP属性齐全都不单独证明全表面被正确消费。
 依据：[Material Library](https://www.sidefx.com/docs/houdini/nodes/lop/materiallibrary.html)、
 [SOP Import](https://www.sidefx.com/docs/houdini/nodes/lop/sopimport.html#parameters)、
 [Assign Material](https://www.sidefx.com/docs/houdini/nodes/lop/assignmaterial.html)。

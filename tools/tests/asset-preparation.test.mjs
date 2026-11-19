@@ -28,6 +28,24 @@ assert.equal(plan.document.images[0].uri,'image-000.png')
 assert.equal(plan.document.images[0].bufferView,undefined)
 assert.equal(plan.document.buffers[0].uri,'scene.bin')
 assert.equal(plan.document.images[0].name,'user/image/name','user labels never become file paths')
+assert.deepEqual(plan.summary.mesh_primitives,[{mesh:0,primitive:0,mode:4,vertices:3,triangles:1,material:0,texcoord_sets:[]}])
+const indexed=structuredClone(document)
+indexed.accessors[0].min=[-2,0,-1]
+indexed.accessors[0].max=[1,3,4]
+indexed.accessors.push({count:6,type:'SCALAR'},{count:3,type:'VEC2'},{count:5,type:'SCALAR'})
+indexed.meshes[0].primitives=[
+  {indices:1,attributes:{POSITION:0,TEXCOORD_0:2,TEXCOORD_1:2},material:0},
+  {mode:1,indices:1,attributes:{POSITION:0}},
+  {mode:5,indices:3,attributes:{POSITION:0}}
+]
+const inventory=planGlb(glb(indexed)).summary.mesh_primitives
+for(const row of inventory)assert.deepEqual(row.position_bounds,{min:[-2,0,-1],max:[1,3,4]},
+  'base mesh declarations stay local even when scene nodes have their own transform')
+assert.deepEqual(inventory.map(({position_bounds,...row})=>row),[
+  {mesh:0,primitive:0,mode:4,vertices:3,triangles:2,material:0,texcoord_sets:['TEXCOORD_0','TEXCOORD_1']},
+  {mesh:0,primitive:1,mode:1,vertices:3,triangles:null,material:null,texcoord_sets:[]},
+  {mesh:0,primitive:2,mode:5,vertices:3,triangles:3,material:null,texcoord_sets:[]}
+])
 const dataUri=structuredClone(document);dataUri.images=[{uri:'data:image/png;base64,'+png.toString('base64')}]
 assert.deepEqual(planGlb(glb(dataUri)).files.find(f=>f.name==='image-000.png').data,png)
 const external=structuredClone(document);external.images=[{uri:'https://example.invalid/image.png'}]
@@ -42,8 +60,9 @@ try{
   const input=path.join(root,'source.glb'),output=path.join(root,'prepared');await fs.writeFile(input,bytes)
   const inspected=await prepareGlb(input,undefined,{inspect:true})
   assert.equal(inspected.planned_files.length,3);assert.deepEqual(await fs.readdir(root),['source.glb'])
+  assert.deepEqual(inspected.mesh_primitives,plan.summary.mesh_primitives)
   const result=await prepareGlb(input,output)
-  assert.equal(result.output_gltf,path.join(output,'scene.gltf'))
+  assert.equal(result.output_gltf,path.join(output,'scene.gltf').split(path.sep).join('/'))
   assert.deepEqual(JSON.parse(await fs.readFile(result.output_gltf,'utf8')).materials,[material])
   await assert.rejects(prepareGlb(input,output),/EEXIST/)
   assert.deepEqual(await fs.readFile(input),bytes)

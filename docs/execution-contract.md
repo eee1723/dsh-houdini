@@ -184,17 +184,17 @@ Windows H21/H22按已有原生窗口句柄截取所选区域；使用const effec
 
 near/behind/far_clip 错误在渲染前拒绝；detail 的二维 intentional_crop 与深度错误分开。camera_fit 修改明确相机并保留其焦距合同；预览服务相机不改作正式相机。渲染或像素差异不证明模型外形和关系正确。
 
-render_view(EXPLICIT_SOP)使用持久 __dsh_houdini_* 服务，任务结束复用不删除。服务和预览临时状态独立于作者建模 Undo；图片文件是外部效果。返回 source/framing/pixel/check/artifact 的实际事实，无法解码或旧文件不报新鲜图像。
+render_view(EXPLICIT_SOP)以独立相机离屏生成视口预览，采集过程不操作当前Scene Viewer视角或布局。持久 __dsh_houdini_* 服务复用，服务和预览临时状态独立于作者建模 Undo；图片文件是外部效果。返回 source/framing/pixel/check/artifact 的实际事实，无法解码或旧文件不报新鲜图像。
 
 画面检查的共用合同独立于所选原生后端。H21的OpenGL与H22的Flipbook沿用[工具设计](tool-design.md)中已验证的兼容边界；节点存在和不透明图像成功不证明几何透明、颜色接口或所有参数等价。render_view仍只支持当前GUI合同；原生Flipbook的headless能力不因此被否定，也未扩展为本接口的已验证范围。
 
-渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与 viewport_screenshot 默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`；最终图片可选 delivery，分配到 `$HIP/dsh-artifacts/renders/<HIPNAME>/`。HIPNAME保留版本与原名，只去掉标准HIP扩展；命名组不是工程身份，精确来源由artifact的hip_path记录。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit，裸文件名仍进入visual_check的HIPNAME目录。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，已有含目录的用户路径优先；新建Karma Render Settings（含Karma Setup）默认关闭景深，picture与checkpoint使用同源render目录和原生$HIPNAME。后续渲染不暗改已配置的景深。Save As只影响后续默认输出，不迁移或删除旧图。
+渲染和缓存相对路径锚 $HIP，必须有后缀。render_view 与界面截图默认将验证图分配到 `$HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>/`；最终图片可选 delivery，分配到 `$HIP/dsh-artifacts/renders/<HIPNAME>/`。HIPNAME保留版本与原名，只去掉标准HIP扩展；命名组不是工程身份，精确来源由artifact的hip_path记录。两种分配要求已命名 HIP，只接受省略文件名或安全 basename，拒绝可执行表达式，并返回唯一、不覆盖已有文件的实际路径；自定路径选择 explicit，裸文件名仍进入visual_check的HIPNAME目录。输出位置不证明视觉质量或完成。正式 render_frame/ROP 使用明确的输出目标，已有含目录的用户路径优先；新建Karma Render Settings（含Karma Setup）默认关闭景深，picture与checkpoint使用同源render目录和原生$HIPNAME。后续渲染不暗改已配置的景深。Save As只影响后续默认输出，不迁移或删除旧图。
 
 USD Render ROP的outputimage留空时，render_frame沿当前ROP的实际输入和RenderSettings观察磁盘raster产品，保留原生多产品设置；多文件逐个保留freshness，output仅单文件时为路径，多文件使用outputs。delegate/deep/checkpoint及非磁盘产品明确保留未验证，不以周期checkpoint缺失判成图失败。Husk文件名使用原生expandHuskFilePath，不二次执行backticks；相对产品位置、未明确的settings选择与RenderPass不推断。显式picture仍为本次覆盖并恢复。用户明确模板先展开；已分配实际路径写入Houdini参数时保留字面美元与反引号，不二次求值。USD预检与渲染期的frame恢复失败同样产生render_restore事实。
 
 `render_frame`结果没有顶层`ok`字段；文件检查以`fresh`和`errors`为准，多产品另读`outputs`。fresh只证明新鲜非空文件，不能覆盖纹理加载失败、视觉语义或整体质量。完整输入/输出说明和反例由`verb-operation-contracts.json`同源生成。
 
-viewport screenshot 在成功和失败后恢复视角、相机绑定、frame、selection/flags 等声明状态；异步捕获尚无完成证据时保留未知及本次 reservation。文件、传输、显示和语义识图分别返回；没有模型内容级观察时保持视觉未验证。
+观察用户当前Scene Viewer等实际表面使用houdini_ui_list和houdini_ui_screenshot。文件、传输、显示和语义识图分别判断；没有对模型内容的观察时保持视觉未验证。
 
 scene_save 只写当前明确路径；scene_save_as 需要用户授权的目标、expected_current_path 和用途说明。raw load/clear 不开放。保存回执是当时文件事实，重开检查、可编辑性与最终结果由对应观察确认。
 

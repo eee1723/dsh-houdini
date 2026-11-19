@@ -50,7 +50,13 @@ await unavailable.run()
 assert.equal(unavailable.session.header.cwd,old)
 const nested=path.join(old,'versions','project.hip')
 const inside=await fixture({...original,hip_path:nested,successful_save:{checkpoint_id:checkpoint,hip_path:nested}})
+const intermediate=path.join(old,'earlier','project.hip'),earlierCheckpoint='b'.repeat(32)
+inside.session.append('tool/call',{callId:'late-earlier-save',name:'houdini_exec'})
+inside.session.append('tool/result',{message:{source:{callId:'late-earlier-save'}},meta:{canonical:{
+ verbs:[{verb:'scene_save_as',ok:true}],execution:{executor_id:executor,runtime_id:executor,sequence:0,observed_at:0,owner_session:inside.session.id,
+   hip_path:intermediate,hip_is_new:false,scene_recovery:{...original,hip_path:intermediate,checkpoint_id:earlierCheckpoint,
+     successful_save:{checkpoint_id:earlierCheckpoint,hip_path:intermediate}}}}}},{surfaceOp:'append'})
 await inside.run();await inside.run()
-assert.deepEqual(inside.moves,[{id:'follow-test',cwd:path.dirname(nested)}],'native cd handles a subdirectory without mutating storage identity')
+assert.deepEqual(inside.moves,[{id:'follow-test',cwd:path.dirname(nested)}],'a late earlier Save As receipt does not supersede the latest verified save')
 assert.equal(inside.session.header.cwd,old)
 console.log('HIP Save As: verified scene facts, native subdirectory cd, immutable original project and no cross-root permission change passed')

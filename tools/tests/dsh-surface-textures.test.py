@@ -121,9 +121,7 @@ __result__=cop_layer_stats(c+'/OUT_BASE')
         n=hou.node('/obj/sample/appearance');assert not n.errors() and len(n.geometry().prims())>0
         assert n.geometry().findPrimAttrib('shop_materialpath') is not None
         capture(mode+'_final')
-        report['viewport']=call("__result__=viewport_screenshot('texture-viewport.png',frame_target='/obj/sample/appearance',textures=True)")
-        assert report['viewport']['ok'] and report['viewport']['user_state_restored']
-        report['scope']='layered COP channels, editable pattern, cylindrical vertex UV physical scale, file and hybrid sources, viewport and dependency reopen; pixels are transport/response evidence, artistic quality requires inspection'
+        report['scope']='layered COP channels, editable pattern, cylindrical vertex UV physical scale, file and hybrid sources, offscreen preview and dependency reopen; pixels are transport/response evidence, artistic quality requires inspection'
         (out/(mode+'-result.json')).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
         hou.exit(exit_code=0,suppress_save_prompt=True)
     except Exception:

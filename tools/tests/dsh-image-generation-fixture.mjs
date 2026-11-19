@@ -1,4 +1,5 @@
 import {fixturePresentation} from './fixture-presentation.mjs'
+import {mediaTarget} from './fixture-media-target.mjs'
 // Real DSH composition and tool transport; only the remote image provider is an
 // owned loopback HTTP fixture. No model API, Houdini process or user data.
 import assert from 'node:assert/strict'
@@ -12,7 +13,7 @@ import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES}
   from '../../lib/generated-verb-contract.js'
 
-export const inject = ['loader', 'llm', 'settings', 'credentials', 'attachments', 'sessions', 'agents', 'sessionController', 'sandboxPolicy']
+export const inject = ['loader', 'llm', 'settings', 'credentials', 'attachments', 'sessions', 'agents', 'sessionController', 'sandboxPolicy', 'houdiniTargets']
 const route = 'fixture-images', model = 'fixture-image-exact', driver = 'image-fixture-driver'
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 // Small complete PNGs with different pixel content make byte-identity checks
@@ -39,6 +40,8 @@ export function apply(ctx) {
   const output=process.env.DSH_IMAGE_FIXTURE_OUT, workspace=process.env.DSH_IMAGE_FIXTURE_WORKSPACE
   const base=process.env.DSH_HOUDINI_BRIDGE_URL, secret='fixture-only-'+randomUUID()
   const projects={B:process.env.DSH_IMAGE_FIXTURE_PROJECT_B,C:process.env.DSH_IMAGE_FIXTURE_PROJECT_C}
+  const hipPath=project=>portable(path.join(projects[project],'owned-'+project+'.hip'))
+  const target=mediaTarget(ctx,{runtimeId:'a'.repeat(32),hip:hipPath('B'),workspace,houdiniVersion:'22.0.368'})
   const sourceRelative=layout.directories.reference_downloaded.path+'/source.png'
   const requests=[], checks=[], providerReads=[], artifacts=[], bridgeReads=[]
   let failure, steps=0, hipProject='B', explicitBridgeReads
@@ -47,15 +50,15 @@ export function apply(ctx) {
   const server=http.createServer(async(req,res)=>{
     try {
       if(req.url==='/context') {
-        const root=portable(projects[hipProject]),hip=root+'/owned-'+hipProject+'.hip'
+        const root=portable(projects[hipProject]),hip=hipPath(hipProject)
         bridgeReads.push({route:req.url,hip,providerRequests:requests.length})
         res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,result:{hip_path:hip,hip_is_new:false,
           runtime_id:'a'.repeat(32),observed_at:Date.now()/1000,frame:1,selection:[],
           project_layout:{schema_version:layout.schemaVersion,available:true,hip_path:hip,project_root:root,
             directories:Object.fromEntries(Object.entries(layout.directories).map(([role,value])=>[role,root+'/'+value.path]))}}}));return
       }
-      if(req.url==='/health') {bridgeReads.push({route:req.url});res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,runtimeId:'a'.repeat(32),
-        executorId:process.env.DSH_HOUDINI_EXECUTOR_ID,executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,
+      if(req.url==='/health') {bridgeReads.push({route:req.url});res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,...target.health,
+        executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,
         verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH,names:EXPECTED_VERB_NAMES,count:EXPECTED_VERB_NAMES.length}}));return}
       assert(['/v1/images/generations','/v1/images/edits'].includes(req.url),'unexpected provider path '+req.url)
       assert.equal(req.method,'POST');assert(req.headers.authorization==='Bearer '+secret,'provider authorization matches fixture credential')
@@ -78,7 +81,7 @@ export function apply(ctx) {
       requests.push(evidence)
       // Simulate Save As while an image request is running. The already observed
       // B destination must remain fixed; only the next call may observe C.
-      if(req.url.endsWith('/edits')) {hipProject='C';evidence.saveAsDuringRequest='C'}
+      if(req.url.endsWith('/edits')) {hipProject='C';target.publish(hipPath('C'));evidence.saveAsDuringRequest='C'}
       if(explicitBridgeReads!==undefined) {
         assert.equal(bridgeReads.length,explicitBridgeReads,'explicit output must not resolve or contact the Bridge')
         evidence.bridgeReadsDuringExplicit=bridgeReads.length-explicitBridgeReads
@@ -132,7 +135,7 @@ export function apply(ctx) {
     async *stream(options) {
       if(options.purpose){yield* chunks('Image fixture');return}
       try {
-        assert(!failure,failure);const step=steps++;assert(step<=7,'scripted fixture must converge')
+        assert(!failure,failure);const step=steps++;assert(step<=8,'scripted fixture must converge')
         const events=ctx.sessions.get(options.sessionId).snapshotEvents()
         assert(!JSON.stringify(options.messages).includes(secret),'credentials must not appear in model messages')
         if(step===1) {
@@ -210,6 +213,11 @@ export function apply(ctx) {
           assert.equal(delivery.length,1);assert.equal(delivery[0].data.files.length,artifacts.length)
           assert.deepEqual(delivery[0].data.files.map(f=>canonical(f.path)),artifacts.map(artifact=>canonical(artifact.actual_path)))
           checks.push('real present tool delivered returned actual paths for every generated file')
+        }
+        if(step===8) {
+          const capability=events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId==='image-7')?.data?.meta?.canonical
+          assert.equal(capability?.result.status,'available')
+          checks.push('native capability lookup reflects the selected image-capable fixture model')
           yield* chunks('Owned image fixture completed.');return
         }
         const calls=[
@@ -221,6 +229,7 @@ export function apply(ctx) {
           ['image_generate',{provider:route,model,prompt:'Generate the owned fixture image.',output:'next.png'}],
           ['image_generate',{provider:route,model,prompt:'Generate the owned fixture image.',output_policy:'explicit',output:'dsh-artifacts/textures/explicit.png'}],
           ['present',{files:artifacts.map(artifact=>({path:artifact.actual_path,description:artifact.label}))}],
+          ['houdini_capabilities',{}],
         ]
         const[name,args]=calls[step];assert(options.tools.some(tool=>tool.name===name),'mounted tool '+name)
         presentation.after('image-'+step,calls[step+1]?.[0])
@@ -254,11 +263,12 @@ export function apply(ctx) {
         assert.equal(configured.settingsNs,initial.ns);assert.deepEqual(configured.settingsPath,['providers',route])
         checks.push('real live settings mutation and credential storage')
         const {sessionId}=await ctx.sessionController.create({cwd:workspace,agentPreset:'houdini'})
+        await target.select(sessionId)
         setSandboxMode(ctx.sessions.get(sessionId),'workspace-write')
         await ctx.sessionController.selectModel({sessionId,provider:driver,model:'scripted'})
         await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:'Run the isolated image tools integration fixture.'}]},AbortSignal.timeout(90000))
         const agent=ctx.agents.get(sessionId);await agent.whenIdle();assert(!failure,failure)
-        assert.equal(steps,8);assert.equal(requests.length,4);assert.equal(artifacts.length,4)
+        assert.equal(steps,9);assert.equal(requests.length,4);assert.equal(artifacts.length,4)
         await ctx.sessions.flush(agent.session)
         const events=agent.session.snapshotEvents();assert(!JSON.stringify(events).includes(secret),'credentials must not enter durable events')
         report({ok:true,sessionId,workspace,projects,checks,requests,providerReads,artifacts,bridgeReads,events,referenceSHA256:sha(reference),generatedSHA256:sha(generated),

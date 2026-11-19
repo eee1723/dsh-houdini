@@ -1,4 +1,5 @@
 import {fixturePresentation} from './fixture-presentation.mjs'
+import {mediaTarget} from './fixture-media-target.mjs'
 // Scripted model and health metadata only; DSH, tool scopes, file policy and media CLI remain real.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -8,21 +9,25 @@ import {randomUUID,createHash} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH,EXPECTED_VERB_NAMES} from '../../lib/generated-verb-contract.js'
-export const inject=['loader','llm','settings','sessions','agents','sessionController','sandboxPolicy','houdiniFrontend']
+export const inject=['loader','llm','settings','sessions','agents','sessionController','sandboxPolicy','houdiniFrontend','houdiniTargets']
 export function apply(ctx){
   const workspace=process.env.DSH_LOCAL_VIDEO_WORKSPACE,output=process.env.DSH_LOCAL_VIDEO_RESULT
   const frames=path.join(workspace,'frames'),index=path.join(workspace,'index'),indexFile=path.join(index,'index.json')
   const source=path.join(workspace,'source.mp4'),sourceHash=createHash('sha256').update(fs.readFileSync(source)).digest('hex')
   const driver='local-video-fixture',checks=[];let steps=0,failure
+  const hip=path.join(workspace,'unused.hip')
+  const runtime={hfs:process.env.DSH_LOCAL_VIDEO_HFS,python:process.env.DSH_LOCAL_VIDEO_PYTHON,
+    pythonVersion:process.env.DSH_LOCAL_VIDEO_PYTHON_VERSION,executable:path.join(process.env.DSH_LOCAL_VIDEO_HFS,'bin','houdini.exe')}
+  const target=mediaTarget(ctx,{runtimeId:'b'.repeat(32),hip,workspace,houdiniVersion:'22.0.368',runtime})
   const report=value=>fs.writeFileSync(output,JSON.stringify(value,null,2))
   const server=http.createServer(async(req,res)=>{
     res.setHeader('content-type','application/json')
-    const health={ok:true,executorId:process.env.DSH_HOUDINI_EXECUTOR_ID,runtimeId:'b'.repeat(32),houVersion:'22.0.368',
+    const health={ok:true,...target.health,
       executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH,count:EXPECTED_VERB_NAMES.length,names:EXPECTED_VERB_NAMES},
-      runtime:{hfs:process.env.DSH_LOCAL_VIDEO_HFS,python:process.env.DSH_LOCAL_VIDEO_PYTHON,pythonVersion:process.env.DSH_LOCAL_VIDEO_PYTHON_VERSION,executable:path.join(process.env.DSH_LOCAL_VIDEO_HFS,'bin','houdini.exe')}}
+      runtime}
     if(req.url==='/health'){res.end(JSON.stringify(health));return}
     if(req.url==='/requests/prepare'){res.end(JSON.stringify({...health,requestRef:'b'.repeat(32)+'.'+randomUUID().replaceAll('-','')}));return}
-    if(req.url==='/context'){res.end(JSON.stringify({ok:true,result:{hip_path:path.join(workspace,'unused.hip'),hip_is_new:false,frame:1,selection:[]}}));return}
+    if(req.url==='/context'){res.end(JSON.stringify({ok:true,result:{hip_path:hip,hip_is_new:false,frame:1,selection:[]}}));return}
     res.writeHead(404);res.end('{}')
   })
   const ready=new Promise((resolve,reject)=>{server.once('error',reject);server.listen(Number(new URL(process.env.DSH_HOUDINI_BRIDGE_URL).port),'127.0.0.1',resolve)})
@@ -37,9 +42,9 @@ export function apply(ctx){
         const events=ctx.sessions.get(options.sessionId).snapshotEvents()
         const native=id=>events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical
         if(step===1){
-          const info=native('local-0');assert.equal(info.runtime.pythonScope,'selected-executor')
-          assert.equal(info.runtime.python,process.env.DSH_LOCAL_VIDEO_PYTHON);assert.equal(info.runtime.executorId,'a'.repeat(32))
-          checks.push('native configuration follows selected executor metadata when Host HFS is absent')
+          const info=native('local-0');assert.equal(info.runtime?.pythonScope,'selected-installation',JSON.stringify(info.diagnostics))
+          assert.equal(info.runtime.python,runtime.python);assert.equal(info.runtime.hfs,runtime.hfs)
+          checks.push('native configuration follows the selected installation when Host HFS is absent')
         }
         if(step===2){const value=native('local-1');assert(value.ok,value.error);assert.equal(value.result.frames,2);assert.equal(value.cloud_request,false)
           assert(fs.existsSync(path.join(frames,'frames.json')));checks.push('native offline review writes actual PTS evidence without shell')}
@@ -83,6 +88,7 @@ export function apply(ctx){
       const settings=ctx.settings.describe().find(row=>row.ns==='houdini-frontend')
       await ctx.settings.mutate(settings.ns,[{op:'set',path:['videoPython'],value:''}],settings.revision)
       const {sessionId}=await ctx.sessionController.create({cwd:workspace,agentPreset:'houdini'})
+      await target.select(sessionId)
       setSandboxMode(ctx.sessions.get(sessionId),'workspace-write')
       await ctx.sessionController.selectModel({sessionId,provider:driver,model:'scripted'})
       await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:'Run the local evidence transport fixture.'}]},AbortSignal.timeout(90000))

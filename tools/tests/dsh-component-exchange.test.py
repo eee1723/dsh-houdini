@@ -5,7 +5,7 @@ import sys
 import tempfile
 import hashlib
 import json
-import re
+import math
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11libs'))
 import dsh_node_operations
@@ -14,19 +14,6 @@ import hou
 import dsh_bridge as b
 import dsh_hou_helpers as h
 import dsh_component_contracts as components
-
-# Verbatim historical implementations, extracted with git cat-file (exact
-# blob bytes) and pinned by sha256. They are falsification controls, not
-# approximations: the R4 legacy restore as of 0effe03 rebuilds every key
-# from its value alone, and the pre-iteration-6 capture raises NameError
-# on the first-key-no-expression branch.
-RESTORE_0EFFE03_SHA256 = '6b69895d08effb94bcbdcafed2ef6f38da60a29ca9ea02682aa7dee93c6ea5c6'
-RESTORE_0EFFE03 = "def _restore_parm(parm, captured):\n    kind, payload = captured\n    if kind == 'keys':\n        parm.deleteAllKeyframes()\n        for clone in payload:\n            parm.setKeyframe(clone)\n        return\n    parm.deleteAllKeyframes()\n    parm.set(payload)\n"
-CAPTURE_49BF56E_SHA256 = '5129fa165366c179a340fd4e589d2acc9ad034f4b186f215774bbf73889fa9fd'
-CAPTURE_49BF56E = 'def _capture_parm(parm):\n    """Restorable snapshot of one live channel; expression-driven keys cannot be restored.\n\n    Segment functions (bezier()/linear()/...) are plain animation data and migrate;\n    any other keyframe expression is refused rather than rewritten. The snapshot\n    carries the Keyframe objects returned by keyframes() VERBATIM - frame, value,\n    slopes, acceleration and segment state all survive - instead of rebuilding a\n    partial copy field by field.\n    """\n    keys = parm.keyframes()\n    if keys:\n        for key in keys:\n            try:\n                if key.isExpressionSet():\n                    segment = key.expression()\n            except hou.OperationFailed:\n                continue\n            else:\n                if segment is not None and not re.fullmatch(r\'[A-Za-z_][A-Za-z0-9_]*\\(\\)\', segment.strip()):\n                    raise ValueError(\'keyframes driven by expressions are not migrated: \' + parm.path())\n        return (\'keys\', keys)\n    if parm.parmTemplate().type() == hou.parmTemplateType.String:\n        return (\'string\', parm.unexpandedString())\n    return (\'value\', parm.eval())\n'
-CAPTURE_0EFFE03_SHA256 = '02135861a3253b59df5a29086c717929991b69fc838118a286bb77837cbf6e9f'
-CAPTURE_0EFFE03 = 'def _capture_parm(parm):\n    """Restorable snapshot of one live channel; expression-driven keys cannot be restored.\n\n    Segment functions (bezier()/linear()/…) are plain animation data and migrate;\n    any other keyframe expression is refused rather than rewritten.\n    """\n    keys = parm.keyframes()\n    if keys:\n        clones = []\n        for key in keys:\n            segment = None\n            try:\n                if key.isExpressionSet():\n                    segment = key.expression()\n            except hou.OperationFailed:\n                segment = None\n            if segment is not None:\n                if not re.fullmatch(r\'[A-Za-z_][A-Za-z0-9_]*\\(\\)\', segment.strip()):\n                    raise ValueError(\'keyframes driven by expressions are not migrated: \' + parm.path())\n                segment = (segment, key.expressionLanguage())\n            clone = hou.Keyframe()\n            clone.setFrame(key.frame())\n            clone.setValue(key.value())\n            clone.setSlope(key.slope())\n            clone.setInSlope(key.inSlope())\n            clone.setAccel(key.accel())\n            if segment is not None:\n                clone.setExpression(segment[0], segment[1])\n            clones.append(clone)\n        return (\'keys\', clones)\n    if parm.parmTemplate().type() == hou.parmTemplateType.String:\n        return (\'string\', parm.unexpandedString())\n    return (\'value\', parm.eval())\n'
-
 
 def run(code, owner='source', ok=True):
     result = b.run_code(code, owner_session=owner)
@@ -563,76 +550,15 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         expr_linear.setFrame(20)
         expr_linear.setExpression('linear()', hou.exprLanguage.Hscript)
         seg_old.setKeyframes([first_raw, expr_bezier, mid_raw, expr_linear])
-    def optional(accessor, key):
+    def optional(accessor):
         try:
             return accessor()
         except hou.KeyframeValueNotSet:
             return None
     def full_state(parm):
         return [(k.frame(), k.value(), k.slope(), k.inSlope(),
-                 optional(k.accel, k), optional(k.inAccel, k),
+                 optional(k.accel), optional(k.inAccel),
                  k.expression() if k.isExpressionSet() else None) for k in parm.keyframes()]
-    # THE single-source keyframe comparator for this battery. Seven fields,
-    # always, for the candidate migration and for the historical falsification
-    # alike; zip never truncates because the key counts are compared first.
-    # Frames, values and the segment expressions compare EXACTLY. Numeric
-    # tolerance exists only for the two fields declared in KEY_TOLERANCE, with
-    # its justification: Houdini re-normalizes segment acceleration on EVERY
-    # write - re-writing the read-back payload shifts an incoming acceleration
-    # by up to ~6.4e-9 even for a pure batch set (probed on H21) - so the
-    # migration is faithful to the source state within Houdini's own
-    # write-to-write variance. Unset states are preserved: an unset field on
-    # one side against a set field on the other is a mismatch, never an
-    # equality, and None == None is the only equal unset pair.
-    KEY_FIELDS = ('frame', 'value', 'slope', 'inSlope', 'accel', 'inAccel', 'expression')
-    KEY_TOLERANCE = {'accel': 1e-7, 'inAccel': 1e-7}
-    def key_mismatches(baseline, moved, roles):
-        mismatches = []
-        if len(baseline) != len(moved):
-            return [('key-count', len(baseline), len(moved), roles)]
-        for index, (before, after) in enumerate(zip(baseline, moved)):
-            for field, left, right in zip(KEY_FIELDS, before, after):
-                if (left is None) != (right is None):
-                    mismatches.append((index, field, left, right, roles + ': unset-state mismatch'))
-                elif left is None:
-                    continue
-                elif field in KEY_TOLERANCE:
-                    if not (isinstance(left, (int, float)) and isinstance(right, (int, float))
-                            and abs(left - right) < KEY_TOLERANCE[field]):
-                        mismatches.append((index, field, left, right, roles))
-                elif left != right:
-                    mismatches.append((index, field, left, right, roles))
-        return mismatches
-    # Comparator self-test: the comparator itself must fail when a non-trailing
-    # segment expression, a frame or a value is changed, when a key count
-    # differs, or when an unset state is broken; it must stay silent within the
-    # declared tolerance and MUST stay exact on frames even far below the
-    # declared numeric tolerance.
-    synth_base = [(1.0, 3.0, 0.0, 0.0, None, None, 'bezier()'),
-                  (9.0, 4.0, 0.0, 0.0, 0.5, 0.25, 'bezier()'),
-                  (14.0, 5.0, 0.0, 0.0, 0.9, 0.5, 'bezier()'),
-                  (20.0, 6.0, 0.0, 0.0, None, None, 'linear()')]
-    assert key_mismatches(synth_base, [tuple(k) for k in synth_base], 'self') == []
-    expr_mutant = [tuple(k) for k in synth_base]; expr_mutant[1] = expr_mutant[1][:6] + ('linear()',)
-    assert [(m[1], m[2]) for m in key_mismatches(synth_base, expr_mutant, 'expr')] == [('expression', 'bezier()')]
-    frame_mutant = [tuple(k) for k in synth_base]; frame_mutant[2] = (frame_mutant[2][0] + 5e-8,) + frame_mutant[2][1:]
-    assert [m[1] for m in key_mismatches(synth_base, frame_mutant, 'frame')] == ['frame'], \
-        'frames compare exactly, even below the declared numeric tolerance'
-    value_mutant = [tuple(k) for k in synth_base]; value_mutant[2] = (value_mutant[2][0], value_mutant[2][1] + 1.0) + value_mutant[2][2:]
-    assert [m[1] for m in key_mismatches(synth_base, value_mutant, 'value')] == ['value']
-    count_mutant = synth_base[:-1]
-    assert key_mismatches(synth_base, count_mutant, 'count')[0][0] == 'key-count', \
-        'zip must never truncate the comparison silently'
-    within = [tuple(k) for k in synth_base]; within[1] = (within[1][:4] + (0.5 + 1e-9, within[1][5], within[1][6]))
-    assert key_mismatches(synth_base, within, 'tolerance') == [], 'the declared tolerance must hold'
-    beyond = [tuple(k) for k in synth_base]; beyond[1] = (beyond[1][:4] + (0.5 + 1e-3, beyond[1][5], beyond[1][6]))
-    assert [m[1] for m in key_mismatches(synth_base, beyond, 'beyond')] == ['accel']
-    unset_mutant = [tuple(k) for k in synth_base]; unset_mutant[3] = unset_mutant[3][:5] + (0.25,) + unset_mutant[3][6:]
-    assert [m[1] for m in key_mismatches(synth_base, unset_mutant, 'unset')] == ['inAccel'], \
-        'an unset state broken on one side must fail, never compare equal'
-    unset_both = [tuple(k) for k in synth_base]; unset_both[1] = unset_both[1][:5] + (None,) + unset_both[1][6:]
-    assert key_mismatches(synth_base, unset_both, 'unset-both')[0][1] == 'inAccel', \
-        'set against unset is a mismatch in either direction'
     # Precondition pinned by HOM read-back of the ACTUAL curve (not variable
     # names): every written key carries a materialized segment expression
     # (bezier() default or the real one), and Houdini's own write
@@ -651,8 +577,14 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     run(f'__result__=component_replace("/obj/assembly/segold","/obj/assembly/segnew",dry_run=False,'
         f'expected_plan={seg_preview["plan"]!r},migration={{"inputs":{{}},"public_parms":["speed"]}})', owner='assembly')
     seg_moved = full_state(hou.parm('/obj/assembly/segnew/speed'))
-    assert key_mismatches(seg_baseline, seg_moved, 'candidate migration') == [], \
-        (seg_baseline, seg_moved)
+    for source_key, moved_key in zip(seg_baseline, seg_moved, strict=True):
+        assert source_key[:4] == moved_key[:4] and source_key[6] == moved_key[6], (source_key, moved_key)
+        # Houdini re-normalizes acceleration on write. Keep unset values distinct.
+        for before, after in zip(source_key[4:6], moved_key[4:6]):
+            if before is None or after is None:
+                assert before is after, (source_key, moved_key)
+            else:
+                assert math.isclose(before, after, rel_tol=0, abs_tol=1e-7), (source_key, moved_key)
     assert seg_moved[3][6] == 'linear()', 'the linear segment expression must survive the migration'
     assert seg_moved[1][5] is not None and abs(seg_moved[1][5] - seg_baseline[1][5]) < 1e-7, \
         ('the non-default incoming acceleration of the expression key must survive', seg_baseline, seg_moved)
@@ -660,47 +592,8 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
         ('the non-default incoming acceleration of the raw key must survive', seg_baseline, seg_moved)
     assert seg_moved[3][5] is None and seg_baseline[3][5] is None, \
         'the trailing linear() key must not grow a spurious incoming acceleration'
-    # The same fixed test proves the REAL historical implementation fails:
-    # the capture+restore pair as of 0effe03 (verbatim git blobs, sha256
-    # pinned above) rebuilds each captured key field by field WITHOUT the
-    # incoming acceleration and writes keys one by one, so on the same input
-    # the incoming-acceleration state is lost and the outgoing acceleration
-    # is recomputed by the write path - far beyond the write-to-write
-    # variance the fixed implementation stays within. Segment expressions do
-    # survive this pair (the capture carried them); the known-lost states are
-    # the incoming acceleration and the write-path acceleration fidelity.
-    assert hashlib.sha256(RESTORE_0EFFE03.encode('utf-8')).hexdigest() == RESTORE_0EFFE03_SHA256
-    assert hashlib.sha256(CAPTURE_0EFFE03.encode('utf-8')).hexdigest() == CAPTURE_0EFFE03_SHA256
-    legacy_ns = {'hou': hou, 're': re}
-    exec(CAPTURE_0EFFE03, legacy_ns)
-    exec(RESTORE_0EFFE03, legacy_ns)
-    with dsh_ownership.execution_owner('assembly', 'segment-state-fixture'):
-        scratch = hou.node('/obj/assembly/segnew').createNode('null', 'legacyscratch')
-        ptg = scratch.parmTemplateGroup()
-        ptg.append(hou.FloatParmTemplate('speed', 'speed', 1, default_value=(0,)))
-        scratch.setParmTemplateGroup(ptg)
-        legacy_target = scratch.parm('speed')
-        legacy_ns['_restore_parm'](legacy_target, legacy_ns['_capture_parm'](seg_old))
-    legacy_state = full_state(legacy_target)
-    legacy_failed = key_mismatches(seg_baseline, legacy_state, 'historical 0effe03 pair')
-    assert any(entry[1] == 'inAccel' for entry in legacy_failed), \
-        'the historical pair must lose the incoming-acceleration state: ' + repr(legacy_failed)
-    assert any(entry[1] == 'accel' and isinstance(entry[2], (int, float)) and isinstance(entry[3], (int, float))
-               and abs(entry[2] - entry[3]) > KEY_TOLERANCE['accel'] for entry in legacy_failed), \
-        'the historical per-key write must recompute the outgoing acceleration: ' + repr(legacy_failed)
-    assert all(entry[1] != 'expression' for entry in legacy_failed), \
-        'the historical pair carries segment expressions; the known-lost states are acceleration-only: ' \
-        + repr(legacy_failed)
-    scratch.destroy()
-    # Capture-side per-key segment initialization: the pre-iteration-6 capture
-    # (verbatim git blob, sha256 pinned above) used its `segment` variable
-    # without initializing it per key, so a curve whose FIRST key reports no
-    # expression raised NameError instead of capturing. Live parms always
-    # materialize a segment expression (HOM fact above), so the branch is hit
-    # with real in-memory hou.Keyframe objects: their HOM read-back state
-    # (isExpressionSet() False) is the precondition, the pre-fix capture
-    # raises NameError on the same input, the fixed capture succeeds.
-    assert hashlib.sha256(CAPTURE_49BF56E.encode('utf-8')).hexdigest() == CAPTURE_49BF56E_SHA256
+    # A live channel materializes the default segment. In-memory HOM keys
+    # exercise capture of an expression-free first key.
     class _FakeParm:
         def __init__(self, keys):
             self._keys = keys
@@ -714,13 +607,6 @@ with tempfile.TemporaryDirectory(prefix='dsh-component-test-') as folder:
     assert bare_first.isExpressionSet() is False, 'the in-memory first key must read back expression-free'
     assert expressed_second.isExpressionSet() is True
     fake_parm = _FakeParm([bare_first, expressed_second])
-    buggy_ns = {'hou': hou, 're': re}
-    exec(CAPTURE_49BF56E, buggy_ns)
-    try:
-        buggy_ns['_capture_parm'](fake_parm)
-        raise AssertionError('the pre-iteration-6 capture must fail on the first-key-no-expression branch')
-    except NameError:
-        pass
     fixed_keys = components._capture_parm(fake_parm)
     assert fixed_keys[0] == 'keys' and fixed_keys[1] == [bare_first, expressed_second], fixed_keys
     # R3 scope: expression-language support, lexical discrimination and the

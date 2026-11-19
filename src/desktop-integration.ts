@@ -516,13 +516,20 @@ export class DesktopIntegration {
       if(ticket.bootstrapRetired&&ticket.phase!=='ready'&&ticket.phase!=='error')throw Error('Retired launch cannot be resubmitted')
       const filename=path.join(this.paths.launches,ticket.id+'.json'),temporary=filename+'.'+id()+'.tmp'
       await fs.writeFile(temporary,JSON.stringify({schemaVersion:2,...ticket}),{mode:0o600,flag:'wx'})
-      try {await fs.rename(temporary,filename)}
-      catch(error){
-        // Observed Windows file-filter locks can transiently reject the second
-        // atomic replacement during ticket retirement. Never retry other errors.
-        if(process.platform!=='win32'||(error as NodeJS.ErrnoException).code!=='EPERM')throw error
-        await new Promise(resolve=>setTimeout(resolve,25))
-        await fs.rename(temporary,filename)
+      try {
+        for(const delay of [25,75,150,0]) {
+          try {await fs.rename(temporary,filename);return}
+          catch(error) {
+            // A concurrent reader or Windows file filter can hold the old
+            // ticket across more than one replacement attempt.
+            if(!delay||process.platform!=='win32'||(error as NodeJS.ErrnoException).code!=='EPERM')throw error
+            await new Promise(resolve=>setTimeout(resolve,delay))
+          }
+        }
+      } finally {
+        await fs.unlink(temporary).catch(error=>{
+          if((error as NodeJS.ErrnoException).code!=='ENOENT')this.ctx.logger.warn(String(error))
+        })
       }
     })()
     this.ticketWrites.set(ticket.id,pending)

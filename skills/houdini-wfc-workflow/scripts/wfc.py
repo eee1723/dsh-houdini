@@ -226,13 +226,15 @@ class Problem:
                           for i, v in enumerate(spec["active"])}
                 if len(active) != len(spec["active"]):
                     raise WfcError("invalid_schema", "active contains duplicate cells")
-            nx, ny, nz = self.shape
-            for z, y, x in itertools.product(range(nz), range(ny), range(nx)):
-                coord = (x, y, z)
-                if active is None or coord in active:
+                for coord in active:
                     if any(coord[i] < 0 or coord[i] >= self.shape[i] for i in range(3)):
                         raise WfcError("invalid_schema", f"active cell {coord} is outside shape")
-                    self.cells.append({"id": ",".join(map(str, coord)), "coord": list(coord)})
+            nx, ny, nz = self.shape
+            coordinates = (sorted(active, key=lambda coord: (coord[2], coord[1], coord[0]))
+                           if active is not None else
+                           ((x, y, z) for z, y, x in itertools.product(range(nz), range(ny), range(nx))))
+            for coord in coordinates:
+                self.cells.append({"id": ",".join(map(str, coord)), "coord": list(coord)})
         else:
             if "active" in spec:
                 raise WfcError("invalid_schema", "active requires shape; cells uses explicit ids")
@@ -284,16 +286,20 @@ class Problem:
             if len(set(yaws)) != len(yaws):
                 raise WfcError("invalid_schema", f"modules[{i}].yaw_variants must be unique angles")
             if any(yaw and (not {"px", "nx", "pz", "nz"}.issubset(self.directions)
-                            or any(name not in YAW_DIRECTION[yaw] for name in self.directions))
+                            or any(name not in YAW_DIRECTION[yaw]
+                                   or self.directions[name] != DEFAULT_DIRECTIONS[name]
+                                   for name in self.directions))
                    for yaw in yaws):
                 raise WfcError("invalid_schema",
-                               "Nonzero yaw requires px/nx/pz/nz and optional py/ny directions")
+                               "Nonzero yaw requires canonical px/nx/pz/nz and optional py/ny directions")
             self.prototype_states[prototype] = []
             for yaw in yaws:
                 state = {
                     "id": f"{prototype}@{yaw}", "prototype": prototype, "yaw": yaw,
                     "asset_key": asset_key, "weight": weight / len(yaws), "tags": tags,
-                    "sockets": {YAW_DIRECTION[yaw][local]: socket for local, socket in sockets.items()},
+                    "log_weight": math.log(weight) - math.log(len(yaws)),
+                    "sockets": {(YAW_DIRECTION[yaw][local] if yaw else local): socket
+                                for local, socket in sockets.items()},
                 }
                 self.state_index[state["id"]] = len(self.states)
                 self.prototype_states[prototype].append(len(self.states))
@@ -396,6 +402,10 @@ class Problem:
             _keys(entry, {"cell", "module", "yaw", "require_tags", "exclude_tags"},
                   f"constraints[{i}]", {"cell"})
             cell = self.cell(entry["cell"], f"constraints[{i}].cell")
+            if "yaw" in entry:
+                yaw = _integer(entry["yaw"], f"constraints[{i}].yaw")
+                if yaw not in YAW_DIRECTION:
+                    raise WfcError("invalid_schema", f"constraints[{i}].yaw accepts only 0/90/180/270")
             mask = initial[cell]
             if "module" in entry:
                 prototype = _string(entry["module"], f"constraints[{i}].module")
@@ -410,7 +420,9 @@ class Problem:
             if "require_tags" in entry:
                 mask &= self._tag_mask(_tags(entry["require_tags"], f"constraints[{i}].require_tags"))
             if "exclude_tags" in entry:
-                excluded = self._tag_mask(_tags(entry["exclude_tags"], f"constraints[{i}].exclude_tags"))
+                excluded = 0
+                for tag in _tags(entry["exclude_tags"], f"constraints[{i}].exclude_tags"):
+                    excluded |= self._tag_mask([tag])
                 mask &= ~excluded
             initial[cell] = mask
         return initial
@@ -435,11 +447,16 @@ class Problem:
     def _read_connectivity(self, entry):
         if entry is None:
             return None
-        _keys(entry, {"id", "tags", "root"}, "connectivity", {"tags"})
+        _keys(entry, {"id", "tags", "root", "sockets"}, "connectivity", {"tags"})
         tags = _tags(entry["tags"], "connectivity.tags")
         if not tags:
             raise WfcError("invalid_schema", "connectivity.tags cannot be empty")
-        return {"id": entry.get("id", "connectivity"), "mask": self._tag_mask(tags),
+        sockets = None
+        if "sockets" in entry:
+            sockets = frozenset(_tags(entry["sockets"], "connectivity.sockets"))
+            if not sockets:
+                raise WfcError("invalid_schema", "connectivity.sockets cannot be empty")
+        return {"id": entry.get("id", "connectivity"), "mask": self._tag_mask(tags), "sockets": sockets,
                 "root": self.cell(entry["root"], "connectivity.root") if "root" in entry else None}
 
     def metadata(self):
@@ -524,9 +541,10 @@ class Solver:
                     self._restrict(target, allowed, f"socket:{self.p.cells[source]['id']}:{direction}")
             changed = False
             for rule in self.p.counts:
+                self._check_time()
                 assigned = possible = 0
                 for domain in self.domains:
-                    if domain & (domain - 1) == 0 and domain & rule["mask"]:
+                    if domain and not domain & ~rule["mask"]:
                         assigned += 1
                     if domain & rule["mask"]:
                         possible += 1
@@ -534,7 +552,9 @@ class Solver:
                     self.last_reason = f"count:{rule['id']}"
                     raise Contradiction(self.last_reason)
                 for cell, domain in enumerate(self.domains):
-                    if domain & (domain - 1) == 0:
+                    # Only mixed domains can change membership. A domain with several
+                    # tagged states already counts once; a nonmatching domain counts zero.
+                    if not domain & rule["mask"] or not domain & ~rule["mask"]:
                         continue
                     if assigned == rule["max"]:
                         changed |= self._restrict(cell, ~rule["mask"], f"count:{rule['id']}")
@@ -551,15 +571,22 @@ class Solver:
         return None
 
     def _ordered_candidates(self, mask):
-        candidates = [(state, self.p.states[state]["weight"]) for state in _bits(mask)]
+        candidates = list(_bits(mask))
         result = []
         while candidates:
-            value = self.rng.random() * sum(weight for _, weight in candidates)
-            for i, (state, weight) in enumerate(candidates):
+            # Normalize the remaining weights before summing. Finite input weights
+            # can otherwise overflow the total and leave this loop unable to choose.
+            maximum = max(self.p.states[state]["log_weight"] for state in candidates)
+            weights = [math.exp(self.p.states[state]["log_weight"] - maximum)
+                       for state in candidates]
+            value = self.rng.random() * math.fsum(weights)
+            chosen = len(candidates) - 1
+            for i, weight in enumerate(weights):
                 value -= weight
                 if value < 0:
-                    result.append(candidates.pop(i)[0])
+                    chosen = i
                     break
+            result.append(candidates.pop(chosen))
         return result
 
     def _restore(self, mark):
@@ -588,7 +615,14 @@ class Solver:
         pending = list(reached)
         while pending:
             source = pending.pop()
-            for _, target in self.p.neighbors[source]:
+            for direction, target in self.p.neighbors[source]:
+                if rule["sockets"] is not None:
+                    opposite = self.p.directions[direction]["opposite"]
+                    source_socket = self.p.states[self.domains[source].bit_length() - 1]["sockets"][direction]
+                    target_socket = self.p.states[self.domains[target].bit_length() - 1]["sockets"][opposite]
+                    if (source_socket not in rule["sockets"] or target_socket not in rule["sockets"]
+                            or (source_socket, target_socket) not in self.p.pairs):
+                        continue
                 if target in selected and target not in reached:
                     reached.add(target)
                     pending.append(target)
@@ -760,23 +794,28 @@ def verify_layout(problem, layout):
             "cell_count": len(selected), "edge_count": len(problem.edges)}
 
 
-def _fit_variant(variant, cell_size, yaw, where):
-    _keys(variant, {"id", "asset", "weight", "bounds_min", "bounds_max", "anchor", "fit"},
+def _fit_variant(variant, where):
+    _keys(variant, {"id", "asset", "weight", "bounds_min", "bounds_max", "fit_bounds_min",
+                   "fit_bounds_max", "anchor", "fit"},
           where, {"id", "asset", "bounds_min", "bounds_max"})
     minimum = _vec(variant["bounds_min"], where + ".bounds_min")
     maximum = _vec(variant["bounds_max"], where + ".bounds_max")
     if any(maximum[i] < minimum[i] for i in range(3)):
         raise WfcError("invalid_catalog", f"Inverted bounds at {where}")
-    anchor = _vec(variant.get("anchor", [(minimum[0] + maximum[0]) / 2, minimum[1],
-                                         (minimum[2] + maximum[2]) / 2]), where + ".anchor")
-    if any(not minimum[i] <= anchor[i] <= maximum[i] for i in range(3)):
-        raise WfcError("invalid_catalog", f"Anchor must lie inside measured bounds at {where}")
+    if ("fit_bounds_min" in variant) != ("fit_bounds_max" in variant):
+        raise WfcError("invalid_catalog", f"fit_bounds_min and fit_bounds_max must be declared together at {where}")
+    fit_minimum = _vec(variant.get("fit_bounds_min", minimum), where + ".fit_bounds_min")
+    fit_maximum = _vec(variant.get("fit_bounds_max", maximum), where + ".fit_bounds_max")
+    if any(not minimum[i] <= fit_minimum[i] <= fit_maximum[i] <= maximum[i] for i in range(3)):
+        raise WfcError("invalid_catalog", f"Fit bounds must be ordered inside measured bounds at {where}")
+    anchor = _vec(variant.get("anchor", [(fit_minimum[0] + fit_maximum[0]) / 2, fit_minimum[1],
+                                         (fit_minimum[2] + fit_maximum[2]) / 2]), where + ".anchor")
     fit = variant.get("fit", {"mode": "none"})
     _keys(fit, {"mode", "target_size", "min_scale", "max_scale"}, where + ".fit")
     mode = fit.get("mode", "none")
     if mode not in {"none", "uniform", "axes"}:
         raise WfcError("invalid_catalog", f"Unknown fit mode at {where}: {mode}")
-    source_size = [maximum[i] - minimum[i] for i in range(3)]
+    source_size = [fit_maximum[i] - fit_minimum[i] for i in range(3)]
     if mode == "none":
         if set(fit) - {"mode"}:
             raise WfcError("invalid_catalog", f"fit.mode none does not accept scaling options at {where}")
@@ -785,8 +824,9 @@ def _fit_variant(variant, cell_size, yaw, where):
     else:
         if any(size <= 0 for size in source_size):
             raise WfcError("invalid_catalog", f"Degenerate bounds cannot be scaled at {where}")
-        default_target = [cell_size[2], cell_size[1], cell_size[0]] if yaw in (90, 270) else cell_size
-        target = _vec(fit.get("target_size", default_target), where + ".fit.target_size", positive=True)
+        if "target_size" not in fit:
+            raise WfcError("invalid_catalog", f"Scaled fit requires explicit local target_size at {where}")
+        target = _vec(fit["target_size"], where + ".fit.target_size", positive=True)
         lower = _vec(fit.get("min_scale", [1, 1, 1]), where + ".fit.min_scale", positive=True)
         upper = _vec(fit.get("max_scale", [1, 1, 1]), where + ".fit.max_scale", positive=True)
         if any(lower[i] > upper[i] for i in range(3)):
@@ -798,15 +838,18 @@ def _fit_variant(variant, cell_size, yaw, where):
                 raise WfcError("scale_limit", f"Asset {where} exceeds scale tolerance on axis {'xyz'[i]}",
                                scale=value, min_scale=lower[i], max_scale=upper[i], mode=mode)
     return {"scale": scale, "target_size": target, "source_size": source_size,
-            "mode": mode, "bounds_min": minimum, "bounds_max": maximum, "anchor": anchor}
+            "mode": mode, "bounds_min": minimum, "bounds_max": maximum,
+            "fit_bounds_min": fit_minimum, "fit_bounds_max": fit_maximum, "anchor": anchor}
 
 
 def _choose_variant(variants, seed, cell_id, asset_key):
     ordered = sorted(variants, key=lambda item: item.get("id", ""))
     digest = hashlib.sha256(f"{seed}\0{cell_id}\0{asset_key}".encode("utf-8")).digest()
-    value = int.from_bytes(digest[:8], "big") / 2**64 * sum(v["weight"] for v in ordered)
-    for variant in ordered:
-        value -= variant["weight"]
+    maximum_weight = max(v["weight"] for v in ordered)
+    weights = [v["weight"] / maximum_weight for v in ordered]
+    value = int.from_bytes(digest[:8], "big") / 2**64 * math.fsum(weights)
+    for variant, weight in zip(ordered, weights):
+        value -= weight
         if value < 0:
             return variant
     return ordered[-1]
@@ -829,6 +872,8 @@ def resolve_instances(layout, catalog, style, catalog_file="catalog.json", varia
           {"schema_version", "status", "seed", "cells", "cell_size", "origin", "pivot_offset"})
     if layout["schema_version"] != 1 or layout["status"] != "solved":
         raise WfcError("invalid_layout", "Asset resolution requires a solved schema_version 1 layout")
+    if not isinstance(layout["cells"], list) or not layout["cells"]:
+        raise WfcError("invalid_layout", "Asset resolution requires a nonempty cells array")
     cell_size = _vec(layout["cell_size"], "layout.cell_size", positive=True)
     origin = _vec(layout["origin"], "layout.origin")
     pivot_offset = _vec(layout["pivot_offset"], "layout.pivot_offset")
@@ -880,7 +925,7 @@ def resolve_instances(layout, catalog, style, catalog_file="catalog.json", varia
         weighted = [{**variant, "weight": variant.get("weight", 1)} for variant in variants]
         variant = _choose_variant(weighted, seed, cell_id, asset_key)
         where = f"styles.{style}.assets.{asset_key}.variants[{variant['id']}]"
-        fit = _fit_variant(variant, cell_size, yaw, where)
+        fit = _fit_variant(variant, where)
         asset_path = Path(variant["asset"])
         if not asset_path.is_absolute():
             asset_path = catalog_root / asset_path

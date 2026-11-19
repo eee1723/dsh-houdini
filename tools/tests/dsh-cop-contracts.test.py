@@ -101,24 +101,24 @@ set_parms(cache,{'clearonchange':0})
     assert value(f'cop_layer_stats({large_controlled!r})')['freshness']=='unverified'
     rejects(f'test_cop_controls({large_gain!r},{large_controlled!r},{large_cases!r})','sticky')
     call("set_parms('/obj/__cop_contracts/large/sticky',{'clearonchange':1})")
-    old_limit=cop._DEPENDENCY_NODE_LIMIT
-    try:
-        cop._DEPENDENCY_NODE_LIMIT=512
-        rejects(f'cop_layer_stats({large_out!r})','exceeds 512')
-    finally:
-        cop._DEPENDENCY_NODE_LIMIT=old_limit
-    old_edges=cop._DEPENDENCY_EDGE_LIMIT
-    try:
-        cop._DEPENDENCY_EDGE_LIMIT=1
-        rejects(f'cop_layer_stats({large_out!r})','edge budget')
-    finally:
-        cop._DEPENDENCY_EDGE_LIMIT=old_edges
-    old_seconds=cop._DEPENDENCY_SECONDS
-    try:
-        cop._DEPENDENCY_SECONDS=-1
-        rejects(f'cop_layer_stats({large_out!r})','time budget')
-    finally:
-        cop._DEPENDENCY_SECONDS=old_seconds
+    full_stats=value(f'cop_layer_stats({large_out!r})')['statistics']
+    for limit, bound, reason in [('_DEPENDENCY_NODE_LIMIT',1,'node_limit'),
+                                 ('_DEPENDENCY_EDGE_LIMIT',1,'edge_limit'),
+                                 ('_DEPENDENCY_SECONDS',-1,'time_limit')]:
+        original=getattr(cop,limit)
+        try:
+            setattr(cop,limit,bound)
+            partial=value(f'cop_layer_stats({large_out!r})')
+            assert partial['freshness']==partial['status']=='unverified',(reason,partial)
+            assert partial['cache']['stopped_by']==reason and not partial['cache']['complete']
+            assert partial['statistics']==full_stats,partial
+            if reason=='node_limit':
+                delta=value(f'cop_compare_layers({large_out!r},{large_controlled!r},expected_delta={{"node":{large_gain!r}}})')
+                assert delta['ok'] is None and delta['status']=='unverified' and 'max_abs_error' in delta
+                rejects(f'test_cop_controls({large_gain!r},{large_controlled!r},{large_cases!r})','zero parameter writes')
+                assert hou.node(large_gain).parm('f1').eval()==.25
+        finally:
+            setattr(cop,limit,original)
 
     call(f'''
 c=hou.node({root!r})

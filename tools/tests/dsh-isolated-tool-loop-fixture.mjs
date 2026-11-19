@@ -167,8 +167,8 @@ export function apply(ctx){
         if(!isChild){
           leadId=options.sessionId
           assert(options.tools.some(t=>t.name==='houdini_isolated'),'Host root tool reaches the Houdini preset')
-          if(!events(leadId).some(e=>e.type==='tool/call'&&e.data?.name==='spawn_teammate')){
-            yield*emit('lead-spawn','spawn_teammate',{name:'isolated-worker',description:'Exercise real isolated Houdini execution',context:'fresh',prompt:'ISOLATED_TOOL_CHILD: run the controlled independent Houdini fixture, report actual errors, inspect its images, cancel your own background run, and send lead the result.'});return
+          if(!events(leadId).some(e=>e.type==='tool/call'&&e.data?.name==='subagent')){
+            yield*emit('lead-spawn','subagent',{name:'isolated-worker',description:'Exercise real isolated Houdini execution',prompt:'ISOLATED_TOOL_CHILD: run the controlled independent Houdini fixture, report actual errors, inspect its images, cancel your own background run, and send lead the result.'});return
           }
           if(!childDone){yield*emit('lead-wait-'+requests.length,'wait_agent',{timeout_ms:10000});return}
           yield*finish('Actual isolated Team child completed all transport checks. Image semantics remain unverified.');return
@@ -185,10 +185,10 @@ export function apply(ctx){
         if(preflightStage===1){
           const actual=native(childId,'child-preflight')
           assert.equal(actual?.kind,'isolated-houdini')
-          assert.match(actual.error,/requires script and\/or hip/,'checker preflight cause must survive when no report was created')
+          assert.match(actual.error,/manifest requires.*script.*hip/,'checker preflight cause must survive when no report was created')
           const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-preflight')
           const visible=(delivered?.content??[]).filter(b=>b.type==='text').map(b=>b.text).join('\n')
-          assert.match(visible,/requires script and\/or hip/,'the next real model request must receive the actionable preflight reason')
+          assert.match(visible,/manifest requires.*script.*hip/,'the next real model request must receive the actionable preflight reason')
           assert(!/FsError|ENOENT/.test(actual.error),'a missing report must not replace the checker diagnosis')
           assert.equal(actual.phase,'preflight')
           assert.equal(actual.process,undefined,'manifest planning does not start a Houdini/checker run')
@@ -216,12 +216,20 @@ export function apply(ctx){
           assert.equal(selection.items[0].value,'ISOLATED_TEAM_BUILT')
           assert.equal(selection.items[1].value,8)
           assert.equal(selection.items[2].status,'missing')
-          checks.push('native batched resource selection returns exact archived fields without another Houdini execution')
           assert.equal(raw.inputs.length,481,'real worker consumes the script plus every declared sequence frame')
           assert.equal(value.report.inputs.count,481,'durable canonical carries a compact input inventory; the run report retains all original rows')
           const delivered=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-native')
           const visible=JSON.parse(delivered.content.find(b=>b.type==='text').text)
-          assert.equal(visible.report.inputs.count,481,'the next model request receives a compact inventory')
+          assert.equal(visible.inputs.count,481,'the next model request receives a compact inventory')
+          const page=native(childId,'child-input-page')
+          if(!page){
+            yield*emit('child-input-page','houdini_isolated',{operation:'read',output_dir:value.run_directory,pointer:'/inputs/480/file'});return
+          }
+          const pageMessage=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='child-input-page')
+          const pageText=JSON.parse(pageMessage.content.find(b=>b.type==='text').text)
+          assert.equal(JSON.parse(pageText.text),raw.inputs[480].file)
+          assert.equal(pageText.pointer,'/inputs/480/file')
+          checks.push('native batched resource selection and paged original input both reach the next model request without another Houdini execution')
           checks.push('two bounded 240-frame sequences reach the actual worker; full provenance stays in the run report while session/model projections stay compact')
           assert.equal(raw.result.builder.result.marker,'ISOLATED_TEAM_BUILT');assert(raw.result.checks.every(c=>c.status==='passed'))
           nativeImage=returnedImage(value,'native');await observeImages(options,'native-return')
@@ -342,7 +350,7 @@ export function apply(ctx){
             owner_session:raw.result.runtime.owner_session,width:raw.result.builder.result.width,source_sha256:snapshotSha,
             builder_details_sha256:runs.native.builder.details.sha256}
           checks.push('PTC reads the exact default run without health/HOM work and preserves canonical facts, attachment scope and model-facing measurements')
-          childStage++;yield*emit('child-report','send_message',{target:'lead',message:'ISOLATED_TOOL_CHILD_VERIFIED: actual builder error, native/PTC Karma images, cancellation, HIP+setup/default allocation/cleaned runtime and source-preserving PTC read passed. Semantic image quality remains unverified.\n'+JSON.stringify(peerResult)});return
+          childStage++;yield*emit('child-report','send_message',{agent:'lead',message:'ISOLATED_TOOL_CHILD_VERIFIED: actual builder error, native/PTC Karma images, cancellation, HIP+setup/default allocation/cleaned runtime and source-preserving PTC read passed. Semantic image quality remains unverified.\n'+JSON.stringify(peerResult)});return
         }
         if(childStage===12){
           sourceBefore=digest(fs.readFileSync(sourcePath))
@@ -385,7 +393,7 @@ export function apply(ctx){
           assert.deepEqual(modelValue.report.input_observations,raw.input_observations)
           assert.equal(modelValue.report.ok,true);assert.equal(modelValue.report.inputs_unchanged,false)
           checks.push('authorized source replacement succeeds through real DSH background job, job_output and PTC/model read while retaining exact before/after source hashes and the original copied HIP')
-          childStage++;yield*emit('child-source-report','send_message',{target:'lead',message:'Copied-input source-save evidence verified: '+JSON.stringify({run_directory:sourceRun,ok:raw.ok,inputs_unchanged:raw.inputs_unchanged,input_observations:raw.input_observations})});return
+          childStage++;yield*emit('child-source-report','send_message',{agent:'lead',message:'Copied-input source-save evidence verified: '+JSON.stringify({run_directory:sourceRun,ok:raw.ok,inputs_unchanged:raw.inputs_unchanged,input_observations:raw.input_observations})});return
         }
         childDone=true;yield*finish('ISOLATED_TOOL_CHILD_VERIFIED');return
       }catch(error){await fail(error);throw error}
@@ -403,9 +411,9 @@ export function apply(ctx){
       await ctx.sessionController.selectModel({sessionId:leadId,provider,model})
       await ctx.sessionController.prompt({sessionId:leadId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:'Create one actual Team teammate to execute the isolated Houdini integration fixture.'}]},AbortSignal.timeout(210000))
       const lead=ctx.agents.get(leadId)
-      for(let i=0;i<8;i++){await lead.whenIdle();if(!await ctx.subagents.waitForChildren(lead)&&childDone)break}
+      await lead.whenIdle()
       assert(childDone&&!failure,failure??'child did not finish')
-      const leadEvents=events(leadId),members=leadEvents.filter(e=>e.type==='team/member'&&e.data?.member?.phase==='active')
+      const leadEvents=events(leadId),members=[...sessionRefs.values()].filter(session=>session.header.parentSession===leadId)
       assert.equal(members.length,1);assert(leadEvents.some(e=>e.type==='subagent/catalog'))
       assert(leadEvents.some(e=>e.type==='user/message'&&JSON.stringify(e.data).includes('ISOLATED_TOOL_CHILD_VERIFIED')),'actual Team peer result must reach Lead')
       const peerDelivery=leadEvents.filter(e=>e.type==='user/message').flatMap(e=>(e.data?.content??[]).filter(b=>b.type==='text').map(b=>b.text)).join('\n')

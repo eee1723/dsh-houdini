@@ -1,6 +1,6 @@
 # 工具设计与动词词表
 
-Execution contract version: 124
+Execution contract version: 126
 
 USD概览按原生角色统计；应用LightAPI的发光Mesh同时属于geometry和lights，角色计数之和不等于唯一prim总数。灯光不按类型名称后缀猜测，DomeLight_1保留实际类型名。
 
@@ -43,6 +43,8 @@ test_controls的恢复cook也遵守同一边界：失败后不再读geometry触�
 read_parms的Ramp值为JSON对象：type=ramp、basis插值名称、keys控制点位置、values标量或RGB数组。
 它是当前求值的回读格式，不是set_parms载荷，不证明动画/回调/完整状态恢复；普通标量返回保持不变。
 
+模型外观检查用render_view对显式SOP生成离屏视口预览，适用于只交模型的建模任务。取景、画幅和光照由预览服务控制，保持当前Scene Viewer的取景和布局。观察当前可见界面使用houdini_ui_list和houdini_ui_screenshot。
+
 render_view的H22后端为Flipbook/Vulkan，使用独立Work Lights与OCIO颜色空间；
 H21保持既有OpenGL ROP和设置。两者共用显式SOP代理、相机/深度包络、状态恢复与新鲜度检查。
 H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户Flipbook节点，不删除旧持久服务。
@@ -52,7 +54,7 @@ H22无旧gamma/LUT降级，缺少所需OCIO空间明确拒绝；不修改用户F
 Flipbook没有OpenGL的旧LUT/gamma接口，不能按同名参数或不透明测试外推全部替代。
 平台依据：[Flipbook](https://www.sidefx.com/docs/houdini/nodes/out/flipbook.html)、
 [OpenGL退役说明](https://www.sidefx.com/docs/houdini/nodes/out/opengl.html)；本项目的稳定验证入口见[开发规范](development.md)。
-render_view与viewport_screenshot默认把验证图分配到同源`visual_check`角色下的HIPNAME及run-id目录；最终交付显式选
+render_view与界面截图默认把验证图分配到同源`visual_check`角色下的HIPNAME及run-id目录；最终交付显式选
 `output_policy='delivery'`写入该HIP的`render`目录。实际路径见[工程文件](project-files.md)，两种分配只接收省略文件名或安全basename，禁止可执行路径表达式；
 自定路径选explicit。返回实际路径供present使用；位置不证明质量，旧图不自动迁移/删除。正式render_frame/ROP从`scene_info().project_layout.directories.render`取得目的地，已有用户指定输出保留。
 
@@ -142,13 +144,13 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 
 | 动词 | 语义 | 返回 |
 |---|---|---|
-| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入及参数字典形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。可选非空`parms`在创建/接线后从真实节点逐层设置multiparm父/子数量，再严格设置实例和普通字段；输入顺序无关，不受静态节点卡展开预算限制，build_module的静态预算保持。任一参数失败会连同partial create清理并报告恢复结果；拒绝hidden/deprecated和Material Library根层直建shader，setup/builder改用tab_apply；parent接受Node/path。连完inputs后自动落位：有输入时以输入下游均值位置为首选；无输入时以父网络现有节点右侧新列、最顶部y为首选，空网络落原点。对完整节点/Box/Note/Dot障碍做局部有界避让；无所属Box且附近候选耗尽时跳到完整障碍包络右侧，保留首选y，不移动既有内容。已有所属Box边界仍保持；间距由节点实际网络尺寸（`Node.size()`）推导 | `hou.Node` |
+| `tab_create(parent, type_name, name=, inputs=[...], parms={...})` | 建**单个可见节点**：最新版 + 对应 shelf 初始化；类型、输入及参数字典形状先预检，静态失败返回零写入事实。inputs中的直属child名称相对实际parent解析，None保留空槽。SOP子网内可传本子网的 `parent.indirectInputs()[slot]` 作为源。可选非空`parms`在创建/接线后从真实节点逐层设置multiparm父/子数量，再严格设置实例和普通字段；输入顺序无关，不受静态节点卡展开预算限制，build_module的静态预算保持。任一参数失败会连同partial create清理并报告恢复结果；拒绝hidden/deprecated和Material Library根层直建shader，setup/builder改用tab_apply；parent接受Node/path。连完inputs后自动落位：有输入时以输入下游均值位置为首选；无输入时以父网络现有节点右侧新列、最顶部y为首选，空网络落原点。对完整节点/Box/Note/Dot障碍做局部有界避让；无所属Box且附近候选耗尽时跳到完整障碍包络右侧，保留首选y，不移动既有内容。已有所属Box边界仍保持；间距由节点实际网络尺寸（`Node.size()`）推导 | `hou.Node` |
 | `tab_apply(parent, tool_id)` | 应用 allowlist 内的非交互 Tab setup recipe，返回全部新增节点/输入；GUI 恢复 Network Editor pwd/selection，同一 exec 多次调用共享用户基线；headless 同语义。首批仅 Karma Setup / Karma Material Builder。SideFX recipe 自己摆节点，tab_apply 不做自动落位 | dict |
 | `find_nodes(pattern="*", category=None, node_type=None, root=None)` | 找**已存在**节点（扁平清单） | path 列表 |
 | `graph(node, depth=1, direction='both')` | 围绕**该数据节点**查 inputs / outputs / parm_refs；检查最终 SOP 网络应对 `OUT` 向上查，不要对父 OBJ 容器调用 | dict |
 | `describe(node)` | 状态 + 几何摘要 + `attrib_delta`（相对 input 0 的属性增删——MMB 节点信息里「这个节点对数据干了什么」的固化）+ 帮助元数据 | dict |
 | `node_provenance(node)` | 报告 runtime owner、可复制的 audit tag、当前 session 是否可写；`foreign`/`owned_current_session`/`owned_other_session`/`dsh_service` 分开 | dict |
-| `connect(src, dst, index=0, *, output=0, allow_foreign=None, preserve_position=False)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label。COP相同Mono/UV/RGB/RGBA图像类型直接按实际signature核对，动态undef由原生setInput判定，其余走原生兼容查询；均回读实际连线，不按节点名叠加例外，不推断隐式通道转换。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位。preserve_position=True跳过纠流、绝不移动dst（用于既有布局增量接入），placement_status='preserved' | dict |
+| `connect(src, dst, index=0, *, output=0, allow_foreign=None, preserve_position=False)` | index为目标输入名/索引，output为源输出名/索引；精确名称不是label。SOP子网内可显式连接本子网原生输入槽，局部输出为0；回执保留槽号及当时绑定的外部源和输出。COP相同Mono/UV/RGB/RGBA图像类型直接按实际signature核对，动态undef由原生setInput判定，其余走原生兼容查询；均回读实际连线，不按节点名叠加例外，不推断隐式通道转换。output默认0，第4位置参数拒绝。mutation边界在dst；OBJ→OBJ拒绝并指向set_object_parent，跨parent拒绝，不猜端口或绕Gate。describe.ports提供有界名称/索引/类型；verified仅连接回读，不证明语义；连接后仅必要时调整落位。preserve_position=True跳过纠流、绝不移动dst（用于既有布局增量接入），placement_status='preserved' | dict |
 | `node_info(parent, type_name, parm_filter='', limit=24)` | 创建前读取实际parent最新版类型、端口、参数默认值/组件名/menu token/set_value与帮助URL；parm_filter只作字面子串筛选。按钮条另给menu_kind与赋值语义，conditionals保留参数自身的原生条件，不推断当前启用状态或父folder条件。operation_card含决策/版本，operation_parameters保留不受筛选/limit裁切的关键设置，缺字段显式报告。不建临时节点/不运行Shelf；动态菜单需list_parms，truncated明示。没有delivery准入 | dict |
 | `modeling_dimensions(quantities, require_meter_scene=True)` | 只读源单位换算：quantities={name:{value,unit,min?,max?,source?}}，最多64项；长度m/cm/mm/um/in/ft转米，面积/体积按平方/立方换算，rad转deg、count/ratio不按长度缩放。默认要求当前HIP=1m且不改单位；旧工程须显式False并消费scene_values。返回原始依据、canonical_values、scene_values及米制CTRL spec；不证明最终尺寸 | dict |
 | `sop_recipe(kind, spec=None)` | 只读普通SOP配方，catalog给schema，kind单独调用给结构模板示例；hinge/slider/repeat共享origin/axis及CTRL标量，Merge源与附件→FRAME→Copy；curve_path把具名锚点position/对称handle交给原生Add→三次Bezier Curve 2.0→Resample，返回锚点与原生编辑点映射，复用既有CTRL标量引用，不自动避障；sweep_tube/profile_shell为单中心线/平面薄片成形；guided_slider用真实source/guide投影推导位置并拒绝越界，surface_attach在指定面组投影并取法线frame；gusset/fastener提供带厚度肋板与头杆源。返回nodes/output/required_outputs交给build_module，不创建/cook；不猜坐标、不认领输入、不保证接合。字段、适用前提和反例见SOP配方reference | dict |
@@ -166,7 +168,7 @@ PTC当前调用按Host协议返回完整结构值，供程序即时消费；会�
 | `set_display_node(node, allow_foreign=None)` | 选择SOP/LOP/COP/CHOP等网络的活动显示输出；返回原显示节点与当前旗标。不动render旗标、公共端口、视口或选择；OBJ布尔可见性仍用set_object_visible，SOP发布用sop_set_output | dict |
 | `visible_objects(root='/obj')` | 列出 OBJ 层 plural visibility/effective visibility，并附每个对象的 provenance | dict |
 | `layout_nodes(parent, nodes=None, horizontal_spacing=-1, vertical_spacing=-1, allow_foreign=None, mode='children', *, boxes=None, profile='comfortable', dry_run=False, expected_plan=None)` | `children`原生layoutChildren、`flow`节点拓扑分层；已有成员Network Box时，两者无显式nodes的整网重排写前拒绝，明确的局部nodes列表仍可用。盒布局用`handoff`处理叶子框，`component`处理一层组件容器，需显式boxes；可直接应用，也可dry_run取得plan_sha256，提供expected_plan时才检查计划仍新鲜。重复应用零写入。默认只移动当前session自有项，单次allow_foreign仅用户明确授权的既有项，持久service不豁免。未选节点/Box与Sticky Note/Dot是固定障碍；量测失败零写入。返回实际移动节点数（`scene_writes`/`moved_node_count`）、节点/盒重叠、containment和净距；只证明network-editor布局，不证明接线或艺术质量 | dict |
-| `network_boxes(parent, groups, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 按显式groups整理Network Box：每项需要name，可选label/role/members/boxes/color；label默认name，role只提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。可直接应用，dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对实际受影响的来源框和目标框权限；Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观；分组本身不cook、不证明布局或几何正确 | dict |
+| `network_boxes(parent, groups=None, *, remove=None, dry_run=False, expected_plan=None, allow_foreign=None)` | 省略`groups`与`remove`时只读取该parent的框名、成员、归属、坐标及同级重叠。按显式groups整理Network Box，每项需要name，可选label/role/members/boxes/color。label默认name，role提供颜色提示，未知role用中性色。members为parent直属节点，boxes可引用已有框或本批声明框，两类成员可共存，声明顺序自由，真实循环写前拒绝。dry_run为可选零写入预览，expected_plan仅在显式提供时核对新鲜度。已有框保留现色，显式RGB三元组才改色。移动显式成员时核对来源框和目标框权限。Box权限独立记录，foreign需单次授权，render服务不豁免。失败恢复成员、位置和外观。布局及几何质量分别检查 | dict |
 | `network_controls(parent, controls=None, *, remove=None, allow_foreign=None)` | 明确声明实际控制入口：controls为node/label对象列表，remove为显式节点列表，目标须在parent范围内且遵守ownership。声明保存在节点userData，随HIP保存、改名保留；省略controls/remove只读列出parent内的已声明入口，不按名字或参数数量猜角色、不cook。节点交付卡片复用同一控制声明；不证明联动或正确性 | dict |
 | `network_notes(parent, notes=None, *, remove=None, allow_foreign=None)` | 局部维护明确名称的独立 Sticky Note，返回原生正文、位置、矩形、颜色、字号和归属。已有项只传 name 与要改的字段，新建项另需 text。`text_size` 为网络单位的字高，0 使用原生默认值，`effective_text_size` 在实际可读取时返回。改变字号保持矩形与正文，除非同时明确修改。省略 notes/remove 只读。便签有独立 identity，写前校验，失败保留恢复事实 | dict |
 | `present_nodes(nodes, *, allow_foreign=None)` | 明确交付节点入口，nodes为node及可选label/role/description/new_identity的1..16项列表；role为control/output/node，只表达导航用途，description为<=200字符的单行操作说明。返回context来自真实节点类别，说明和路径属于交付时观察。缺少持久标识时在目标节点userData写UUID，真实修改遵守ownership；显式new_identity只用于续新标识，旧引用失效。成功批次从present_nodes动词回执显示节点卡片，不依赖__result__包装，与DSH文件交付并列。声明后保存同一HIP，重开/改名仍可定位；不存在或复制导致重复不按历史路径猜目标，不写独立交付账本 | dict |
@@ -325,12 +327,6 @@ Ramp/multiparm的创建支持不意味着edits或test_controls已支持它们的
 | `render_frame(rop, picture=None, frame=None, timeout=110, *, framing=None)` | 渲染可执行hou.RopNode并验证新鲜产物；USD优先outputimage。可选framing={target:USD资产prim路径,coverage:.82}在renderer启动前检查实际stage所有产品的相机/有效画幅/裁切窗口；不通过或不支持时零渲染，不自动动相机。未传保持艺术裁切/通用ROP语义。临时picture/foreground/frame恢复；bytes/mtime/有界摘要确认fresh，旧文件失败；>110s走job。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
 | `render_view(node, direction='iso', frame=None, width=1280, height=720, picture=None, framing='full', coverage=0.82, framing_frame=None, *, output_policy='managed', focus_group=None, isolate=False, projection='perspective', framing_bounds=None, depth_bounds=None)` | 显式SOP→持久proxy→服务相机及对应版本后端，恢复用户状态，服务不删除。output_policy默认managed用于验证；delivery分配最终图到`$HIP/dsh-artifacts/renders/<HIPNAME>/`，两者picture省略或仅安全basename、唯一不覆盖；路径值选explicit，继续服从原$HIP/绝对路径保护。返回artifact含purpose/policy/actual/相对路径/root/run/capture/frame，旧output保留。full完整入镜；detail只缩正交宽度/透视视角，不推进相机，近远裁面错误始终零渲染失败。focus_group指定实际primitive组，可isolate；framing_bounds决定取景，depth_bounds决定全部渲染内容含上下文的深度。A/B用同framing_frame并复用返回framing.bounds/depth_bounds及方向/画幅/模式，越界不漂移。check像素事实与pixels兼容别名、framing.depth_check/crop_reasons、source指纹/stale分别报告；空/error拒绝；源/proxy有cook warning时保留诊断图片和warning，但返回ok=false，不能进入验收完成门。展示格式OCIO编码sRGB；H21缺少匹配空间时明确gamma近似，H22明确拒绝该缺口；EXR/HDR线性；output_color记录方法，不证明语义。共享执行端模式取registry渲染单槽，被占即快速拒绝 | dict |
 | `render_check(path, ref=None)` | 亮度/非黑/主色/content bbox；A/B 另给高精度 mean、RMSE、changed/meaningful pixel %、max diff，微小非零不再被舍入成 0 | dict |
-
-### viewport 域（视口/UI）
-
-| 动词 | 语义 | 返回 |
-|---|---|---|
-| `viewport_screenshot(path=None, frame=None, clean=True, frame_target=None, textures=None, backface_cull=False, *, output_policy='managed', shading=None)` | **用户屏幕诊断工具**：managed/delivery/explicit路径和artifact合同同render_view；delivery直接生成到`$HIP/dsh-artifacts/renders/<HIPNAME>/`，无命名HIP时两种分配拒绝。PNG/JPEG/BMP/TGA为支持截图格式。shading可临时选择Wire/Flat/FlatWire/Smooth/SmoothWire，默认保留现有着色；四类模型/对象显示集的原值在捕获成功或失败后恢复并回读，不改变继承/链接关系。用户切空display节点时截到空是正确结果，不能用来证明agent产物；和`render_view(explicit_sop)`对照可区分viewport漂移与真实几何错误。要求独立stash的flipbook/viewport camera；绑定相机先解锁并脱离，按请求frame读取bbox，恢复frame/视图后最后还原相机关联/锁定，setter失败与回读不符保留。候选需属于请求frame、连续稳定且可解码；旧/错误frame/无效/歧义文件不算fresh。flipbook派发已尝试但未确认完成的超时/异常/轮询中断保留managed reservation并标capture_unresolved，避免晚到写入与路径复用竞争；实际输出路径复验失败不登记附件。恢复失败以CheckpointError证据拒绝假成功 | dict |
 
 ## 自省、帮助与追踪
 

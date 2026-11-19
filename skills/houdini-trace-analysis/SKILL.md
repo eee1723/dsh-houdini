@@ -45,7 +45,7 @@ node <skill-dir>/../../tools/trace-report.mjs <session-file-or-directory> --out 
 - 数据测量保留 output、piece/稳定 ID、局部坐标、实体覆盖、关系类型与阈值来源；上游 driver、整体 bbox 和响应非零不能替代最终实体关系。unsupported 与未覆盖维度保持 unverified。
 - 动画、控制、HDA 回调与重开检查按用户目标选证据；声明动态需最终输出的时序证据，声明可调关系需相应修改观察。无需为普通改名、节点维护或网络交付强制艺术渲染和长流程。
 - 自动 `completionRisks`、词法计划字段与重复代码只用于找证据，不能评分或直接判失败。没有关键词、没有某份 skill、节点多、首图晚均不自动构成系统缺陷。
-- 用量区分工具 call-to-result、模型请求记录、provider usage 和上下文字符；累计 usage 重复计历史，字符不是 token/费用，时间空档不是已测推理时间。只测到什么就报告什么。
+- 用量区分工具 call-to-result、模型请求记录、provider usage 和上下文字符。定位慢任务时读取 `requestTelemetry.responseTiming`，将步骤开始、首段流、回复落盘与后台 job 的登记和结算对照。后台窗口可能重叠，累计 usage 重复计历史，不能从这些区间拆出网络或纯推理耗时。
 
 ## 建议与交付
 

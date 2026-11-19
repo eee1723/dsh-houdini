@@ -152,6 +152,13 @@ try:
         hou.hipFile.save(saved_untitled.as_posix())
         assert h.scene_info()['has_named_path'], 'a saved file can legitimately be named untitled.hip'
         assert h.scene_save()['bytes'] > 0
+        # The checkpoint worker hashes the saved HIP asynchronously. Release
+        # its Windows file handle before removing this fixture's directory.
+        for worker in threading.enumerate():
+            if worker.name == 'dsh-checkpoint':
+                worker.join(timeout=10)
+                assert not worker.is_alive(), 'checkpoint still reading the fixture HIP'
+        hou.hipFile.setName(before)
 
     # Guard hints must identify the actual HIP operation, not a node rename.
     usage = bridge._raw_usage_analysis("hou.hipFile.setName('x.hip')")

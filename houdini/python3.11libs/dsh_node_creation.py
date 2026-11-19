@@ -523,7 +523,7 @@ def _prepare_tab_create(parent, type_name, inputs, parms):
         raise ValueError("parms 必须是非空 {参数名: 值} dict")
     if inputs and cat == hou.objNodeTypeCategory():
         raise ValueError("Object inputs are parenting; create first, then use set_object_parent")
-    input_nodes = [None if source is None else dsh_node_access._resolve_in_parent(parent, source) for source in (inputs or [])]
+    input_nodes = [None if source is None else dsh_node_access._wire_source(source, parent) for source in (inputs or [])]
     for source in input_nodes:
         if source is not None and source.parent() != parent:
             raise ValueError(f'different_parent: source={source.path()} parent={source.parent().path()}, destination parent={parent.path()}; use an Object Merge inside the destination SOP network or an explicit subnet input, not cross-network wires')
@@ -548,7 +548,7 @@ def tab_create(
 
     - ``parent``：目标父节点（hou.Node 或 path 字符串，如 '/obj'）。
     - ``type_name``：基名即可（'copytopoints'、'box'、'geo'），内部解析最新版。
-    - ``inputs``：可选，创建后按序连到 input 0..n（节点、绝对路径或parent相对路径；None保留空槽；
+    - ``inputs``：可选，创建后按序连到 input 0..n（节点、同一SOP子网的parent.indirectInputs()[槽号]、绝对路径或parent相对路径；None保留空槽；
       连接失败会抛错，不会静默跳过）。
     - ``parms``：可选非空严格参数批次，创建/接线后从真实节点逐层设置multiparm数量，再应用其字段；
       字段顺序无关，不受静态节点卡展开预算限制；build_module静态预检仍保留自己的预算。

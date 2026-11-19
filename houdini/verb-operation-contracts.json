@@ -329,7 +329,7 @@
                   "anyOf": [
                     {
                       "type": "string",
-                      "description": "Existing node path, absolute or relative to the explicit parent; a live hou.Node is also accepted within the same exec."
+                      "description": "Existing wire source path, absolute or relative to parent. In Python use a live Node or parent.indirectInputs()[slot] inside that SOP subnet."
                     },
                     {
                       "type": "null"
@@ -395,7 +395,7 @@
       ],
       "notes": [
         "A successful Python return is a Node, not a dict with ok/created. Do not pass the ledger snapshot {node: path} back as a Node; use its path string.",
-        "Input references are resolved relative to parent; cross-network dataflow requires explicit subnet ports or Object Merge. OBJ parenting uses set_object_parent."
+        "For a SOP subnet's public input, wire its outer slot normally, then use tab_create(subnet, 'null', inputs=[subnet.indirectInputs()[slot]]) inside. The local wire stays bound when the outer source changes. Use Object Merge for a separate path reference. OBJ parenting uses set_object_parent."
       ]
     },
     "build_module": {
@@ -829,7 +829,7 @@
         "properties": {
           "src": {
             "type": "string",
-            "description": "Existing absolute node path. Within the same exec a live hou.Node is also accepted; JSON node snapshots are not hou.Node objects."
+            "description": "Absolute source node or native SOP subnet input item path. In Python use a live Node or subnet.indirectInputs()[slot] from the destination's own network."
           },
           "dst": {
             "type": "string",
@@ -932,6 +932,12 @@
           "title": "Replace one wire without a separate disconnect",
           "code": "__result__ = connect('/obj/example_geo/source', '/obj/example_geo/OUT', index=0, output=0)",
           "read_result": "node is the destination; input/source_output report the actual ports and inputs_after shows the current wiring.",
+          "tool": "houdini_exec"
+        },
+        {
+          "title": "Use an explicit public input inside a SOP subnet",
+          "code": "subnet = hou.node('/obj/example_geo/module')\n__result__ = connect(subnet.indirectInputs()[1], subnet.node('IN_B'))",
+          "read_result": "subnet_input is the selected outer slot (1); the local connector's source_output is 0. inputs_after includes the resolved external source when connected.",
           "tool": "houdini_exec"
         },
         {
@@ -1190,7 +1196,7 @@
       ]
     },
     "network_boxes": {
-      "summary": "Create, update or remove presentation groups without moving or cooking nodes.",
+      "summary": "Inspect sibling group bounds and membership, or edit groups without moving or cooking nodes.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1281,8 +1287,7 @@
           }
         },
         "required": [
-          "parent",
-          "groups"
+          "parent"
         ],
         "additionalProperties": true
       },
@@ -1342,22 +1347,37 @@
           },
           "layout_status": {
             "type": "string"
+          },
+          "direct_node_count": {
+            "type": "integer"
+          },
+          "sibling_box_overlap_count": {
+            "type": "integer"
+          },
+          "sibling_box_overlap_sample": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
           }
         },
         "required": [
           "ok",
-          "dry_run",
-          "applied",
           "scene_writes",
           "phase",
           "parent",
-          "plan_sha256",
-          "boxes",
-          "layout_status"
+          "boxes"
         ],
         "additionalProperties": true
       },
       "examples": [
+        {
+          "title": "Inspect the current parent without scene writes",
+          "code": "__result__ = network_boxes('/obj/example_geo')",
+          "read_result": "Read box membership, provenance, bounds and sibling_box_overlap_count. The sample lists at most twelve conflicting pairs. Parent-child containment is excluded.",
+          "tool": "houdini_exec"
+        },
         {
           "title": "Apply a simple group directly",
           "code": "__result__ = network_boxes('/obj/example_geo', [\n    {'name': 'shape', 'members': ['source', 'OUT'], 'label': 'Shape'},\n])",
@@ -1372,6 +1392,7 @@
         }
       ],
       "notes": [
+        "Omit groups and remove for inspection. Only this parent is measured. Bounds and overlap are presentation facts and do not certify visible wire routing or downstream geometry.",
         "members and boxes may coexist. label defaults to name; role is an optional color hint and is not a fixed enum or leaf/component gate. Containment cycles are rejected.",
         "expected_plan is optional; preview plus hash is useful when a caller chooses to require unchanged presentation state. Grouping reports presentation, not geometry correctness."
       ]
@@ -1963,7 +1984,7 @@
       ]
     },
     "render_view": {
-      "summary": "Render an explicit SOP through the Houdini GUI preview service and return real image, framing and pixel observations. Managed checks and delivery images accept an omitted picture or safe basename; custom paths require output_policy='explicit'.",
+      "summary": "Preview an explicit SOP offscreen with an independent camera and the viewport renderer. Uses the GUI session without using its current viewport. Returns image, framing and pixel observations.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -2185,7 +2206,7 @@
         }
       ],
       "notes": [
-        "Requires the GUI preview service; headless renderer checks use render_frame. Managed checks are under $HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>; delivery images are under $HIP/dsh-artifacts/renders/<HIPNAME>. Both return unique actual paths and reject executable filename expressions; explicit destinations require output_policy=explicit.",
+        "Use a managed preview for model inspection without a rendered deliverable. The service owns its camera and does not operate the active Scene Viewer. Headless renderer checks use render_frame. Managed checks are under $HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>; requested delivery images go under $HIP/dsh-artifacts/renders/<HIPNAME>. Both accept an omitted picture or a safe basename and return unique actual paths; custom paths need output_policy=explicit.",
         "A/B observations use the same framing_frame, direction, framing.bounds and framing.depth_bounds. Pixels and file delivery do not certify visual semantics.",
         "过程观察、显示故障和A/B诊断保留managed，写入visual_check；明确要给用户保留的成图才选择delivery，进入$HIP/dsh-artifacts/renders/<HIPNAME>，核对artifact.actual_path与精确hip_path后再present。目录不证明已验收或已交付，不自动移动历史图片。"
       ]
@@ -2767,149 +2788,6 @@
         "需要多路径或更复杂条件时沿用完整原生JSON与DSH通用write/edit，明确字段与影响，不造额外文件工具。"
       ]
     },
-    "viewport_screenshot": {
-      "summary": "Capture the user viewport for diagnosis, or a requested delivery image. This observes the user display state; it does not prove model geometry or semantic quality.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Omit or pass a safe PNG basename for managed/delivery output; explicit accepts a caller destination. Consume the returned allocated path."
-          },
-          "frame": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Finite frame to capture; null uses the current frame. The original frame is restored."
-          },
-          "clean": {
-            "type": "boolean",
-            "default": true,
-            "description": "Temporarily hide supported viewport guides and decorations, then restore them."
-          },
-          "frame_target": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "const": true
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional node path to frame temporarily; true selects the first displayed OBJ child. Null preserves the current framing. Live hou.Node values are also accepted inside one request."
-          },
-          "textures": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Optional temporary texture display override; null preserves the current setting."
-          },
-          "backface_cull": {
-            "type": "boolean",
-            "default": false,
-            "description": "Temporarily enable backface culling when true; false preserves the current setting."
-          },
-          "output_policy": {
-            "type": "string",
-            "enum": [
-              "managed",
-              "delivery",
-              "explicit"
-            ],
-            "description": "managed defaults to $HIP/dsh-artifacts/checks/previews/<HIPNAME>/<run-id>. delivery allocates under $HIP/dsh-artifacts/renders/<HIPNAME>. Both require a named HIP and an omitted path or safe basename; explicit uses a caller destination."
-          },
-          "shading": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              null,
-              "Wire",
-              "Flat",
-              "FlatWire",
-              "Smooth",
-              "SmoothWire"
-            ],
-            "default": null,
-            "description": "Optional temporary shading for CurrentModel/DisplayModel/SceneObject/SelectedObject. Null preserves current modes. Overrides and restoration are read back; failures remain explicit."
-          }
-        }
-      },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "path": {
-            "type": "string"
-          },
-          "artifact": {
-            "type": "object"
-          },
-          "fresh": {
-            "type": "boolean"
-          },
-          "user_state_restored": {
-            "type": "boolean"
-          },
-          "semantic_status": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "ok",
-          "path",
-          "artifact",
-          "fresh",
-          "user_state_restored",
-          "semantic_status"
-        ],
-        "additionalProperties": true
-      },
-      "examples": [
-        {
-          "title": "Capture a requested delivery image",
-          "code": "__result__ = viewport_screenshot(path='viewport.png', output_policy='delivery')",
-          "read_result": "Read the actual path and artifact before present. fresh and user_state_restored describe capture/recovery; semantic_status remains unverified until the image is actually inspected.",
-          "tool": "houdini_exec"
-        },
-        {
-          "title": "Observe a surface without wire overlays, restoring user shading",
-          "code": "__result__ = viewport_screenshot(frame=24, shading='Smooth')",
-          "read_result": "Inspect the delivered image. This preserves current framing and restores frame and all changed shading modes, including after capture failure.",
-          "tool": "houdini_exec"
-        }
-      ],
-      "notes": [
-        "Consume the actual returned path/artifact.actual_path for presentation. Allocation never overwrites an existing image. A dispatched capture whose completion is unknown retains its reservation; do not remove it as ordinary temporary debris."
-      ]
-    },
     "network_notes": {
       "summary": "Read or locally maintain named native Sticky Notes. Notes have their own runtime identity/owner; a parent or name does not grant write authority.",
       "input_schema": {
@@ -3246,7 +3124,7 @@
         "Must use houdini_exec: cooking and reading native layers are not inspect-only operations.",
         "Supports Float16/Float32 and signed Int8/Int16/Int32 buffers with 1..4 channels. Unsupported storage, empty/oversized output and failed cook reject without implicit conversion or sampling.",
         "A valid all-zero data layer is not an empty image. Use the declared channel/range meaning, not render_check nonblack heuristics.",
-        "Sticky upstream Cache yields unverified freshness. Dynamic/external dependencies and GPU allocations remain outside the bounded native dependency observation."
+        "A sticky upstream Cache or incomplete dependency traversal leaves freshness unverified. The measured buffer statistics remain available; cache.stopped_by identifies a traversal limit. Dynamic/external dependencies and GPU allocations remain outside this observation."
       ]
     },
     "cop_compare_layers": {
@@ -3611,6 +3489,53 @@
         "mean_abs_change/max_abs_change use a zero baseline. Their nonzero response proves only the declared pixel change, not the intended region, edge or artistic effect.",
         "Normal returns include restored=true even when a declared measurement fails. Restoration failure raises CheckpointError with evidence; do not continue editing.",
         "Restoration covers snapshotted parameters, expressions/keys, frame and full layer fingerprint. External files, arbitrary Python/solver effects and unobserved dynamic dependencies are not transactional."
+      ]
+    },
+    "usd_prim_info": {
+      "summary": "只读检查指定USD prim的属性、声明绑定和实际all-purpose材质解析。有效绑定不代表后代或面子集全部覆盖，也不验证着色器、纹理或视觉。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "node": {"type": "string", "description": "提供当前composed stage的LOP节点路径。"},
+          "prim_path": {"type": "string", "description": "要检查的精确USD prim路径，包括需要单独观察的GeomSubset或实例代理。"},
+          "max_properties": {"type": "integer", "minimum": 1, "maximum": 1000}
+        },
+        "required": ["node", "prim_path"],
+        "additionalProperties": true
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "material_bindings": {"type": "array", "description": "当前prim上声明的绑定关系；不展开继承或解析优先级。"},
+          "effective_material_binding": {
+            "type": "object",
+            "properties": {
+              "status": {"type": "string", "enum": ["bound", "unbound"], "description": "bound表示解析到有效UsdShade.Material；unbound表示未解析到有效材质，不代表没有声明过关系。"},
+              "material_path": {"type": ["string", "null"]},
+              "relationship_path": {"type": ["string", "null"], "description": "USD解析采用的实际绑定关系路径，可来自祖先或collection；无有效关系时为null。"},
+              "strength": {"type": ["string", "null"], "description": "实际来源关系的USD绑定强度；无有效关系时为null。"},
+              "material_purpose": {"type": "string", "enum": ["allPurpose"]},
+              "scope": {"type": "string"}
+            },
+            "required": ["status", "material_path", "relationship_path", "strength", "material_purpose", "scope"],
+            "additionalProperties": true
+          },
+          "properties_truncated": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "title": "比较声明绑定与实际材质",
+          "code": "info = usd_prim_info('/stage/OUT', '/Asset/mesh/material_subset')\n__result__ = {'declared': info['material_bindings'], 'effective': info['effective_material_binding']}",
+          "read_result": "使用当前stage中的实际节点和prim路径。有效材质可能由祖先或collection决定；对需要验证的其他子集另查，再观察着色器与图像。",
+          "tool": "houdini_inspect"
+        }
+      ],
+      "notes": [
+        "ComputeBoundMaterial按默认all-purpose规则解析，保留原material_bindings字段；不Apply材质API、不写USD层、不替换材质。",
+        "只返回请求prim的一项解析事实，不因max_properties截断而省略；不遍历所有后代、面子集或实例，也不声称已检查preview/full等其他purpose。",
+        "该结果不认证材质输入、纹理文件读取、UV消费、渲染器支持或最终外观。"
       ]
     },
     "hda_version": {

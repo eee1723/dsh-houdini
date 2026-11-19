@@ -46,13 +46,20 @@ def _local_free_position(node, preferred):
             'position':result.get('translation'),'blockers':result.get('blocked_by') or []}
 
 
+def _local_input_items(node):
+    # inputs() follows subnet connectors outside this network, where editor
+    # coordinates use a different origin. Keep the local connector as anchor.
+    return [item for wire in node.inputConnections()
+            if (item := wire.subnetIndirectInput() or wire.inputNode()) is not None]
+
+
 def _place_created_node(node):
     """tab_create 智能落位：有输入放到输入下游，无输入放右侧新列（空网络落原点）。
 
     网络坐标 y 向下为负：输入下游 = 更小的 y；「最顶部」= 最大的 y。
     """
     parent = node.parent()
-    inputs = [n for n in node.inputs() if n is not None]
+    inputs = _local_input_items(node)
     if inputs:
         _h_gap, v_gap = _flow_gaps([node, *inputs])
         x = sum(float(n.position().x()) for n in inputs) / len(inputs)
@@ -75,7 +82,7 @@ def _snap_into_flow(node):
 
     已在下游（y 严格小于所有输入的 min y）的节点绝不动。返回是否移动了节点。
     """
-    inputs = [n for n in node.inputs() if n is not None]
+    inputs = _local_input_items(node)
     if not inputs:
         return {'adjusted':False,'status':'unchanged','blockers':[]}
     min_y = min(float(n.position().y()) for n in inputs)
@@ -222,10 +229,13 @@ def layout_nodes(parent, nodes=None, horizontal_spacing: float = -1.0,
     }
 
 
-def network_boxes(parent, groups, *, remove=None, dry_run=False,
+def network_boxes(parent, groups=None, *, remove=None, dry_run=False,
                   expected_plan=None, allow_foreign=None) -> dict:
-    """Create/update/remove Network Boxes without moving or cooking nodes.
+    """Inspect or edit Network Boxes without moving or cooking nodes.
 
+    Omit groups and remove to list direct membership, bounds, provenance and
+    current sibling-box overlaps in this one parent. This reads saved layout
+    facts without opening or navigating a Network Editor.
     groups=[{name, members?: [Node|absolute|parent-relative path], boxes?: [name],
     label?: string, role?: string, color?: [r,g,b]}]. members and boxes may coexist;
     child boxes may be existing or declared anywhere in this batch. Cycles fail
@@ -235,18 +245,22 @@ def network_boxes(parent, groups, *, remove=None, dry_run=False,
     current. By default the call directly applies. Membership and appearance
     are presentation facts, not geometry or task-quality evidence.
     """
+    from dsh_network_boxes import NetworkBoxOperationError, apply_network_boxes, inspect_network_boxes
     try:
         p = dsh_node_access._resolve(parent)
-    except (ValueError, TypeError) as error:
+        if groups is None and remove is None:
+            if dry_run is not False or expected_plan is not None or allow_foreign is not None:
+                raise ValueError('Inspection uses network_boxes(parent); layout and mutation options require groups or remove')
+            return inspect_network_boxes(p, active_owner_session=dsh_ownership.current_session())
+    except (ValueError, TypeError, hou.Error) as error:
         raise dsh_errors.CheckpointError(str(error), {
             'ok':False,'dry_run':bool(dry_run) if type(dry_run) is bool else None,
             'applied':False,'phase':'preflight','scene_writes':0,
             'parent':str(parent),'restored':True,'restore_errors':[],
-            'layout_status':'not_performed','scope':'Network Box parent resolution; zero scene writes'}) from error
-    from dsh_network_boxes import NetworkBoxOperationError, apply_network_boxes
+            'layout_status':'not_performed','scope':'Network Box parent resolution or inspection; zero scene writes'}) from error
     try:
         return apply_network_boxes(
-            p, groups, remove=remove, dry_run=dry_run,
+            p, [] if groups is None else groups, remove=remove, dry_run=dry_run,
             expected_plan=expected_plan, allow_foreign=allow_foreign,
             active_owner_session=dsh_ownership.current_session(),
             active_owner_call=dsh_ownership.current_call(),

@@ -109,7 +109,7 @@ def _verb_index() -> dict:
         doc = contract['summary'] if contract else (inspect.getdoc(_VERBS[key]) or '').split('\n', 1)[0]
         purpose = ' '.join(str(doc).split()).replace('**', '').strip('`*"\' ')
         if len(purpose) > 72:
-            cut = purpose[:72]
+            cut = purpose[:71]
             space = cut.rfind(' ')
             if space >= 48:
                 cut = cut[:space]
@@ -292,7 +292,6 @@ _VERB_DEFINITIONS = {
     'camera_fit': VerbDefinition(dsh_hou_helpers.camera_fit, 'exec', 'node'),
     'render_check': VerbDefinition(dsh_hou_helpers.render_check, 'query_or_exec', 'none'),
     'render_view': VerbDefinition(dsh_hou_helpers.render_view, 'exec', 'none'),
-    'viewport_screenshot': VerbDefinition(dsh_hou_helpers.viewport_screenshot, 'exec', 'none'),
 }
 
 _VERBS = {name: definition.function for name, definition in _VERB_DEFINITIONS.items()}
@@ -437,7 +436,7 @@ def _unrecovered_mutation(entry):
 
 
 def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, *,
-                 read_only=False, before_dispatch=None):
+                 read_only=False, before_dispatch=None, prior_unrecovered=None):
     # Give a precise, zero-write recovery path for repeated discovery mistakes;
     # do not label TypeErrors raised inside the implementation as argument errors.
     discovery_signature = _verb_signature(name, fn)
@@ -460,7 +459,8 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, 
                     {'ok': False, 'phase': 'access_mode', 'scene_writes': 0,
                      'dispatched': False, 'requested_access': 'query'})
             if name in _MUTATING_VERB_NAMES:
-                failed = next((entry for entry in ledger if _unrecovered_mutation(entry)), None)
+                failed = (prior_unrecovered() if prior_unrecovered is not None else
+                          next((entry for entry in ledger if _unrecovered_mutation(entry)), None))
                 if failed is not None:
                     raise _DispatchBlockedError(
                         f"{name} blocked before dispatch: earlier verb {failed['verb']} failed; "
@@ -544,7 +544,7 @@ def _make_tracer(name: str, fn, ledger: list, observed_nodes=None, impact=None, 
                 elif comparisons['not_comparable']:
                     entry['check_status'] = 'unverified'
                 entry['check_scope'] = 'Requested frame samples aligned only by point number; stable identity, matching topology and visual quality unverified'
-            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "viewport_screenshot", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
+            if name in ("set_parms", "cook_node", "verify_network", "build_module", "render_frame", "render_view", "camera_fit", "geo_point_spacing","geo_check_interfaces","test_controls", "cop_layer_stats", "cop_compare_layers", "test_cop_controls") and isinstance(check, dict):
                 if check.get('status') in ('unverified', 'not_evaluated_manual', 'not_cooked_manual'):
                     entry['check_status'] = 'unverified'
                 elif check.get("ok") is False or check.get("errors") or check.get("fresh") is False:
@@ -591,6 +591,19 @@ def _request_dispatcher(ledger, observed_nodes, impact, *, read_only, extra=None
     """One request's wrappers serve injected calls and public facade aliases."""
     traced = {}
     registry = _VERBS if not extra else {**_VERBS, **extra}
+    checked = 0
+    first_unrecovered = None
+
+    def prior_unrecovered():
+        nonlocal checked, first_unrecovered
+        # Nested calls share this append-only request ledger. Consume each
+        # completed row once, retaining the first unconfirmed write failure.
+        while first_unrecovered is None and checked < len(ledger):
+            entry = ledger[checked]
+            checked += 1
+            if _unrecovered_mutation(entry):
+                first_unrecovered = entry
+        return first_unrecovered
 
     def dispatch(name, args, kwargs):
         fn = registry.get(name)
@@ -599,7 +612,8 @@ def _request_dispatcher(ledger, observed_nodes, impact, *, read_only, extra=None
         entry = traced.get(name)
         if entry is None or entry[0] is not fn:
             entry = (fn, _make_tracer(name, fn, ledger, observed_nodes, impact,
-                                     read_only=read_only, before_dispatch=before_dispatch))
+                                     read_only=read_only, before_dispatch=before_dispatch,
+                                     prior_unrecovered=prior_unrecovered))
             traced[name] = entry
         return entry[1](*args, **kwargs)
 

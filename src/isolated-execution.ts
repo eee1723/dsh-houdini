@@ -227,9 +227,69 @@ export function isolatedLogValue(value:any) {
     ...(presented.progress?{progress:resultFacts(presented.progress)}:{}),...(process?{process}:{})})
 }
 
+function isReportRead(value:any) {
+  return value?.kind==='isolated-houdini-report-selection'||value?.kind==='isolated-houdini-report-page'
+}
+
+function reportReadProjection(value:any,budget:number) {
+  const size=(item:any)=>Buffer.byteLength(JSON.stringify(item))
+  if(size(value)<=budget)return value
+
+  const canonical=budget===MAX_PRESENTATION_BYTES
+  const {items,text,...facts}=value
+  // The session record owns the origins. When the display is full, reserve
+  // its space for the fields the caller actually asked to read.
+  const base=canonical?facts:{kind:value.kind,format:value.format}
+  if(items) {
+    const abbreviated=items.map((item:any)=>item.status==='available'
+      ?{pointer:item.pointer,status:'requires_pagination',total_chars:JSON.stringify(item.value).length,
+        read:{pointer:item.pointer,offset:0,limit:6000}}:item)
+    const result={...base,items:[...abbreviated],selected_value_chars:0}
+    if(size(result)<=budget) {
+      for(let i=0;i<items.length;i++) {
+        if(items[i].status!=='available')continue
+        const chars=JSON.stringify(items[i].value).length
+        result.items[i]=items[i]
+        result.selected_value_chars+=chars
+        if(size(result)>budget) {
+          result.items[i]=abbreviated[i]
+          result.selected_value_chars-=chars
+        }
+      }
+      return result
+    }
+  } else {
+    const page={...base,pointer:value.pointer,offset:value.offset,total_chars:value.total_chars,
+      next_offset:value.offset+text.length,text:''}
+    // next_offset may get shorter as the prefix shrinks. Reserve its maximum
+    // encoded length while finding a complete JSON-safe prefix of this page.
+    const available=budget-size(page)+2
+    let lo=0,hi=text.length
+    while(lo<hi) {
+      const n=Math.ceil((lo+hi)/2)
+      if(size(text.slice(0,n))<=available)lo=n
+      else hi=n-1
+    }
+    if(lo>0&&lo<text.length&&/[\uD800-\uDBFF]/.test(text[lo-1])&&/[\uDC00-\uDFFF]/.test(text[lo]))lo--
+    if(lo>0||text.length===0) {
+      page.text=text.slice(0,lo)
+      page.next_offset=lo===text.length?value.next_offset:value.offset+lo
+      if(size(page)<=budget)return page
+    }
+  }
+
+  // Long paths, pointers or opaque locators can exceed even an otherwise
+  // empty projection. Never invent an abbreviated retrieval identity.
+  const summary={kind:value.kind,...(canonical?{execution_references:[],reference_retention:'omitted_from_canonical'}:{}),
+    presentation:{status:'summary',reason:'The read metadata exceeds the available byte budget.'},
+    next_action:'Reuse the original output_dir and read a single requested field by pointer. For an execution archive use /result/builder/details or /result/checks/N/execution/details.'}
+  const located={...summary,run_directory:value.run_directory}
+  return size(located)<=budget?located:{...summary,run_directory_omitted:true}
+}
+
 function boundedIsolatedFacts(original:any,presented:any) {
-  if(Buffer.byteLength(JSON.stringify(presented))<=MAX_PRESENTATION_BYTES)return presented
-  return isolatedSummary(original)
+  if(isReportRead(presented))return reportReadProjection(presented,MAX_PRESENTATION_BYTES)
+  return Buffer.byteLength(JSON.stringify(presented))<=MAX_PRESENTATION_BYTES?presented:isolatedSummary(original)
 }
 
 function isolatedSummary(original:any) {
@@ -326,7 +386,8 @@ export function isolatedResultSummary(value:any) {
  * run directory; pointer/select reads address any omitted field. */
 export function renderIsolatedResult(value:any):ContentBlock[] {
   const blocks:ContentBlock[]=[{type:'text',
-    text:JSON.stringify(value?.report||value?.progress?isolatedResultSummary(value):boundedFact(value,'',MAX_MODEL_TEXT_BYTES))}]
+    text:JSON.stringify(value?.report||value?.progress?isolatedResultSummary(value)
+      :isReportRead(value)?reportReadProjection(value,MAX_MODEL_TEXT_BYTES):boundedFact(value,'',MAX_MODEL_TEXT_BYTES))}]
   blocks.push(...(value.imageAttachments??[]).filter((row:any)=>row.attachment)
     .map((row:any)=>({type:'image',attachment:row.attachment} as ContentBlock)))
   return blocks
@@ -399,6 +460,28 @@ export async function readIsolatedRun(ctx:any,exec:any,output:string,attach=true
   return {...value,imageAttachments:images}
 }
 
+/** Selective reads still expose the original execution's archive address. Keep
+ * only producer-owned slots whose contents were requested; authored result
+ * objects cannot register arbitrary files as execution archives. */
+function selectedExecutionReferences(report:any,pointers:string[],runDirectory:string) {
+  const requested=(slot:string)=>pointers.some(pointer=>pointer===''||pointer===slot
+    ||pointer.startsWith(slot+'/')||slot.startsWith(pointer+'/'))
+  const result=report?.result
+  const slots=[{pointer:'/result/builder',archive:'builder.json',execution:result?.builder},
+    ...(Array.isArray(result?.checks)?result.checks.map((check:any,index:number)=>({
+      pointer:`/result/checks/${index}/execution`,archive:`check-${check.id}.json`,execution:check.execution})):[])]
+  return slots.filter(slot=>requested(slot.pointer)&&slot.execution?.details)
+    .map(slot=>{
+      const detail=slot.execution.details
+      // The checker declares this exact filesystem layout. Store its run path
+      // once, not in every reference. Opaque native spill locators remain exact.
+      if(detail.stored===true&&detail.storage===undefined&&detail.format==='returned_bridge_envelope_json'
+        &&detail.path===path.join(runDirectory,'executions',slot.archive))
+        return {archive:slot.archive,storage:'run-file',sha256:detail.sha256,bytes:detail.bytes}
+      return {archive:slot.archive,details:detail}
+    })
+}
+
 export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtimeResolver:(exec:any,args:IsolatedArgs)=>Promise<IsolatedRuntime>,
   runner:IsolatedOptions['runner']=runIsolatedProcess,planner:typeof planIsolatedManifest=planIsolatedManifest) {
   if((args.operation??'run')==='read'){
@@ -424,7 +507,8 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
         return {pointer,status:'available',value}
       })
       return {kind:'isolated-houdini-report-selection',run_directory:directory.local,report_path:reportPath,
-        format:'json_selection',items,selected_value_chars:limit-remaining,scope:SCOPE,imageAttachments:[]}
+        format:'json_selection',items,selected_value_chars:limit-remaining,
+        execution_references:selectedExecutionReferences(report,args.select,directory.local),scope:SCOPE,imageAttachments:[]}
     }
     if(args.pointer!==undefined||args.offset!==undefined||args.limit!==undefined){
       const pointer=args.pointer??'',offset=args.offset??0,limit=args.limit??6000
@@ -436,7 +520,8 @@ export async function executeIsolated(ctx:any,exec:any,args:IsolatedArgs,runtime
       const end=Math.min(offset+limit,text.length)
       return {kind:'isolated-houdini-report-page',run_directory:directory.local,report_path:reportPath,
         pointer,offset,total_chars:text.length,next_offset:end<text.length?end:null,
-        format:'json_text_page',text:text.slice(offset,end),scope:SCOPE,imageAttachments:[]}
+        format:'json_text_page',text:text.slice(offset,end),
+        execution_references:selectedExecutionReferences(report,[pointer],directory.local),scope:SCOPE,imageAttachments:[]}
     }
     return readIsolatedRun(ctx,exec,args.output_dir)
   }

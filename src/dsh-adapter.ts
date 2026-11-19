@@ -7,6 +7,7 @@ import type {ExecResult,JsonValue} from './bridge.js'
 import type { SessionEvent } from './execution-history.js'
 import { houdiniToolKind } from './tool-catalog.js'
 import {executionLogValue,renderJobObservation} from './tool-output.js'
+import path from 'node:path'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -26,6 +27,14 @@ export const isHoudiniTool=(name:unknown):name is string => typeof name==='strin
  * Consumers share these addresses; none recursively searches authored data. */
 export function returnedExecutions(tool:string,value:any):{domain:'live'|'isolated';execution:any;archive?:string;runDirectory?:string}[] {
   if(tool==='houdini_isolated'){
+    if(['isolated-houdini-report-selection','isolated-houdini-report-page'].includes(value?.kind))
+      return (Array.isArray(value.execution_references)?value.execution_references:[])
+        .filter((row:any)=>row?.archive==='builder.json'||/^check-[a-z0-9_-]{1,48}\.json$/.test(row?.archive??''))
+        .map((row:any)=>({domain:'isolated' as const,execution:{details:
+          row.storage==='run-file'&&typeof value.run_directory==='string'
+            ?{stored:true,sha256:row.sha256,bytes:row.bytes,format:'returned_bridge_envelope_json',
+              path:path.join(value.run_directory,'executions',row.archive)}:row.details},
+          archive:row.archive,runDirectory:value.run_directory}))
     if(value?.kind!=='isolated-houdini')return []
     return [value.report?.result,value.progress].flatMap(report=>report?[
       {domain:'isolated' as const,execution:report.builder,archive:'builder.json',runDirectory:value.run_directory},

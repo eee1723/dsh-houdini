@@ -63,7 +63,7 @@
 
 - `image_generate`默认`output_policy='managed'`、`purpose='reference'`。`output`省略或安全basename，生成到reference_generated；`purpose='texture'`进入texture。目录来自当前任务所选Houdini的实际现场，结果带角色、工程根、原HIP和观察身份。`output_policy='explicit'`必须给目的地，相对路径沿DSH workspace解释，不查询Houdini。
 - 网络资料保存先读取`project_layout.directories.reference_downloaded`，再用可用的通用下载能力明确选择该目录。精确DSH的`web_fetch`只读取网页文本，不提供二进制下载；本插件没有把它伪装成下载工具或复制一套网络安全策略。取得链接不等于图片已下载或已经看过。
-- `render_view`、`viewport_screenshot`与界面截图默认managed用于视觉检查；选择delivery生成到render。图像先按HIPNAME分组；只有managed继续添加run分组，explicit裸文件名进入visual_check的HIPNAME目录。原有run-id、唯一分配、用户状态恢复和捕获验证保持不变。
+- `render_view`与界面截图默认managed用于视觉检查；选择delivery生成到render。图像先按HIPNAME分组；只有managed继续添加run分组，explicit裸文件名进入visual_check的HIPNAME目录。回执记录实际路径及捕获状态。
 - `render_frame`尊重持久ROP路径或本次显式覆盖。仅传裸文件名时，图像ROP默认进入render的HIPNAME目录、COP的`copoutput`默认texture；SOP/DOP/CHOP缓存按cache角色进入`dsh-artifacts/cache`。新建Karma Render Settings（含Karma Setup）的picture与checkpoint使用同源render目录和原生`$HIPNAME`，可随Save As继续求值；已有ROP的含目录路径不重写。COP要保留可继续导出的工程设置，应同时保存ROP中的`$HIP`相对路径，不把一次临时覆盖当作持久配置已修改。
 
 ## 生命周期与交付

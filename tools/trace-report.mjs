@@ -351,8 +351,8 @@ const html = `<!DOCTYPE html>
     <div class="cards">
       <div class="card"><div class="num">${steps.length}</div><div class="cap">工具调用</div></div>
       <div class="card"><div class="num">${totalVerbCalls}</div><div class="cap">动词调用</div></div>
-      <div class="card"><div class="num">${verbAdoption.callsWithVerbs}/${verbAdoption.houdiniCalls}</div><div class="cap">Houdini 调用含动词（${verbAdoption.callCoveragePct ?? 0}%）</div></div>
-      <div class="card"><div class="num">${verbAdoption.verbDensity}</div><div class="cap">每次 Houdini 调用动词数</div></div>
+      <div class="card"><div class="num">${verbAdoption.callsWithVerbs}/${verbAdoption.houdiniCalls}</div><div class="cap">同步现场调用含动词（${verbAdoption.callCoveragePct ?? 0}%）</div></div>
+      <div class="card"><div class="num">${verbAdoption.verbDensity}</div><div class="cap">每次同步现场调用动词数</div></div>
       ${verbAdoption.isolatedCalls ? `<div class="card"><div class="num">${verbAdoption.isolatedRunCalls} / ${verbAdoption.isolatedReadCalls}</div><div class="cap">独立执行提交 / 报告读取（不计入现场裸调用）</div></div>` : ''}
       <div class="card"><div class="num">${usedVerbs}/${catalogVerbs}</div><div class="cap">目录广度（非合规率）</div></div>
       <div class="card"><div class="num">${verbAdoption.rawReadOnlyCalls}</div><div class="cap">无动词只读 query（守卫范围）</div></div>
@@ -369,7 +369,7 @@ const html = `<!DOCTYPE html>
       <div class="card"><div class="num" style="color:${unmatchedResults.length ? 'var(--bad)' : 'var(--ok)'}">${unmatchedResults.length}</div><div class="cap">无匹配 call 的 result</div></div>
     </div>
     <p class="dim-text">工具分布: ${Object.entries(toolCount).map(([k, v]) => `${esc(k)} ×${v}`).join(' ｜ ')}</p>
-    <p class="dim-text">成功 exec 含动词 ${verbAdoption.successfulExecWithVerbs}/${verbAdoption.successfulExecCalls}（${verbAdoption.successfulExecVerbCoveragePct ?? '—'}%）只描述调用形态，分母包含验证/动态函数；不代表修改采用率。${verbAdoption.structuredCalls ? `另有${verbAdoption.structuredCalls}次结构化调用不执行Python，已从无动词裸调用统计排除；Python调用含动词${verbAdoption.callsWithVerbs}/${verbAdoption.pythonCalls}。` : ''}Gate read_only 是静态扫描结果，no_scene_change 不排除文件或 Python 全局副作用；零裸修改候选不证明没有修改。</p>
+    <p class="dim-text">成功 exec 含动词 ${verbAdoption.successfulExecWithVerbs}/${verbAdoption.successfulExecCalls}（${verbAdoption.successfulExecVerbCoveragePct ?? '—'}%）只描述调用形态，分母包含验证/动态函数。${verbAdoption.structuredCalls ? `其中同步现场 Python 调用含动词 ${verbAdoption.pythonCallsWithVerbs}/${verbAdoption.pythonCalls}，另有 ${verbAdoption.structuredCalls} 次结构化调用。` : ''}现场后台任务的终态动词计入动词总数。Gate read_only 是静态扫描结果，no_scene_change 不排除文件或 Python 全局副作用。</p>
     ${replayedResults.length ? `<p class="dim-text">已按 callId 排除 ${replayedResults.length} 条历史 tool/result replay；它们不计入调用、动词、失败或耗时。</p>` : ''}
     ${unmatchedResults.length ? `<p class="dim-text">另有 ${unmatchedResults.length} 条 tool/result 无法关联原始 call，已排除并列为 trace schema/integrity diagnostics。</p>` : ''}
     ${userMsgs.map((m) => `<div class="user-msg"><span class="t">${fmtTime(m.time)}</span> 👤 ${esc(m.text)}</div>`).join('')}
@@ -386,6 +386,7 @@ const html = `<!DOCTYPE html>
     <p class="dim-text">字符数不是token、耗时或可节省量；回滚代码已包含在提交量中。相似度只比较去首尾空白的相同行，忽略行序和缩进，不证明语义等价或浪费；必要重试和不同模块可能相似。候选附步骤定位和有限差异片段，完整代码在下方调用详情。</p>
     <details><summary>候选对、差异片段、统计口径与分析范围</summary><pre>${esc(JSON.stringify(retryWork,null,2))}</pre></details>
     <h2>请求用量与逐轮运行状态</h2>
+    <p>宿主步骤开始到助手消息写入共 ${requestTelemetry.responseTiming.measuredSteps} 步，${requestTelemetry.responseTiming.elapsedMs === null ? '总时长未知' : (requestTelemetry.responseTiming.elapsedMs / 60000).toFixed(1) + ' 分钟'}。${requestTelemetry.responseTiming.measuredStreamSteps ? `其中 ${requestTelemetry.responseTiming.measuredStreamSteps} 步有首段流时间，两段合计分别为首段前 ${(requestTelemetry.responseTiming.beforeStreamMs / 60000).toFixed(1)} 分钟、首段至消息写入 ${(requestTelemetry.responseTiming.streamToMessageMs / 60000).toFixed(1)} 分钟。` : ''} 此区间包含宿主、供应商与传输耗时，可与后台任务重叠。</p>
     <p>记录到 ${requestTelemetry.requestCount} 个请求的 usage；末请求输入含缓存 ${requestTelemetry.last?.inputWithCache ?? '未知'} tokens。
     累计报告 input ${requestTelemetry.totals.inputTokens ?? '未知'} / cache read ${requestTelemetry.totals.cacheReadTokens ?? '未知'} / output ${requestTelemetry.totals.outputTokens ?? '未知'}，其中 reasoning ${requestTelemetry.totals.reasoningTokens ?? '未知'}（已包含在 output 中）。
     逐轮上游错误 ${requestTelemetry.upstreamTurnErrors.length}；compaction 事件 ${requestTelemetry.compactionEvents.length}；usage 去重 ${requestTelemetry.duplicateUsageEvents}，更新 ${requestTelemetry.updatedUsageEvents}。</p>

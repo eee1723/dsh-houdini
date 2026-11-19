@@ -127,7 +127,7 @@ geo_frame_diff(out, 1, 12, attrib='P')
 ## 7. 视觉与用户 viewport
 
 - `render_view(EXPLICIT_SOP)`：agent 产物验证，走隐藏 proxy；用户 display/visibility 不选择源。
-- `viewport_screenshot`：用户屏幕诊断；用户显示空节点时空图是正确诊断结果。
+- `houdini_ui_list` → `houdini_ui_screenshot`：用户界面诊断，捕获当前可见Scene Viewer原样显示；用户显示空节点时空图是正确诊断结果。
 - 两者对照：render 有内容而 viewport 空，说明用户 display/viewport 漂移；两者都空，回到 SOP 数据。
 
 视觉 prompt 先中性描述，不要预设“这是成功的草地”。
@@ -145,7 +145,7 @@ geo_frame_diff(out, 1, 12, attrib='P')
 
 精确签名和返回读verb_help。tab_create返回hou.Node，list_parms/read_parms返回list；选择参数名用read_parms(names=[...])。
 菜单优先使用当前token/set_value，数值字符串是HScript表达式，tuple表达式使用实际组件名。
-None保留空输入槽；跨subnet使用明确端口或Object Merge。connect直接替换指定输入，Merge先断后接可能前移槽位，回读inputs_after。
+None保留空输入槽。SOP子网外用 `connect(source, subnet, index=1)` 指定公共输入，内部用 `tab_create(subnet, 'null', inputs=[subnet.indirectInputs()[1]])`，或对已有节点用 `connect(subnet.indirectInputs()[1], dst)`。内线随外部换源；按路径独立引用时使用 Object Merge。connect直接替换指定输入，Merge先断后接可能前移槽位，回读inputs_after。
 控制默认值与当前值是不同操作，分别使用create_spare_parms(update_defaults=...)和set_parms并回读。
 
 声明Sweep第二输入时tab_create会在接线后校正surfaceshape=input，build显式parms仍优先。
@@ -195,7 +195,7 @@ __result__ = result['validation']
   全量拓扑/材质证明。用户或 agent 改了受影响参数/接线后重新检查。
 
 输入只引用前面 spec 或现有直属 child 名，可用 None 跳过input；如 Wrangle 的 `[None,'anchors']`。
-跨 subnet 在目标网络创建 Object Merge 并用objpath1引用源，不尝试用不同端口跨网络接线。
+布局为可替换输入时使用所属子网的原生输入槽。布局为另一个网络的独立路径引用时，在目标网络创建 Object Merge 并用objpath1引用源。
 模块不覆盖同名节点，失败清理本批新增节点，
 不自动改变用户 output；单节点仍可 `tab_create`。收尾再 `sop_set_output`。
 

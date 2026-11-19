@@ -1,25 +1,20 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.2.2-rc.3",
+  "preferredVersion": "0.2.2-rc.5",
   "host": "official-dsh-desktop",
   "runtimeOwnership": "host",
   "releases": [
     {
-      "dshVersion": "0.2.2-rc.3",
+      "dshVersion": "0.2.2-rc.5",
       "rpcWire": "slash-generated-args-v1",
       "browserAuth": "process-token-api-peer-signed-cookie-v2",
       "trajectorySource": "useTrajectory(snapshot.eventNodes)",
       "sessionFormatVersion": 4,
       "verificationStatus": "official-desktop-plugin-verified",
       "verifiedOn": [
-        "Official DSH 0.2.2-rc.3 npm and Windows Desktop use matching Host contract modules, Cordis 4.1.0 and Schemastery 3.19.0",
-        "Official browser preserves default and other modes, selected workspace and session, project menu, Trace and resident draft",
-        "Native and PTC controlled provider loop preserves selected scope, uncertain execution and recovery facts; released conversation assembler reads native and nested node delivery",
-        "Native ToolJobs retain original metadata, bounded canonical facts and cancellation outcomes across plugin unload and reload",
-        "Isolated Houdini 21.0.440 and 22.0.368 verify raw gate, node ownership, caught failure, Tab creation failure, object parenting and scene/network/render contracts",
-        "Frozen tarball installs through the official Windows Desktop CLI and native plugin UI in owned profiles; enabling adds only the Houdini preset",
-        "Installed helper loads in Houdini 21.0.440 and 22.0.368 with current build identity, main-thread HOM and menu routing to the exact native conversation",
-        "Houdini 22.0.368 live-job fixture verifies exact original values, quiet and cancelled jobs, original-receipt recovery and cold Host reattachment without resubmission"
+        "Windows x64 official Desktop with bundled @deepseek-ai/dsh 0.2.2-rc.5",
+        "Native plugin installation and scope activation in owned profiles; installed helper on Houdini 21.0.440 and 22.0.368",
+        "Execution boundary regression in isolated Houdini 21.0.440 and 22.0.368"
       ],
       "pendingVerification": [
         "End-user current profile upgrade, system dsh:// activation, real providers and existing user Houdini scenes",

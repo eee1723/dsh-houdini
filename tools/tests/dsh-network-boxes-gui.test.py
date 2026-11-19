@@ -33,7 +33,7 @@ def run():
   ]
   dry=call(f"__result__=network_boxes({parent!r},{groups!r},dry_run=True)")['result']
   applied=call(f"__result__=network_boxes({parent!r},{groups!r},expected_plan={dry['plan_sha256']!r})")
-  assert applied['result']['applied'] and applied['execution']['impact']['attempted'] is False
+  assert applied['result']['applied'] and applied['transaction']['effects']=='registered'
   for source,target in ((1,2),(5,6),(9,10),(15,16)):
    call(f"connect({paths[source]!r},{paths[target]!r})")
   foreign=hou.node(parent).createNode('null','fixed_foreign');foreign.setPosition(hou.Vector2(0,-8))

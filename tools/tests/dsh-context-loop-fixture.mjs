@@ -24,6 +24,8 @@ const nestedCanonical=event=>expandArchivedExecution(event?.data?.meta?.canonica
 
 export function apply(ctx) {
   const output = process.env.DSH_CONTEXT_FIXTURE_OUT
+  const installation=JSON.parse(fs.readFileSync(path.join(path.dirname(output),'shared-host-test.json'),'utf8'))
+  const installedSkills=path.join(installation.plugin,'skills')
   const outcomeReceipts = process.env.DSH_OUTCOME_FIXTURE
     ? JSON.parse(fs.readFileSync(process.env.DSH_OUTCOME_FIXTURE,'utf8')) : null
   const expiryStart = outcomeReceipts ? 12 : 10
@@ -71,32 +73,20 @@ export function apply(ctx) {
   const repetitionStart = catalogStart + (catalogReceipt ? 6 : 0)
   const surfaceMethod = process.env.DSH_SURFACE_METHOD_FIXTURE === '1'
   const surfaceStart = repetitionStart + (repetitionMethod ? 2 : 0) + 1
+  // These representative resources exercise all three provider transports.
+  // Registration and reachability across the complete catalog are verified separately.
   const surfaceResources = [
-    ['skill','houdini-task-decomposition','houdini-task-decomposition/SKILL.md'],
-    ['skill','houdini-sop-workflow','houdini-sop-workflow/SKILL.md'],
+    ['skill','houdini-kit-workflow','houdini-kit-workflow/SKILL.md'],
+    ['read',null,'houdini-kit-workflow/references/style-and-sources.md'],
+    ['nested',null,'houdini-kit-workflow/references/dimensions-and-assembly.md'],
     ['skill','houdini-asset-integration','houdini-asset-integration/SKILL.md'],
-    ['read',null,'houdini-sop-workflow/references/modeling-methods.md'],
-    ['skill','houdini-isolated-execution','houdini-isolated-execution/SKILL.md'],
-    ['nested',null,'houdini-sop-workflow/references/sop-patterns.md'],
     ['skill','houdini-surface-workflow','houdini-surface-workflow/SKILL.md'],
-    ['read',null,'houdini-surface-workflow/references/appearance-and-sources.md'],
-    ['read',null,'houdini-surface-workflow/references/generated-textures.md'],
-    ['nested',null,'houdini-surface-workflow/references/sop-preview-and-uv.md'],
+    ['read',null,'houdini-surface-workflow/references/sop-preview-and-uv.md'],
     ['skill','houdini-cop-workflow','houdini-cop-workflow/SKILL.md'],
     ['nested',null,'houdini-cop-workflow/references/pattern-design.md'],
-    ['skill','houdini-parameter-ui','houdini-parameter-ui/SKILL.md'],
-    ['nested',null,'houdini-parameter-ui/references/control-bindings.md'],
-    ['skill','houdini-network-handoff','houdini-network-handoff/SKILL.md'],
-    ['read',null,'houdini-network-handoff/references/network-layout.md'],
-    ['nested',null,'houdini-network-handoff/references/file-delivery.md'],
-    ['read',null,'houdini-sop-workflow/references/module-design-collaboration.md'],
-    ['read',null,'houdini-sop-workflow/references/curves-and-routing.md'],
-    ['skill','houdini-solaris-karma-workflow','houdini-solaris-karma-workflow/SKILL.md'],
-    ['nested',null,'houdini-solaris-karma-workflow/references/karma-patterns.md'],
-    ['read',null,'houdini-task-decomposition/references/reference-transfer.md'],
   ].map(([kind,name,relative])=>{
-    const file=fileURLToPath(new URL('../../skills/'+relative,import.meta.url))
-    const source=fs.readFileSync(file,'utf8').replaceAll('\r\n','\n')
+    const file=path.join(installedSkills,relative)
+    const source=fs.readFileSync(new URL('../../skills/'+relative,import.meta.url),'utf8').replaceAll('\r\n','\n')
     return {kind,name,file,body:kind==='skill'?source.replace(/^---\n[\s\S]*?\n---\n/,'').trim():source.trim()}
   })
   const geometryStart = surfaceStart + (surfaceMethod ? surfaceResources.length : 0)
@@ -106,8 +96,8 @@ export function apply(ctx) {
   const receiptStart = renderStart + (renderReceipt ? 2 : 0)
   const nestedLargeStep=receiptStart+5
   const finalStep = nestedLargeStep+1
-  const methodFile = fileURLToPath(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url))
-  const methodText = repetitionMethod ? fs.readFileSync(methodFile,'utf8').replaceAll('\r\n','\n') : ''
+  const methodFile = path.join(installedSkills,'houdini-sop-workflow/references/modeling-methods.md')
+  const methodText = repetitionMethod ? fs.readFileSync(new URL('../../skills/houdini-sop-workflow/references/modeling-methods.md',import.meta.url),'utf8').replaceAll('\r\n','\n') : ''
   const personaBody = fs.readFileSync(new URL('../../presets/houdini/persona.md',import.meta.url),'utf8')
     .replaceAll('\r\n','\n').trim().split('\n\n').slice(1)
   const skillBody = fs.readFileSync(new URL('../../skills/houdini-sop-workflow/SKILL.md',import.meta.url),'utf8')
@@ -263,9 +253,11 @@ export function apply(ctx) {
         if(surfaceMethod){
           assert(system.includes('houdini-surface-workflow'),'surface routing must reach the provider')
           for(const [index,resource] of surfaceResources.entries()){
-            if(step<=surfaceStart+index)continue
+            // Check initial delivery and retention at the end of the turn.
+            if(step!==surfaceStart+index+1 && step!==finalStep)continue
             const message=options.messages.find(m=>m.role==='tool'&&m.toolCallId==='context-'+(surfaceStart+index))
             const raw=message?.content.filter(b=>b.type==='text').map(b=>b.text).join('\n')??''
+            assert(!message?.isError,`failed ${resource.kind} read of ${resource.file}: ${raw.slice(0,600)}`)
             const visible=raw.replaceAll('\r\n','\n')
             // Native read is text; nested read may be JSON encoded. Preserve
             // literal backslash-n in code examples rather than unescaping all text.

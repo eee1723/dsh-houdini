@@ -194,7 +194,7 @@ npm test
 `python tools/tests/dsh-note-recovery.test.py <H21-hython> <H22-hython> --output-dir <新证据目录>`。
 该入口分别保存、重开独立HIP，验证Sticky Note和Network Box的真实加载身份、复制/同名替换拒绝、仅编辑项任务、inactive作者及激活原子性；不连接用户现场，也不把父网络标记当作归属。
 
-视口临时着色用[dsh-viewport-screenshot](../tools/tests/dsh-viewport-screenshot.test.py)核对成功、部分setter失败和恢复失败；[原生GUI入口](../tools/tests/dsh-ui-surfaces-gui.test.py)的`--only-shading`核对H21/H22实际Bridge只读settings、捕获期间着色、图像与恢复。该入口复用自有WorkerJob回收，独立工程目录必须在源码树外。
+Scene Viewer当前像素捕获沿[原生GUI入口](../tools/tests/dsh-ui-surfaces-gui.test.py)与其它可见界面同测，检查面板身份、图像大小、场景和界面保持。该入口复用自有WorkerJob回收，独立工程目录必须在源码树外。
 
 通过 [houdini_test_environment](../tools/houdini_test_environment.py) 创建临时偏好、空 package 环境和目标安装路径；启动目录使用指定安装的 bin。Python 通过 PYTHONPATH/测试入口兼容 H21/H22，不继承用户插件、Qt override 或模型凭据。隔离检查不连接 live，也不加载用户 HIP。部署运行器的纯 Python 检查由普通 CLI 解释器执行一次；显式hython只执行HOM与实际启动隔离检查，避免把Houdini运行成本混入普通进程／内存夹具。
 
@@ -220,11 +220,11 @@ npm test
 
 COP接入材质使用[dsh-cop-material-delivery](../tools/tests/dsh-cop-material-delivery.test.py)在新建隔离工程中验证曲面贴图、材质直接采样alpha、粗糙度控制、`$HIP/dsh-artifacts/textures`读回与同版本独立进程重开。完整纹理网络不以数值变化代替实际图片检查。跨版本节点/算法默认值可能不同，分别验证各版消费和重开，不默认像素一致。
 
-SOP表面入口使用[dsh-sop-surface](../tools/tests/dsh-sop-surface.test.py)：`python tools/tests/dsh-sop-surface.test.py --houdini <明确houdini.exe> --output <新建仓库外目录>`，分别在H21/H22隔离GUI验证同一个COP Preview Material的纯色COP→图案→文件输入、vertex UV跨尺寸修改、render_view代理、用户视窗和文件依赖重开。像素标记只证明校准图案生效，不能替代自然任务外观判断；法线、透明度和正式渲染按受影响范围另验。首次显示Constant后切换纹理的刷新范围与稳定COP输入分开，不把后者通过扩大为前者已修复。表面路由与按需资料传输复用[dsh-host-smoke](../tools/tests/dsh-host-smoke.test.py)的`--context-loop --surface-method`，在精确DSH中核对实际provider收到的persona、完整skill及原生/嵌套read内容，不用源码正则断言代替消费方验证。这是受控模型传输检查，不证明自主选用。
+SOP表面入口使用[dsh-sop-surface](../tools/tests/dsh-sop-surface.test.py)：`python tools/tests/dsh-sop-surface.test.py --houdini <明确houdini.exe> --output <新建仓库外目录>`，分别在H21/H22隔离GUI验证同一个COP Preview Material的纯色COP→图案→文件输入、vertex UV跨尺寸修改、render_view离屏预览和文件依赖重开。像素标记只证明校准图案生效，不能替代自然任务外观判断；法线、透明度和正式渲染按受影响范围另验。首次显示Constant后切换纹理的刷新范围与稳定COP输入分开，不把后者通过扩大为前者已修复。表面路由与按需资料传输复用[dsh-host-smoke](../tools/tests/dsh-host-smoke.test.py)的`--context-loop --surface-method`，在精确DSH中核对实际provider首次收到及最终保留的构件、资产接入、表面和COP技能与代表性资料，覆盖原生skill、read及嵌套read。这是受控模型传输检查，不证明自主选用。
 
 指定生图接入使用[图像请求回归](../tools/tests/image-generation.test.mjs)覆盖精确路由、参考图片字节、防覆盖/文件策略、原图恢复与不自动重试；[真实DSH图片消费](../tools/tests/dsh-image-generation-smoke.test.py)用自有HTTP夹具验证动态设置/凭据、原生及PTC请求、真实附件与交付，默认不调用收费模型。真实提供方测试另记录实际model、请求、原图与视觉范围，不把夹具通过当成外部API可用。
 
-复杂表面使用[dsh-surface-textures](../tools/tests/dsh-surface-textures.test.py)：`python tools/tests/dsh-surface-textures.test.py --houdini <明确houdini.exe> --output <新建仓库外目录> [--texture <已生成PNG>]`。隔离GUI覆盖共享图案的底色/粗糙度/高度与法线、图案编辑、圆柱vertex UV的物理尺度、File COP及混合图层、用户视窗与同版本独立重开。默认只使用程序生成文件；可传外部生图结果，脚本不调用收费模型。像素变化只证明消费或参数响应，重复边界、法线方向与外观仍须看实际图；文件输入通过不等于任意生图服务或Karma通过。
+复杂表面使用[dsh-surface-textures](../tools/tests/dsh-surface-textures.test.py)：`python tools/tests/dsh-surface-textures.test.py --houdini <明确houdini.exe> --output <新建仓库外目录> [--texture <已生成PNG>]`。隔离GUI覆盖共享图案的底色/粗糙度/高度与法线、图案编辑、圆柱vertex UV的物理尺度、File COP及混合图层、离屏外观与同版本独立重开。默认只使用程序生成文件；可传外部生图结果，脚本不调用收费模型。像素变化只证明消费或参数响应，重复边界、法线方向与外观仍须看实际图；文件输入通过不等于任意生图服务或Karma通过。
 
 参数模式与条件使用[dsh-parameter-conditions](../tools/tests/dsh-parameter-conditions.test.py)在隔离H21/H22核对原生toggle/exclusive条的存储值、合法组合、非法值、归属和回滚，以及COP逐轴尺度在关闭/开启模式时的真实图层响应。参数目录的conditionals、menu_kind与set_value经过[目录回归](../tools/tests/dsh-parameter-catalog.test.py)保存实际回执；以`DSH_CATALOG_FIXTURE_OUT=<外部JSON>`导出，再用dsh-host-smoke的`--context-loop --catalog-fixture <JSON>`核对真实DSH原生/嵌套消费。几何表面方法的反例应区分全局UV范围与各目标面映射、部件单独正确与装配关系正确；自然任务验证不以技能读取或全局包络响应代替这些性质。
 
@@ -236,7 +236,7 @@ UV与拓扑的机制范围由[dsh-uv-construction](../tools/tests/dsh-uv-constru
 
 现场原生jobs使用[真实live长任务组合](../tools/tests/dsh-live-job-loop.test.py)传`--runtime-cache <精确DSH> --hython <目标hython>`，启动自有DSH Host与独立Bridge，核对原生/PTC提交与完整结果、原作者完成通知、排队取消、运行中取消后真实终态、丢提交响应和Host重开原任务恢复；H21/H22分别验证。夹具记录并核对两段Host实际消费的构建摘要，期间重建lib会使验收无效。规划回复由本地夹具控制，不证明自然任务质量或用户live加载。[通用jobs通知回归](../tools/tests/dsh-job-completion-fixture.mjs)接受同一精确缓存，核对取消竞争、大结果展示限额、冷历史原值及已消费结果/终态生产者引用释放。在线投影检查必须使用真实DSH registry、长工具历史及持久恢复，不能用仅聊天事件或配置存在代替实际消费者取得的状态。
 
-资产主入口与后加模块用[dsh-asset-edit-entry](../tools/tests/dsh-asset-edit-entry.test.py)在隔离H21/H22验证：从当前模块值初始化公共控制，数值/开关单向引用，SOP主控驱动真实COP图层与最终材质消费者，两个COP容器的上层分组、原入口说明更新，以及同版本独立重开。跨进程图层对照使用完整buffer和明确元数据，不能把包含进程内identity的观察hash当跨进程内容标识。上述真实DSH的`--surface-method`同时验证参数与网络交接资料的按需消费。机制通过不证明自然模型会选对公共参数，或实际GUI布局已经验收。
+资产主入口与后加模块用[dsh-asset-edit-entry](../tools/tests/dsh-asset-edit-entry.test.py)在隔离H21/H22验证：从当前模块值初始化公共控制，数值/开关单向引用，SOP主控驱动真实COP图层与最终材质消费者，两个COP容器的上层分组、原入口说明更新，以及同版本独立重开。跨进程图层对照使用完整buffer和明确元数据，不能把包含进程内identity的观察hash当跨进程内容标识。机制通过不证明自然模型会选对公共参数，或实际GUI布局已经验收。
 
 孔径检查的能力范围由[dsh-quality-contracts](../tools/tests/dsh-quality-contracts.test.py)核对：几何违反条件、检查能力/预算不足、非法参数分别保留不同结果；能力不足不回滚同批正常修改。完整帮助的runtime_limits与执行来自同一维护源。目录回执导出的interface_observation由上述真实DSH循环同时核对原生/嵌套消费，不能只检查Python返回字典。
 
@@ -260,7 +260,7 @@ UV与拓扑的机制范围由[dsh-uv-construction](../tools/tests/dsh-uv-constru
 
 此方案只改变发行装配，媒体二进制逐字节保持，GitHub/npm仍分发同一完整包。相比安装时另下载资源，它不增加用户联网准备与失败恢复；相比拆成多个npm包，它不增加版本关联和多份安装来源。Host、运行路径与用户配置均不受影响。仅在实际依赖或许可变化时调整引用范围，不按体积自动删除材料。验证以发行装配回归、安装文件清单与合成媒体操作为准。
 
-预览后端变更使用[camera-preview-smoke](../tools/camera-preview-smoke.py)在自有GUI中核对透视/正交及detail取景、几何Alpha与实体背板的实际合成、PNG/viewport输出及frame/相机/选择/可见性恢复。原生节点参数存在、不透明RGB出图或透明背景均不能替代几何透明验证；新增后端或Houdini构建先通过同一公开合同，再调整选择边界。
+预览后端变更使用[camera-preview-smoke](../tools/camera-preview-smoke.py)在自有GUI中核对透视/正交及detail取景、几何Alpha与实体背板的实际合成、PNG输出和用户空display状态下的显式取景，并核对frame、相机、布局、选择、可见性和着色设置。原生节点参数存在、不透明RGB出图或透明背景均不能替代几何透明验证；新增后端或Houdini构建先通过同一公开合同，再调整选择边界。
 
 Karma创建默认由[dsh-karma-defaults](../tools/tests/dsh-karma-defaults.test.py)在隔离H21/H22核对：原生景深默认与DSH新建设置、显式开启、已有艺术设置保持，以及最终USD的Karma属性；可选`--render`用小图对照实际清晰／失焦，不改render_frame的艺术设置。曲线方法由[dsh-curve-paths](../tools/tests/dsh-curve-paths.test.py)核对原生可编辑路径、控制引用到最终Sweep、实际线段最近对、局部弧距排除、预算与不支持输入；不把折线包络通过推广为平滑曲线或最终实体无穿插。工程图像目录由[project-paths](../tools/tests/project-paths.test.mjs)、[managed-preview](../tools/tests/dsh-managed-preview-paths.test.py)及[输出消费](../tools/tests/dsh-output-checkpoint.test.py)共同核对HIP分组、实际参数求值、显式模板与字面路径、Save As和隔离副本。
 
@@ -279,7 +279,7 @@ HDA正常界面比较与真实覆盖拒绝用[dsh-hda-lifecycle](../tools/tests/
 
 节点交付的定向入口为[Host路由](../tools/tests/node-delivery.test.mjs)、[原生/嵌套卡片投影](../tools/tests/node-delivery-client.test.mjs)、[持久标识HOM](../tools/tests/dsh-node-delivery.test.py)及[排队取消HTTP/HOM](../tools/tests/dsh-node-navigation-cancel.test.py)。跨层修改还需在精确DSH组合和新建的隐藏GUI进程中，由真实Agent工具循环产生原生/嵌套回执，选中对应任务点击实际卡片，回读网络/参数页；重开同HIP并改名后再点击旧卡片，切HIP核对错误提示，暂停队列后切任务并恢复队列核对旧导航没有生效。局部模拟通道不能替代这条连接；测试脚本、截屏、完整结果和运行目录留在仓库外证据目录。服务框保存重开由[服务框回归](../tools/tests/dsh-render-service-box.test.py)核对标题、固定边界、真实成员与用户节点位置。
 
-曲线的脆弱接口由既有[node-knowledge](../tools/tests/dsh-node-knowledge.test.py)核对Add/Curve输入、Bezier与Fit、Resample过冲、Circle Spline及Sweep实际消费朝向；[参数目录](../tools/tests/dsh-parameter-catalog.test.py)导出其真实操作卡，再沿上述DSH原生/嵌套目录消费验证。曲线资料、Karma技能与质量交接仍沿`--surface-method`检查实际提供方输入；资料送达不证明自然作者采用或美术质量。
+曲线的脆弱接口由既有[node-knowledge](../tools/tests/dsh-node-knowledge.test.py)核对Add/Curve输入、Bezier与Fit、Resample过冲、Circle Spline及Sweep实际消费朝向；[参数目录](../tools/tests/dsh-parameter-catalog.test.py)导出其真实操作卡，再沿上述DSH原生/嵌套目录消费验证。领域技能和引用路径由[技能审计](../skills/houdini-skill-governance/SKILL.md)全量检查。
 
 USD继承输出用[camera-framing](../tools/tests/dsh-camera-framing.test.py)在H21/H22核对实际stage/settings选择、Husk文件名、多个磁盘raster、部分缺失、checkpoint未验证、显式覆盖和预检帧恢复；只替换原生render方法来控制文件产出，不据此宣称Karma出图。需要验证真实渲染时显式运行[isolated-render](../tools/tests/dsh-isolated-render.test.py)，覆盖低分辨率Karma CPU的显式图片和原生RenderProduct继承，分别保留进程、文件与像素事实；不加载用户HIP或连接live，不认证场景美术效果。
 

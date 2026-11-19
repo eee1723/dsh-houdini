@@ -192,6 +192,18 @@ try:
     point_geo = hou.Geometry(); point_geo.createPoint()
     assert _content_nonempty(point_geo)['nonempty'] is True
     assert _content_nonempty(root.node('nested').geometry(), max_depth=0)['nonempty'] is None
+    # More wrappers than the observation budget: one real inner polygon is a
+    # sufficient witness. Empty scanned wrappers alone cannot settle the tail.
+    assembly = hou.Geometry()
+    for _ in range(4):
+        assembly.merge(root.node('empty_pack').geometry())
+    assert _content_nonempty(assembly, max_prims=2)['nonempty'] is None
+    assert _content_nonempty(assembly, max_prims=4)['nonempty'] is False
+    assembly.prim(0).setEmbeddedGeometry(root.node('plain').geometry())
+    assert _content_nonempty(assembly, max_prims=2)['nonempty'] is True
+    disk_ref = hou.Geometry()
+    disk_ref.createPacked('PackedDisk')
+    assert _content_nonempty(disk_ref)['nonempty'] is None
     # Module construction cannot certify an empty wrapper or retain failed nodes.
     spec = [{'name':'bad_pack','type':'pack','inputs':['empty']}]
     run(f"build_module({root.path()!r},{spec!r},output='bad_pack')", ok=False)

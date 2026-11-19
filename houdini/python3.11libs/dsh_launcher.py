@@ -119,7 +119,6 @@ def restart_bridge(*, port=None) -> str:
         'dsh_network_notes',
         'dsh_render_service',
         'dsh_ui_capture',
-        'dsh_viewport',
         'dsh_node_layout',
         'dsh_render',
         'dsh_node_creation',

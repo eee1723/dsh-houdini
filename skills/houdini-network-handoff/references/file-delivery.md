@@ -40,7 +40,7 @@
 
 ### 图片与检查
 
-需要交付视觉结果时，给用户已经核对的整体图和必要局部图，避免只交隐藏工程。`render_view`针对明确SOP结果，`viewport_screenshot`针对SceneViewer当时显示，`houdini_ui_screenshot`针对明确界面的当前实际显示；用途不同，不互相代替。已有表面的选择与捕获边界见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
+建模检查的整体图和局部图用`render_view(显式SOP)`离屏生成，默认保留为过程预览。用户要求交图时交付已经核对的图像；需要确认用户当前界面时，用`houdini_ui_screenshot`捕获实际可见表面。见[通用界面观察](../../houdini-tool-development/references/evidence-and-validation.md#观察实际工作界面)。
 
 最终图片用`output_policy='delivery'`生成到本次命名HIP的`render`目录，消费回执的实际文件后再present。picture只传安全basename，分配器追加frame/capture标识，不猜文件名。目录使用`scene_info().project_layout.directories`的同源投影，成图和检查图按各自HIP文件分组；普通managed观察图在`visual_check`目录内继续按run分组，不自动全部交付。未命名HIP的临时UI观察可用explicit绝对路径；不为截图强制Save As。
 

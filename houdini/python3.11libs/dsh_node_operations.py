@@ -106,12 +106,15 @@ def _input_state(node):
         source = connection.inputNode()
         # A native subnet indirect input is a NetworkMovableItem, not a Node.
         # Preserve that distinction instead of inventing a node or dropping it.
-        indirect = connection.subnetIndirectInput() if source is None else None
-        rows.append({'input': connection.inputIndex(),
-                     'source': source.path() if source is not None else None,
-                     'source_kind': 'node' if source is not None else
-                                    'subnet_indirect_input' if indirect is not None else 'non_node',
-                     'source_output': connection.outputIndex()})
+        indirect = connection.subnetIndirectInput()
+        row = {'input': connection.inputIndex(), 'source': source.path() if source is not None else None,
+               'source_kind': 'node' if source is not None else 'non_node',
+               'source_output': connection.outputIndex()}
+        if indirect is not None:
+            row.update(resolved_source=row['source'], resolved_output=row['source_output'] if source is not None else None,
+                       source=None, source_kind='subnet_indirect_input', source_item=indirect.path(),
+                       subnet_input=indirect.number(), source_output=connection.inputItemOutputIndex())
+        rows.append(row)
     return {'connections': rows, 'count': len(connections), 'truncated': len(connections) > 128}
 
 
@@ -133,6 +136,10 @@ def _port_metadata(node):
 
 
 def _resolve_port(node, selector, direction):
+    if isinstance(node, hou.SubnetIndirectInput):
+        if direction != 'output' or type(selector) is not int or selector != 0:
+            raise ValueError('A subnet input connector has one output, selected by integer 0')
+        return 0
     names = tuple(getattr(node, direction + 'Names')())
     if isinstance(selector, str):
         matches = [i for i, name in enumerate(names) if name == selector]
@@ -164,9 +171,10 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     ``preserve_position=True`` 跳过纠流、绝不移动 dst：用于在既有网络中接线并保持
     用户可见布局；此时 ``placement_status='preserved'``。
     """
-    s = dsh_node_access._resolve(src)
+    s = dsh_node_access._wire_source(src)
     d = dsh_node_access._resolve(dst)
-    if (s.type().category() == hou.objNodeTypeCategory()
+    indirect = isinstance(s, hou.SubnetIndirectInput)
+    if (not indirect and s.type().category() == hou.objNodeTypeCategory()
             and d.type().category() == hou.objNodeTypeCategory()):
         raise ValueError(
             "connect 只表达网络数据流，不执行 OBJ parenting。"
@@ -178,7 +186,7 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
         raise ValueError(f'different_parent: source={s.path()} parent={s.parent().path()}, destination={d.path()} parent={d.parent().path()}; use an Object Merge inside the destination SOP network or an explicit subnet input. Changing the input index cannot fix this boundary')
     index = _resolve_port(d, index, 'input')
     output = _resolve_port(s, output, 'output')
-    compatible = getattr(d, 'isInputCompatible', None)
+    compatible = None if indirect else getattr(d, 'isInputCompatible', None)
     # COP Cache/Null-like ports acquire their signature from the first wire.
     # Native isInputCompatible reports false while they are still 'undef'.
     dynamic_type = (isinstance(d, hou.CopNode) and
@@ -202,12 +210,13 @@ def connect(src, dst, index: int | str = 0, *, output: int | str = 0, allow_fore
     except Exception as e:
         raise ValueError(f"连接失败：{s.path()} → {d.path()} input {index}（{e}）；未尝试其他端口") from e
     actual = [c for c in d.inputConnections() if c.inputIndex() == index]
-    if len(actual) != 1 or actual[0].inputNode() != s or actual[0].outputIndex() != output:
+    if len(actual) != 1 or actual[0].inputItem() != s or actual[0].inputItemOutputIndex() != output:
         raise RuntimeError('connect readback mismatch; transaction must roll back')
     placement = ({'adjusted': False, 'status': 'preserved', 'blockers': []}
                  if preserve_position else dsh_node_layout._snap_into_flow(d))
     return {"node": d.path(), "input": index, "source": s.path(), "source_output": output,
-            'source_output_name': s.outputNames()[output] if output < len(s.outputNames()) else None,
+            **({'source_kind': 'subnet_indirect_input', 'subnet_input': s.number()} if indirect else {}),
+            'source_output_name': s.outputNames()[output] if not indirect and output < len(s.outputNames()) else None,
             'input_name': d.inputNames()[index] if index < len(d.inputNames()) else None,
             'type_check': 'cop_exact_image_signature' if image_signature else 'deferred_dynamic_signature' if dynamic_type else 'native' if compatible else 'native_setInput',
             'verified': True, 'semantic_status': 'unverified', "position_adjusted": placement['adjusted'],

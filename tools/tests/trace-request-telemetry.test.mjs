@@ -50,3 +50,19 @@ assert.equal(configuration.requests[0].modelConfiguration.reasoningEffort,'high'
 assert.equal(configuration.requests[0].modelConfiguration.apiReportedByAdapter,'openai-completions');
 assert.equal(configuration.requests[1].modelConfiguration.reasoningEffort,null);
 assert(!JSON.stringify(configuration).includes('do-not-copy'));
+
+// A v4 interrupted reply can have timing without usage. Cached chunks keep
+// their timestamp in time0. Unpaired/replayed messages cannot add elapsed time.
+const timed = collectRequestTelemetry([
+  {time:10,type:'step/start',data:{turn:1,step:1}},
+  {time:30,type:'assistant/message',data:{turn:1,step:1,interrupted:true,stream:[{type:'text-chunks',time0:17}]}},
+  {time:31,type:'assistant/message',data:{turn:1,step:1}},
+  {time:35,type:'step/start',data:{turn:1,step:2}},
+  {time:40,type:'assistant/message',data:{turn:1,step:2}},
+]).responseTiming;
+assert.equal(timed.measuredSteps,2);
+assert.equal(timed.measuredStreamSteps,1);
+assert.equal(timed.elapsedMs,25);
+assert.equal(timed.beforeStreamMs,7);
+assert.equal(timed.streamToMessageMs,13);
+assert.equal(timed.steps[1].beforeStreamMs,null);

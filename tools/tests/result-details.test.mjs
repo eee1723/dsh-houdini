@@ -53,6 +53,26 @@ try {
   const value=await exec.execute({code:'set_parms(...)'},context);
   assert.equal(value.details.stored,true);
   assert.equal(path.relative(dir,value.details.path),path.join('dsh-artifacts','results',value.details.sha256+'.json'));
+  const concurrentOriginal={ok:true,stdout:'',stderr:'',result:{payload:'x'.repeat(4*1024*1024)}};
+  const concurrent=await Promise.all(Array.from({length:4},()=>retainResult(concurrentOriginal,dir)));
+  assert(concurrent.every(row=>row.details.stored&&row.details.path===concurrent[0].details.path),
+    'concurrent identical results share one complete archive');
+  assert.deepEqual(fs.readdirSync(path.dirname(value.details.path)).sort(),
+    [path.basename(value.details.path),path.basename(concurrent[0].details.path)].sort(),
+    'successful publication leaves only the two content-addressed files');
+  const copyWorkspace=path.join(dir,'without-hard-links');fs.mkdirSync(copyWorkspace);
+  const actualLink=fs.promises.link;
+  try {
+    fs.promises.link=async()=>{throw Object.assign(Error('Hard links unavailable'),{code:'ENOTSUP'})};
+    const first=await retainResult(raw,copyWorkspace),second=await retainResult(raw,copyWorkspace);
+    assert.equal(first.details.stored,true);
+    assert.equal(second.details.path,first.details.path);
+    assert.equal(path.relative(copyWorkspace,first.details.path),path.relative(dir,value.details.path));
+    assert.deepEqual(JSON.parse(fs.readFileSync(first.details.path,'utf8')),raw);
+    fs.writeFileSync(first.details.path,'already present');
+    assert.equal((await retainResult(raw,copyWorkspace)).details.stored,false);
+    assert.equal(fs.readFileSync(first.details.path,'utf8'),'already present');
+  } finally {fs.promises.link=actualLink}
   const legacy=path.join(dir,'.dsh-houdini-results',value.details.sha256+'.json');
   fs.mkdirSync(path.dirname(legacy));fs.copyFileSync(value.details.path,legacy);
   assert.equal((await readResultDetail(dir,value.details.sha256,'/result/payload',0,16000,legacy)).result.text,
@@ -138,6 +158,27 @@ try {
     assert.equal(page.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000),
       'native and nested execution/job results survive a saved-project directory change');
   }
+  const laterUnretained=[...native,{type:'tool/call',data:{callId:'later',name:'houdini_exec'}},
+    {type:'tool/result',data:{message:{source:{callId:'later'}},meta:{canonical:noWorkspace}}}];
+  const preserved=await readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>laterUnretained}}});
+  assert.equal(preserved.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000),
+    'a later retention failure does not hide the stored original for the same hash');
+  const alsoSpilled=await retainResult(raw,null,undefined,async content=>({
+    locator:'store:original',bytes:Buffer.byteLength(content),retrievalHint:'Use the native reader.'}));
+  const spilledEvents=[{type:'tool/call',data:{callId:'spill',name:'houdini_exec'}},
+    {type:'tool/result',data:{message:{source:{callId:'spill'}},meta:{canonical:alsoSpilled}}}];
+  for(const history of [[...native,...spilledEvents],[...spilledEvents,...native]]) {
+    const ctx={agent:{session:{header:{cwd:moved},snapshotEvents:()=>history}}};
+    assert.equal((await readResource(args,ctx)).result.text,preserved.result.text,'a readable archive supports JSON paging in either order');
+    await assert.rejects(readResource({...args,pointer:'/missing'},ctx),/field not found/);
+  }
+  const archiveAbsent=structuredClone(native);
+  archiveAbsent[1].data.meta.canonical.details.path=path.join(moved,path.basename(value.details.path));
+  const mixedContext={agent:{session:{header:{cwd:moved},snapshotEvents:()=>[...archiveAbsent,...spilledEvents]}}};
+  assert.equal((await readResource(args,mixedContext)).result.locator,alsoSpilled.details.locator,
+    'a missing archive exposes the other recorded backend without trying to open its locator');
+  fs.writeFileSync(archiveAbsent[1].data.meta.canonical.details.path,'corrupted');
+  await assert.rejects(readResource(args,mixedContext),/hash mismatch/,'corruption remains an explicit failure');
   const generic=structuredClone(nativeJob);generic[1].data.meta.canonical.job.kind='bash';
   // Real checker archives use builder/check names and live inside the original
   // run, not the Host's content-addressed results directory. Both run and read
@@ -150,6 +191,10 @@ try {
     {kind:'isolated-houdini',run_directory:dir,ok:true,report:{result:{builder:execution}}},
     {kind:'isolated-houdini',run_directory:dir,report:{ok:false,result:{checks:[{id:'mechanical',execution:checkExecution}]}}},
     {kind:'isolated-houdini',run_directory:dir,report:{finished:false},progress:{builder:execution}},
+    {kind:'isolated-houdini-report-selection',run_directory:dir,
+      execution_references:[{archive:'builder.json',details:execution.details}]},
+    {kind:'isolated-houdini-report-page',run_directory:dir,
+      execution_references:[{archive:'check-mechanical.json',details:checkExecution.details}]},
   ];
   for(const isolated of isolatedValues)for(const ptc of [false,true]){
     const history=ptc?[
@@ -163,7 +208,7 @@ try {
     assert.equal(page.result.text,JSON.stringify(raw.result.payload,null,2).slice(0,16000));
     const forged=structuredClone(history);
     const data=forged[1].data.meta.canonical;
-    delete data.report;delete data.progress;data.result={builder:execution};
+    delete data.report;delete data.progress;delete data.execution_references;data.result={builder:execution};
     await assert.rejects(readResource(args,{agent:{session:{header:{cwd:moved},snapshotEvents:()=>forged}}}),/ENOENT/,
       'an arbitrary authored result cannot register an archive');
   }

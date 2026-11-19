@@ -146,8 +146,10 @@ class RequestRegistry:
             return True
 
     def complete(self, ref, payload):
-        encoded = json.dumps(payload, ensure_ascii=False)
-        size = len(encoded.encode('utf-8'))
+        # Keep non-ASCII text compact and preserve lone surrogates as JSON
+        # escapes. A result that HTTP can deliver must also reach a terminal receipt.
+        encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8', errors='backslashreplace')
+        size = len(encoded)
         with self.lock:
             self._expire_payloads()
             record = self.records[ref]

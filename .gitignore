@@ -26,6 +26,7 @@ evaluation/product-modeling-dev-v1/runs/
 .dsh-houdini-results/
 .dsh-vision-router/
 .dsh-vision-toolkit/
+.tripo/
 session/
 
 # User-owned temporary Desktop profiles; never commit accounts or chat history.

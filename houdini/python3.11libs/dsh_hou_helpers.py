@@ -372,10 +372,6 @@ from dsh_usd_inspection import (
     usd_stage_summary,
     usd_prim_info,
 )
-from dsh_viewport import (
-    viewport_screenshot,
-)
-
 # Wrapping the public facade here also covers aliases imported before a
 # request starts. Implementation modules keep their ordinary internal calls;
 # no private module functions are replaced or patched by the dispatcher.

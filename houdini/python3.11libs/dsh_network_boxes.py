@@ -12,7 +12,7 @@ import uuid
 
 import hou
 
-from dsh_network_layout import Rect, contains, union
+from dsh_network_layout import Rect, contains, overlap_pairs, union
 from dsh_editor_checkpoints import EditorCheckpoints
 
 
@@ -248,6 +248,42 @@ def _color(box):
 
 def _box_items(box):
     return list(box.items(recurse=False))
+
+
+def inspect_network_boxes(parent, *, active_owner_session=None):
+    """Read one parent, measuring overlaps only between sibling boxes."""
+    boxes = []
+    siblings = {}
+    for box in sorted(parent.networkBoxes(), key=lambda item: item.name()):
+        containing_box = box.parentNetworkBox()
+        owner_name = containing_box.name() if containing_box is not None else None
+        bounds = _box_rect(box)
+        siblings.setdefault(owner_name, []).append((box.name(), bounds))
+        items = _box_items(box)
+        boxes.append({
+            'name': box.name(),
+            'label': box.comment(),
+            'parent_box': owner_name,
+            'members': [item.path() for item in items if isinstance(item, hou.Node)],
+            'child_boxes': [item.name() for item in items if isinstance(item, hou.NetworkBox)],
+            'bounds': bounds.as_list(),
+            'minimized': bool(box.isMinimized()),
+            'provenance': box_provenance(box, active_owner_session)['status'],
+        })
+    overlaps = []
+    for group in siblings.values():
+        overlaps.extend(overlap_pairs(group))
+    return {
+        'ok': True,
+        'phase': 'inspect',
+        'scene_writes': 0,
+        'parent': parent.path(),
+        'boxes': boxes,
+        'direct_node_count': len(parent.children()),
+        'sibling_box_overlap_count': len(overlaps),
+        'sibling_box_overlap_sample': overlaps[:12],
+        'scope': 'Current native sibling-box bounds in this parent; no editor navigation or layout changes.',
+    }
 
 
 def _unsupported_box_reason(box):

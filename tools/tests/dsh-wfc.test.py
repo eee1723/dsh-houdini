@@ -1,4 +1,4 @@
-"""Standard-library adversarial tests for the shipped dsh-wfc solver and resolver."""
+"""Standard-library adversarial tests for the shipped houdini-wfc-workflow solver and resolver."""
 from __future__ import annotations
 
 import copy
@@ -13,10 +13,10 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'skills/dsh-wfc/scripts'))
+sys.path.insert(0, str(ROOT / 'skills/houdini-wfc-workflow/scripts'))
 import wfc
 
-SCRIPT = ROOT / 'skills/dsh-wfc/scripts/wfc.py'
+SCRIPT = ROOT / 'skills/houdini-wfc-workflow/scripts/wfc.py'
 TEST_OUTPUT = os.environ.get('DSH_WFC_TEST_DIR')
 DIRECTIONS = {
     'px': {'opposite': 'nx', 'delta': [1, 0, 0]},
@@ -160,8 +160,84 @@ class SolverTests(unittest.TestCase):
         self.assertEqual([cell['module'] for cell in result['cells']], ['L@0', 'R@0', 'L@0'])
         self.assertEqual(wfc.verify_layout(wfc.Problem(spec), result)['edge_count'], 2)
 
+    def test_custom_direction_names_preserve_unrotated_sockets(self):
+        spec = line_spec(2, directions={
+            'next': {'opposite': 'previous', 'delta': [1, 0, 0]},
+            'previous': {'opposite': 'next', 'delta': [-1, 0, 0]},
+        }, modules=[{'id': 'tile', 'sockets': {'next': 'x', 'previous': 'x'}}])
+        result = solve(spec)
+        self.assertEqual(result['status'], 'solved')
+        self.assertEqual(wfc.verify_layout(wfc.Problem(spec), result)['edge_count'], 1)
+
+    def test_sparse_active_domain_does_not_enumerate_empty_space(self):
+        spec = line_spec(shape=[1000000, 1, 1000000],
+                         active=[[999999, 0, 999999], [0, 0, 0]])
+        result = solve(spec)
+        self.assertEqual([cell['id'] for cell in result['cells']], ['0,0,0', '999999,0,999999'])
+        self.assertEqual(wfc.verify_layout(wfc.Problem(spec), result)['edge_count'], 0)
+
+    def test_count_membership_is_independent_of_remaining_state_count(self):
+        modules = [
+            {'id': 'off_a', 'tags': ['off'], 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'off_b', 'tags': ['off'], 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'on_a', 'tags': ['on'], 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'on_b', 'tags': ['on'], 'sockets': {'px': 'x', 'nx': 'x'}},
+        ]
+        spec = line_spec(2, modules=modules, constraints=[
+            {'cell': [0, 0, 0], 'require_tags': ['off']},
+            {'cell': [1, 0, 0], 'require_tags': ['on']},
+        ], counts=[{'tags': ['on'], 'min': 1, 'max': 1}])
+        result = solve(spec)
+        self.assertEqual(result['status'], 'solved', result)
+        self.assertEqual(wfc.verify_layout(wfc.Problem(spec), result)['status'], 'valid')
+        # Two on states in a domain already contribute one definite on cell.
+        spec['constraints'] = [{'cell': [0, 0, 0], 'require_tags': ['on']}]
+        solver = wfc.Solver(wfc.Problem(spec))
+        solver._propagate()
+        self.assertEqual(solver.domains, [12, 3])
+
+    def test_excluding_tags_means_any_tag_and_empty_list_excludes_nothing(self):
+        spec = line_spec(1, modules=[
+            {'id': 'a', 'tags': ['blocked'], 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'b', 'tags': ['water'], 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'c', 'sockets': {'px': 'x', 'nx': 'x'}},
+        ], constraints=[{'cell': [0, 0, 0], 'exclude_tags': ['blocked', 'water']}])
+        self.assertEqual(solve(spec)['cells'][0]['prototype'], 'c')
+        spec['constraints'][0]['exclude_tags'] = []
+        self.assertEqual(wfc.Problem(spec).initial, [7])
+
+    def test_port_connectivity_distinguishes_adjacent_rooms_from_open_doors(self):
+        spec = line_spec(2, modules=[
+            {'id': 'sealed', 'tags': ['room'], 'sockets': {'px': 'wall', 'nx': 'wall'}},
+            {'id': 'open', 'tags': ['room'], 'sockets': {'px': 'door_out', 'nx': 'door_in'}},
+        ], socket_pairs=[['door_out', 'door_in']],
+            constraints=[{'cell': [0, 0, 0], 'module': 'sealed'}],
+            connectivity={'tags': ['room'], 'root': [0, 0, 0]})
+        topology = solve(spec)
+        self.assertEqual(topology['status'], 'solved')
+        spec['connectivity']['sockets'] = ['door_out', 'door_in']
+        self.assertEqual(solve(spec)['status'], 'unsatisfiable')
+        # The independent verifier must enforce the port rule too.
+        topology['spec_sha256'] = wfc.Problem(spec).spec_sha256
+        with self.assertRaisesRegex(wfc.WfcError, 'Connectivity constraint failed'):
+            wfc.verify_layout(wfc.Problem(spec), topology)
+        spec['constraints'] = []
+        opened = solve(spec)
+        self.assertEqual([cell['prototype'] for cell in opened['cells']], ['open', 'open'])
+        self.assertEqual(wfc.verify_layout(wfc.Problem(spec), opened)['status'], 'valid')
+
+    def test_finite_extreme_weights_do_not_hang_candidate_selection(self):
+        spec = line_spec(1, modules=[
+            {'id': 'a', 'weight': 1e308, 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'b', 'weight': 1e308, 'sockets': {'px': 'x', 'nx': 'x'}},
+            {'id': 'c', 'weight': 5e-324, 'sockets': {'px': 'x', 'nx': 'x'}},
+        ])
+        solver = wfc.Solver(wfc.Problem(spec))
+        self.assertEqual(set(solver._ordered_candidates(7)), {0, 1, 2})
+        self.assertEqual(solver.solve()['status'], 'solved')
+
     def test_independent_components_do_not_multiply_backtracking(self):
-        spec = json.loads((ROOT / 'skills/dsh-wfc/assets/room-shell.spec.json').read_text(encoding='utf-8'))
+        spec = json.loads((ROOT / 'skills/houdini-wfc-workflow/assets/room-shell.spec.json').read_text(encoding='utf-8'))
         spec['shape'] = [16, 2, 16]
         spec.pop('counts')
         spec['budget'] = {'max_steps': 10000, 'max_backtracks': 200, 'max_seconds': 10}
@@ -174,6 +250,7 @@ class SolverTests(unittest.TestCase):
         for mutate in (
             lambda value: value.update(shape=[0, 1, 1]),
             lambda value: value.update(active=[[-1, 0, 0]]),
+            lambda value: value.update(active=[[0, 0, 0], [3, 0, 0]]),
             lambda value: value.update(unknown_option=True),
             lambda value: value['directions']['px'].update(opposite='missing'),
             lambda value: value['modules'][0].update(yaw_variants=[45]),
@@ -221,6 +298,32 @@ class SolverTests(unittest.TestCase):
             else:
                 self.assertEqual(result['status'], 'unsatisfiable', (case, result))
 
+    def test_random_tag_counts_match_independent_exhaustive_search(self):
+        rng = random.Random(51023)
+        for case in range(60):
+            size = rng.randint(2, 5)
+            modules = [{'id': f'm{index}',
+                        'tags': [tag for tag in ('red', 'green') if rng.choice([False, True])],
+                        'sockets': {'px': rng.choice(['a', 'b']), 'nx': rng.choice(['a', 'b'])}}
+                       for index in range(3)]
+            counts = []
+            for tags in (['red'], ['green'], ['red', 'green']):
+                lower = rng.randint(0, size)
+                counts.append({'tags': tags, 'min': lower, 'max': rng.randint(lower, size)})
+            spec = line_spec(size, modules=modules, counts=counts)
+            feasible = False
+            for assignment in itertools.product(modules, repeat=size):
+                if any(a['sockets']['px'] != b['sockets']['nx'] for a, b in zip(assignment, assignment[1:])):
+                    continue
+                if all(rule['min'] <= sum(set(rule['tags']).issubset(module['tags'])
+                                         for module in assignment) <= rule['max'] for rule in counts):
+                    feasible = True
+                    break
+            result = solve(spec)
+            self.assertEqual(result['status'], 'solved' if feasible else 'unsatisfiable', (case, spec, result))
+            if feasible:
+                self.assertEqual(wfc.verify_layout(wfc.Problem(spec), result)['status'], 'valid')
+
 
 class AssetResolutionTests(unittest.TestCase):
     def setUp(self):
@@ -266,7 +369,8 @@ class AssetResolutionTests(unittest.TestCase):
             'id': 'tile', 'sockets': {'px': 'x', 'nx': 'x'},
         }])
         layout = solve(spec)
-        variant = self.variant('brick', mode='axes', min_scale=[.4, .4, .2], max_scale=[.6, .6, .3])
+        variant = self.variant('brick', mode='axes', target_size=[2, 3, 1],
+                               min_scale=[.4, .4, .2], max_scale=[.6, .6, .3])
         catalog = make_catalog(['brick'], [[variant]])
         result = wfc.resolve_instances(layout, catalog, 'brick', self.root / 'catalog.json')
         instance = result['instances'][0]
@@ -275,7 +379,7 @@ class AssetResolutionTests(unittest.TestCase):
         self.assertEqual(instance['pivot'], [12, 20, 32])
         self.assertEqual(instance['world_bounds'], {'min': [0, 0, 0], 'max': [2, 3, 1]})
 
-    def test_yaw_default_target_swaps_footprint_not_height(self):
+    def test_target_size_is_explicit_and_uses_source_local_axes(self):
         spec = line_spec(1, cell_size=[4, 3, 2],
             directions={name: copy.deepcopy(value) for name, value in wfc.DEFAULT_DIRECTIONS.items()
                         if name in {'px', 'nx', 'pz', 'nz'}},
@@ -286,19 +390,48 @@ class AssetResolutionTests(unittest.TestCase):
         layout = solve(spec)
         variant = self.variant('brick')
         variant.update(bounds_min=[0, 0, 0], bounds_max=[2, 1, 4], anchor=[1, 0, 2],
-                       fit={'mode': 'axes', 'min_scale': [1, 1, 1], 'max_scale': [1, 3, 1]})
+                       fit={'mode': 'axes', 'target_size': [2, 3, 4],
+                            'min_scale': [1, 1, 1], 'max_scale': [1, 3, 1]})
         catalog = make_catalog(['brick'], [[variant]])
         instance = wfc.resolve_instances(layout, catalog, 'brick', self.root / 'catalog.json')['instances'][0]
         self.assertEqual(instance['fit']['target_size'], [2, 3, 4])
         self.assertEqual(instance['scale'], [1, 3, 1])
         self.assertEqual(instance['world_bounds'], {'min': [0, 0, 0], 'max': [4, 3, 2]})
+        variant['fit'].pop('target_size')
+        with self.assertRaisesRegex(wfc.WfcError, 'explicit local target_size'):
+            wfc.resolve_instances(layout, catalog, 'brick', self.root / 'catalog.json')
+
+    def test_mounting_envelope_preserves_overhang_and_external_anchor(self):
+        spec = line_spec(2, cell_size=[4, 3, 4],
+            directions={name: copy.deepcopy(value) for name, value in wfc.DEFAULT_DIRECTIONS.items()
+                        if name in {'px', 'nx', 'pz', 'nz'}},
+            modules=[{'id': 'tile', 'yaw_variants': [0, 90],
+                      'sockets': {name: 'x' for name in ('px', 'nx', 'pz', 'nz')}}],
+            constraints=[{'cell': [0, 0, 0], 'yaw': 0}, {'cell': [1, 0, 0], 'yaw': 90}])
+        variant = self.variant('brick')
+        variant.update(bounds_min=[-2, 0, -.3], bounds_max=[2, 3, .4], anchor=[0, 0, 1],
+                       fit_bounds_min=[-1, 0, -.1], fit_bounds_max=[1, 3, .1],
+                       fit={'mode': 'axes', 'target_size': [2, 3, .2]})
+        catalog = make_catalog(['brick'], [[variant]])
+        result = wfc.resolve_instances(solve(spec), catalog, 'brick', self.root / 'catalog.json')
+        for instance in result['instances']:
+            self.assertEqual(instance['scale'], [1, 1, 1])
+            self.assertEqual(instance['fit']['source_size'], [2, 3, .2])
+        for actual, expected in zip(result['instances'][0]['world_bounds']['min'], [0, 0, .7]):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(result['instances'][1]['world_bounds']['max'], [5.4, 3, 4]):
+            self.assertAlmostEqual(actual, expected)
+        variant.pop('fit_bounds_max')
+        with self.assertRaisesRegex(wfc.WfcError, 'declared together'):
+            wfc.resolve_instances(solve(spec), catalog, 'brick', self.root / 'catalog.json')
 
     def test_scale_limit_missing_asset_and_bad_catalog_fail(self):
         spec = line_spec(1, cell_size=[2, 3, 1], modules=[{
             'id': 'tile', 'sockets': {'px': 'x', 'nx': 'x'},
         }])
         layout = solve(spec)
-        variant = self.variant('brick', mode='axes', min_scale=[1, 1, 1], max_scale=[2, 2, 2])
+        variant = self.variant('brick', mode='axes', target_size=[2, 3, 1],
+                               min_scale=[1, 1, 1], max_scale=[2, 2, 2])
         catalog = make_catalog(['brick'], [[variant]])
         with self.assertRaisesRegex(wfc.WfcError, 'scale tolerance') as caught:
             wfc.resolve_instances(layout, catalog, 'brick', self.root / 'catalog.json')

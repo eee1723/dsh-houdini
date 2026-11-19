@@ -225,14 +225,6 @@ def release_reservation(artifact: dict) -> list[str]:
         return [f'reservation release failed: {error}']
 
 
-def retain_reservation(artifact: dict) -> None:
-    """Hide credentials while deliberately retaining an unresolved capture lock."""
-    reservation = artifact.pop('_reservation_path', None)
-    artifact.pop('_reservation_token', None)
-    if reservation:
-        artifact['reservation_retained'] = True
-
-
 def explicit_artifact(hip_path, target, *, frame, purpose: str, role='visual_check') -> dict:
     """Return additive metadata for a caller-resolved explicit destination."""
     actual = _real(target)

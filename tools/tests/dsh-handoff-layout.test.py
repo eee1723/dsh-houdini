@@ -42,6 +42,12 @@ try:
   {'name':'output','label':'Published output and delivery','role':'output','members':paths[16:18]},]
  dry=ok(f"__result__=network_boxes({parent!r},{groups!r},dry_run=True)")['result']
  ok(f"network_boxes({parent!r},{groups!r},expected_plan={dry['plan_sha256']!r})")
+ inspected=ok(f"__result__=network_boxes({parent!r})")
+ before=inspected['result']
+ assert before['direct_node_count']==len(paths) and before['sibling_box_overlap_count']>0,before
+ assert ['controls','placement'] in before['sibling_box_overlap_sample'],before
+ assert next(box for box in before['boxes'] if box['name']=='controls')['members']==paths[:2],before
+ assert inspected['transaction']['status']=='no_scene_change' and before['scene_writes']==0,inspected
  foreign=hou.node(parent).createNode('null','foreign_obstacle');foreign.setPosition(hou.Vector2(0,-8));foreign_pos=tuple(foreign.position())
  foreign_box=hou.node(parent).createNetworkBox('foreign_box');foreign_box.addItem(foreign);foreign_box.setBounds(hou.BoundingRect(-2,-10,3,-6));foreign_bounds=(tuple(foreign_box.position()),tuple(foreign_box.size()))
  note=hou.node(parent).createStickyNote('fixed_user_note');note.setText('Fixed user note');note.setPosition(hou.Vector2(8,-6));note.setSize(hou.Vector2(4,2))
@@ -60,6 +66,9 @@ try:
  applied=call(f"__result__=layout_nodes({parent!r},mode='handoff',boxes={selected!r},expected_plan={old_plan!r})")
  assert applied['ok'] and applied['result']['layout_status']=='passed',applied
  result=applied['result'];assert result['node_overlap_count']==result['box_overlap_count']==result['obstacle_overlap_count']==0
+ after=ok(f"__result__=network_boxes({parent!r})")['result']
+ assert after['sibling_box_overlap_count']==0 and after['sibling_box_overlap_sample']==[],after
+ assert next(box for box in after['boxes'] if box['name']=='foreign_box')['provenance']=='foreign',after
  assert not result['containment_failures'] and result['moved_node_count']>0
  assert not result['clearance_failures'] and result['profile']=='comfortable'
  assert result['required_clearances']['node_horizontal_clearance']>0
@@ -161,6 +170,9 @@ try:
  component=ok(f"__result__=layout_nodes({large_parent!r},mode='component',boxes=['asset'],profile='readable')")['result']
  assert component['layout_status']=='passed' and component['movable_node_count']==620
  assert component['leaf_box_count']==2 and component['obstacle_overlap_count']==0,component
+ current=ok(f"__result__=network_boxes({large_parent!r})")['result']
+ assert current['sibling_box_overlap_count']==0,current['sibling_box_overlap_sample']
+ assert sum(box['parent_box']=='asset' for box in current['boxes'])==2
  # Explicit semantic nesting belongs to the author. Layout of either level
  # preserves the other level, public wiring, parameter references and the
  # actual consumer after a source control changes.

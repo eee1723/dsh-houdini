@@ -169,6 +169,11 @@ try:
                           'expected_contract': contract()})[0] == 400, 'untracked HTTP execution is gone'
     assert post('/jobs', {'code': 'pass', 'owner_session': 'fixture', 'owner_call': 'c',
                           'expected_contract': contract()})[0] == 400, 'untracked job submission is gone'
+    for endpoint in ('/exec', '/jobs'):
+        for invalid_reason in (True, 1, {}, [], '', '  '):
+            status, rejected = post(endpoint, {**complete, 'allow_raw': invalid_reason})
+            assert status == 400 and 'allow_raw' in rejected['error'], rejected
+    assert complete['request_ref'] in b._request_registry._tickets, 'invalid exemptions must not consume the ticket'
     assert post('/exec', admission('pass', body_contract={'version': 1}))[0] == 400, 'malformed contract shape is 400'
     # Contract version typing: bools are int subclasses in Python and must read
     # as 400 (type error), not 409 (version mismatch); floats/strings/null too.

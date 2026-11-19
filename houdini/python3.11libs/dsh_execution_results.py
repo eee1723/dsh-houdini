@@ -174,14 +174,13 @@ def _artifact_candidates(ledger, images, execution_ok):
                         add(output.get('output'), 'render', role if output.get('fresh') else 'diagnostic', name)
             else:
                 add(result.get('output'), 'render', role, name)
-        elif name in ('render_view', 'viewport_screenshot'):
+        elif name == 'render_view':
             artifact = result.get('artifact')
             policy = artifact.get('output_policy') if isinstance(artifact, dict) else None
             path = artifact.get('actual_path') if isinstance(artifact, dict) else None
             if not path:
-                path = result.get('output') if name == 'render_view' else result.get('path')
-            default_role = 'visual-check' if name == 'render_view' else 'diagnostic'
-            add(path, 'image', role if policy in ('explicit', 'delivery') and verified else default_role if verified else 'diagnostic', name)
+                path = result.get('output')
+            add(path, 'image', role if policy in ('explicit', 'delivery') else 'visual-check' if verified else 'diagnostic', name)
     for path in images:
         if len(found) >= 16:
             break
@@ -258,6 +257,7 @@ def _operation_summary(name: str, result):
         return {k: result[k] for k in (
             'ok','dry_run','applied','phase','scene_writes','plan_sha256','parent',
             'created','updated','removed','unchanged','protected_items',
+            'direct_node_count','sibling_box_overlap_count','sibling_box_overlap_sample',
             'current_state_preserved','restored','restore_errors','identity_remaps',
             'original_error','recovery_exception','journaled','scope','layout_status') if k in result} | {
             'box_count': len(result.get('boxes') or [])}
@@ -289,11 +289,11 @@ def _operation_summary(name: str, result):
                 'formula','max_abs_difference','max_abs_error','tolerance','before','after','expected_delta',
                 'restored','parameter_writes','coverage','case_id','reason','results') if k in r}
     if name not in ('verify_network', 'build_module', 'render_view', 'render_frame',
-                    'viewport_screenshot', 'geo_point_spacing','geo_check_interfaces','test_controls'):
+                    'geo_point_spacing','geo_check_interfaces','test_controls'):
         return None
     fields = ('ok','output','target','frame','checked_at','scope','scope_signature','node_count','nonempty','healthy',
               'warning_free','failure_reasons','next_action','file_status','pixel_status','semantic_status',
-               'fresh','file_bytes','bytes','stale','capture_unresolved','user_state_restored','restore_errors','dry_run','valid','node','status','scene_writes','applied','restored','phase','dispatched',
+               'fresh','file_bytes','bytes','stale','user_state_restored','restore_errors','dry_run','valid','node','status','scene_writes','applied','restored','phase','dispatched',
               'expected','tolerance','order','closed','coordinate_space','coverage','pair_count',
               'min_distance','max_distance','failure_count','failures','failures_truncated','sequence_sha256',
               'results','geometry_sha256','contract_sha256','restored','baseline_sha256','controller',
@@ -303,17 +303,22 @@ def _operation_summary(name: str, result):
               'scene_unit_length_meters','bbox_size_sop_local_mm','handoff_output',
               'cook_details','cook_errors','geometry_restore','frame_restored')
     out = {k: r[k] for k in fields if k in r}
+    if name == 'build_module' and r is not result:
+        # The nested checkpoint only observes the created nodes. Its zero
+        # writes must not describe the enclosing construction transaction.
+        out.pop('scene_writes', None)
+        out.update({key: result[key] for key in ('valid', 'dry_run', 'applied') if key in result})
     if name == 'render_frame' and isinstance(r.get('outputs'), list):
         out['outputs'] = r['outputs']
         out['inherited_products'] = r.get('inherited_products')
     if name == 'verify_network' and isinstance(r.get('geometry'), dict):
         out['geometry'] = {k:r['geometry'][k] for k in
             ('points','prims','bbox_min','bbox_max','bbox_size') if k in r['geometry']}
-    if name in ('render_view', 'viewport_screenshot') and isinstance(r.get('artifact'), dict):
+    if name == 'render_view' and isinstance(r.get('artifact'), dict):
         out['artifact'] = {k:r['artifact'][k] for k in (
             'purpose','output_policy','actual_path','hip_relative_path','managed_root',
             'role','project_root','lifecycle','hip_path','hip_name',
-            'run_id','capture_id','frame','reservation_retained') if k in r['artifact']}
+            'run_id','capture_id','frame') if k in r['artifact']}
     if name in ('render_view','render_frame') and isinstance(r.get('framing'), dict):
         out['framing'] = r['framing']
     if 'framing_status' in r:

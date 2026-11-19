@@ -29,4 +29,10 @@ def check():
     assert '/Filter' in {p['path'] for p in summary['prims']['other']},summary
     print('USD light schema summary passed',hou.applicationVersionString(),summary['prims']['lights'])
 
-check()
+if __name__ == '__main__':
+    check()
+    # Only this disposable hython exits here. USD shutdown uses the same
+    # teardown as managed checks, after every assertion has succeeded.
+    import runpy
+    sys.stdout.flush()
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / 'isolated-houdini-check.py'))['_exit_worker'](0)

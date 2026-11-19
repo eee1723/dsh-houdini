@@ -165,6 +165,35 @@ export function expandArchivedExecution(value) {
   return expanded;
 }
 
+/** DSH step start to persisted assistant message, including interrupted replies.
+ * The first retained stream timestamp splits that host-observed interval.
+ * Older messages without streams still have a total, but no stream breakdown. */
+function responseTiming(events) {
+  const starts = new Map();
+  const rows = [];
+  for (const {type, time, seq, data} of events) {
+    if (!Number.isFinite(time) || data?.turn == null || data.step == null) continue;
+    const key = `${data.turn}/${data.step}`;
+    if (type === 'step/start') starts.set(key, time);
+    if (type !== 'assistant/message' || !starts.has(key)) continue;
+    const start = starts.get(key);
+    starts.delete(key);
+    if (time < start) continue;
+    const first = Array.isArray(data.stream) ? data.stream[0] : null;
+    const firstTime = first?.time ?? first?.time0;
+    const hasStreamTime = Number.isFinite(firstTime) && firstTime >= start && firstTime <= time;
+    rows.push({turn:data.turn, step:data.step, seq, elapsedMs:time - start,
+      beforeStreamMs:hasStreamTime ? firstTime - start : null,
+      streamToMessageMs:hasStreamTime ? time - firstTime : null});
+  }
+  const withStream = rows.filter(row => row.beforeStreamMs !== null);
+  const total = (samples, field) => samples.length ? samples.reduce((sum, row) => sum + row[field], 0) : null;
+  return {measuredSteps:rows.length, measuredStreamSteps:withStream.length, elapsedMs:total(rows,'elapsedMs'),
+    beforeStreamMs:total(withStream,'beforeStreamMs'), streamToMessageMs:total(withStream,'streamToMessageMs'),
+    steps:rows,
+    scope:'Host step start to persisted assistant message, split at its first retained stream event when available. Includes host, transport and provider time. Concurrent background work can overlap; this does not isolate network or inference latency.'};
+}
+
 /** Provider-reported request accounting, separate from tools and scene effects.
  * Repeated cumulative usage for a request is replaced, never added twice.
  * Missing fields stay unknown. No inference about billing or retained messages.
@@ -214,7 +243,7 @@ export function collectRequestTelemetry(events) {
     // Only the error message, never request headers/credentials/config bodies.
     message: typeof e.data?.reason?.error?.message === 'string'
       ? e.data.reason.error.message.replace(/Bearer\s+\S+|sk-[A-Za-z0-9_-]+/gi, '[redacted]').slice(0,800) : null}));
-  return {requests:rows, requestCount:rows.length, duplicateUsageEvents, updatedUsageEvents,
+  return {requests:rows, requestCount:rows.length, duplicateUsageEvents, updatedUsageEvents, responseTiming:responseTiming(events),
     totals, measuredFields, last:rows.at(-1) ?? null,
     arithmeticMismatchSeqs:rows.filter(r => r.arithmeticMatches === false).map(r => r.seq),
     turnEnds, upstreamTurnErrors:turnEnds.filter(e => e.kind === 'error'),

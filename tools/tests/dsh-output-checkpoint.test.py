@@ -90,29 +90,20 @@ try:
     assert hdr['ok'] and hdr['pixel_status'] == 'unverified'
     stale = dsh_render._render_validation({'fresh':True, 'file_bytes':10, 'errors':[]}, {'presentation':{}}, True)
     assert not stale['ok']
-    artifact = {'purpose':'viewport_diagnostic','output_policy':'managed',
+    artifact = {'purpose':'model_visual_verification','output_policy':'managed',
         'actual_path':'Z:/checks/run/a.png','hip_relative_path':'dsh-artifacts/checks/run/a.png',
         'managed_root':'Z:/checks/run','run_id':'run','capture_id':'a','frame':1}
-    shot_summary = bridge._operation_summary('viewport_screenshot', {
-        'ok':False,'path':artifact['actual_path'],'artifact':artifact,'frame':1,
+    shot_summary = bridge._operation_summary('render_view', {
+        'ok':False,'output':artifact['actual_path'],'artifact':artifact,'frame':1,
         'fresh':True,'file_status':'passed','semantic_status':'unverified',
         'user_state_restored':False,'restore_errors':['frame: injected'],'errors':['restore failed']})
     assert all(shot_summary['artifact'][key]==value for key,value in artifact.items())
     assert shot_summary['artifact'] == artifact, 'summary must preserve missing fields rather than invent null facts'
     assert shot_summary['user_state_restored'] is False
     assert shot_summary['restore_errors']==['frame: injected']
-    unresolved_artifact={**artifact,'reservation_retained':True}
-    unresolved_summary=bridge._operation_summary('viewport_screenshot',{
-        'ok':False,'path':artifact['actual_path'],'artifact':unresolved_artifact,
-        'frame':1,'fresh':False,'file_status':'failed','semantic_status':'unverified',
-        'capture_unresolved':True,'user_state_restored':True,'restore_errors':[],
-        'errors':['injected post-dispatch failure']})
-    assert unresolved_summary['capture_unresolved'] is True
-    assert unresolved_summary['artifact']['reservation_retained'] is True
-    assert not any(key.startswith('_reservation') for key in unresolved_summary['artifact'])
-    explicit_null = bridge._operation_summary('viewport_screenshot', {
-        'ok':True,'artifact':{**artifact,'reservation_retained':None}})
-    assert explicit_null['artifact']['reservation_retained'] is None, 'explicit null remains a captured fact'
+    explicit_null = bridge._operation_summary('render_view', {
+        'ok':True,'artifact':{**artifact,'run_id':None}})
+    assert explicit_null['artifact']['run_id'] is None, 'explicit null remains a captured fact'
     ledger=[]
     bridge._make_tracer('verify_network',lambda: diagnostic,ledger)()
     assert ledger[0]['summary']['output'] == ctrl.path()

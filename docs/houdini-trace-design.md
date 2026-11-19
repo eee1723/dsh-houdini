@@ -62,9 +62,10 @@ Houdini 特有节点卡由 [client/node-delivery.js](../client/node-delivery.js)
 
 [时序归一](../tools/normalized-trace-steps.mjs)、[会话解析](../tools/trace-session-lib.mjs)与execution-facts使用公开Session事件和canonical事实。请求按turn/step、工具按callId关联；后台终态通过生产者sourceCallId/rootCallId连到原提交，并保留真实终态事件坐标，不新增模型调用或把一次执行计两次。优先使用明确的resultSeq与原回执，不用相邻时间或目录猜归属。并发返回不改变发起顺序；pending、unknown、结果过期与失败分别保留，不能自动重试或冒充成功。
 
-- 一次模型请求可有多个工具调用，一次调用可执行多个动词，一个动词可创建多个节点，分母不能混用。
+- 一次模型请求可有多个工具调用，一次调用可执行多个动词，一个动词可创建多个节点。同步 Python 含动词率的分子和分母都只取同步 Python 调用，结构化查询与后台任务回执按各自入口计数。按原执行归并的动词总数含真实后台终态。
 - `processOutcome` 区分送达结果与子进程真实退出；stdout 的错误字样不是退出事实，没有退出证据保持 unknown。
 - 模型 usage 按请求去重；同请求的多个工具不重复累计输入/输出，缺失用量不补零。缓存及推理字段按提供方定义，不重复相加。
+- 响应时长按同一 turn/step 的步骤开始和助手消息写入配对，包括中断回复。有已保留回复的首段流时间时，再分列首段前及首段至写入两段。它们都包含宿主、网络和模型服务耗时，后台计算可以与之重叠。
 - 原始 provider/model/reasoningEffort/maxTokens、实际 HTTP 字段、模型报告用量和语义效果分别判断；缺少推理档保持未知，不回填为 off。
 - `rawUsage` 区分 Gate 拦截、只读候选、疑似/未知副作用和成功裸修改；`no_scene_change` 只覆盖受管写与已检出的 HOM 通道，不排除文件或 Python 外部副作用；`transaction.effects`（none/registered/unverified）与 `native_evaluation` 分开读，`exec` 含动词率不是修改意图覆盖率。
 - 工具种类消费`src/tool-catalog.ts`；现场job提交是准入回执，不是已完成Python执行。`houdini_isolated`的提交与报告读取分别计数，不进入现场Python的动词采用率或无动词副作用统计。没有顶层verb ledger不证明builder没有使用动词；实际执行看原run的builder/check回执，不把再次read当作重新执行。

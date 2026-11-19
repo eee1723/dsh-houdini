@@ -29,7 +29,9 @@ description: 用houdini_isolated在一次性独立hython中构建或检查明确
 
 `operation="run"`（默认）需要`manifest`：可直接给内联对象，也可给绝对文件路径。内联对象适合一次实验——`code`是内联Python builder（与`script`互斥），可加`hip`/`input_root`/`files`/`checks`；Host把这次调用序列化为授权字节，检查器按同一清单合同校验后执行，源码与清单原字节留在run的`request.json`和`inputs/`。文件清单适合跨run复用的脚本与多文件依赖，路径规则不变。省略`output_dir`时，工具在当前DSH工作区的`execution_run`目录中分配唯一运行目录，不查询现场HIP来决定目录。可显式指定新的绝对`output_dir`；目录在启动前被原子预留，已存在或并发占用的目录直接拒绝，不搬动、不覆盖、不复用。
 
-默认消费当前明确选择的Houdini所登记的安装信息，现场离线仍可运行。也可用`houdini_installation`指定绝对安装根目录（HFS），用于未选现场或旧登记缺少安装信息的情况；不按PATH或Host环境猜版本。无登记的固定Bridge配置仍需在线读取安装信息，离线时使用显式HFS。安装选择不修改现场目标、节点归属或旧请求状态。
+在插件源码工作区试作内容时，HIP与渲染／缓存仍须放在独立用户工程中。manifest的render/cache检查写到run内的artifacts；builder另存HIP不会自动改变这个目录。因此需将`output_dir`也指向用户工程下的新运行目录。开发CLI要求其父目录已存在；源码仓库中的运行目录可以用于不产出媒体的接口检查，不能把它当作模型交付目录。
+
+默认消费当前明确选择的Houdini所登记的安装信息，现场离线仍可运行。也可用`houdini_installation`指定绝对安装根目录（HFS），用于未选现场或旧登记缺少安装信息的情况。委派工作将接入当前现场时，给无现场绑定的作者传当前执行端实际HFS，以免任选一套安装后重复验证；确有跨版本任务时分别检查。无登记的固定Bridge配置仍需在线读取安装信息，离线时使用显式HFS。安装选择不修改现场目标、节点归属或旧请求状态。
 
 `timeout_seconds`默认120，`memory_mb`默认4096；依据本次计算选择，内存上限不约束GPU或外部服务。`background=true`沿DSH原生作业运行，适合超过一轮交互等待的计算。
 

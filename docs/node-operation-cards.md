@@ -3,7 +3,7 @@
 > 自动生成，勿手改。唯一数据源：[node-operation-contracts.json](../houdini/node-operation-contracts.json)。
 > 生成：`npm run docs:generate`；只读校验：`npm run docs:check`；正常构建会自动更新。
 
-Schema: 2 · Cards: 31 · Source SHA-256: `fdca1f76722dc71054fb7dc1295bd2b131e561d595db95610bdea84ca13d054f`
+Schema: 2 · Cards: 31 · Source SHA-256: `f9c29e85bc111ff73ca42daa37f7adb19b34de021dacef726aa2ba35f61b2a5d`
 
 ## 数据与设计契约
 
@@ -451,13 +451,14 @@ Schema: 2 · Cards: 31 · Source SHA-256: `fdca1f76722dc71054fb7dc1295bd2b131e56
 精确类型：`gltf::2.0`。
 已测版本：`22.0.368`。
 
-关键运行时参数：`gltffile`、`loadby`、`importnodegeometryas`、`enablematerialimport`、`importmaterialas`、`materialnode`。
+关键运行时参数：`gltffile`、`loadby`、`importnodegeometryas`、`enablematerialimport`、`importmaterialas`、`materialid`、`materialnode`。
 
 ### 操作与边界
 
 - This card applies to Houdini 22 gltf::2.0, not the older gltf node. Discover exact runtime parameters and menu tokens before configuring imports.
 - On H22.0.368 material import produces shop_materialpath plus the primitive attribute material_override (singular); inspect actual attribute names instead of copying the documentation's plural spelling. Material Node requires a supported material node, not merely the /mat network. A materialnode of '.' selects the viewport shader.
-- Binary images embedded in a GLB are not directly imported as textures by this node. Preserve/extract required images as project dependencies and bind their material indices, UVs and factors explicitly; successful geometry cooking does not prove texture import.
+- Load By Material (loadby='material') and Material ID translate a single material into a point with material_override for the selected shader type. Use the native Bake Material operation or apply the translated parameters to an owned persistent shader when the deliverable needs that shader. Bind the actual SOP material region before packing and keep texture file parameters portable.
+- Binary images embedded in a GLB are not directly imported as textures by this node. Use external images as project dependencies and pass a forward-slash gltffile path on Windows. On H22.0.368 a backslash path can resolve relative images against the process directory even when geometry cooks without warnings.
 - Flattened geometry bakes glTF node transforms into points; packed geometry retains transforms on primitives. Choose the representation for the downstream consumer and inspect final placement/materials rather than judging by point count.
 
 ## principledshader

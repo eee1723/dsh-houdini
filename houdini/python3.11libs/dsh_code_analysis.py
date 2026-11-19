@@ -113,7 +113,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 _REPO_WRITE_HINTS = (
     ".write(", ".write_text(", ".write_bytes(", "shutil.copy", "shutil.move",
     ".save(", "hipfile.save(", "render_frame(", "render_view(",
-    "viewport_screenshot(", ".render(", "json.dump(", "pickle.dump(",
+    ".render(", "json.dump(", "pickle.dump(",
     ".export", "makedirs(", "mkdir(", ".touch(",
 )
 

@@ -488,6 +488,7 @@ export function isHoudiniDetailRead(step) {
 
 export function isHoudiniHostCall(step) {
   return isHoudiniDetailRead(step) || ['host','isolated','submission','receipt'].includes(houdiniToolKind(step.tool))
+    || step.tool === 'job_output' && step.isHoudini
     || (step.tool === 'houdini_query' && Boolean(step.args?.capabilities));
 }
 
@@ -534,6 +535,7 @@ export function collectVerbAdoption(steps) {
   const withVerbs = houdini.filter((step) => (step.verbs || []).length > 0);
   const verbCalls = houdini.reduce((sum, step) => sum + (step.verbs || []).length, 0);
   const raw = python.filter(step => !(step.verbs || []).length);
+  const pythonCallsWithVerbs = python.length - raw.length;
   const rawReadOnly = raw.filter(step => classifyRawEffect(step) === 'read_only_query');
   const exec = python.filter((step) => step.tool === 'houdini_exec');
   const successfulExec = exec.filter((step) => !step.failed);
@@ -565,8 +567,8 @@ export function collectVerbAdoption(steps) {
     successfulExecVerbCoveragePct: pct(successfulExecWithVerbs.length, successfulExec.length),
     blockedVerblessRawMutationCalls: blockedRawMutation.length,
     successfulVerblessRawMutationCalls: successfulRawMutation.length,
-    ...(structured.length ? {structuredCalls:structured.length,pythonCalls:python.length,
-      pythonCallCoveragePct:pct(withVerbs.length,python.length)} : {}),
+    ...(structured.length ? {structuredCalls:structured.length,pythonCalls:python.length,pythonCallsWithVerbs,
+      pythonCallCoveragePct:pct(pythonCallsWithVerbs,python.length)} : {}),
   };
 }
 

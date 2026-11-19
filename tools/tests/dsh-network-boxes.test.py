@@ -75,10 +75,13 @@ try:
     dry_envelope=call(f"__result__=network_boxes({parent!r},{groups!r},dry_run=True)")
     assert dry_envelope['transaction']['status']=='no_scene_change' and dry_envelope['transaction']['source_executed'] is True,dry_envelope
     assert dry_envelope['transaction']['effects']=='none',dry_envelope
+    corrected=call(f"try:\n    network_boxes({parent!r},dry_run=True)\nexcept RuntimeError:\n    pass\n"
+                   f"__result__=network_boxes({parent!r})")
+    assert corrected['ok'] and corrected['verbs'][0]['summary']['scene_writes']==0,corrected
     created=apply(parent,groups,dry['plan_sha256']);assert created['ok'],created
     result=created['result'];assert result['applied'] and set(result['created'])=={g['name'] for g in groups}
     assert result['layout_status']=='not_performed'
-    assert created['execution']['impact']['attempted'] is False,created['execution']['impact']
+    assert created['transaction']['status']=='committed' and created['transaction']['effects']=='registered',created
     palette=boxes.ROLE_COLORS
     for group in groups:
         box=hou.node(parent).findNetworkBox(group['name']);assert box is not None

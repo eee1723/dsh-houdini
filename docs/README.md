@@ -29,9 +29,11 @@
 
 领域操作方法的唯一维护源仍在[随包skills](../skills/)；本目录提供设计和实现入口，不复制另一份recipe。
 
+[程序化构件skill](../skills/houdini-kit-workflow/SKILL.md)维护风格目标、Tripo与原生分工、同风格部件参考及成组变体取得、共享源装配和换源。产品定位见[开发方向](development-directions.md#部件库驱动的程序化构件)，[首屋顶验收](development-directions.md#屋顶首样与验收)提供真实任务验证入口；由[src/skill.ts](../src/skill.ts)注册，[随包资源回归](../tools/tests/bundled-skills.test.mjs)只验证送达基础，不证明真实屋顶质量。
+
 [资产接入skill](../skills/houdini-asset-integration/SKILL.md)统一外部／生成资产的取得边界、组件适配、功能状态、LOD与SOP/USD消费者；提供方自身skill仍维护安装／授权／云任务。由[src/skill.ts](../src/skill.ts)注册，实际资料送达沿[Host上下文验证](../tools/tests/dsh-context-loop-fixture.mjs)，效果与长时自然采用不由注册通过推断。
 
-[WFC skill](../skills/dsh-wfc/SKILL.md)维护simple-tiled结构求解、外观变体与样式分离、实测尺度适配及原生packed实例接入；求解器与适配器分别在[wfc.py](../skills/dsh-wfc/scripts/wfc.py)和[houdini_bridge.py](../skills/dsh-wfc/scripts/houdini_bridge.py)，由[src/skill.ts](../src/skill.ts)注册。纯算法回归见[dsh-wfc.test.py](../tools/tests/dsh-wfc.test.py)，H21/H22原生实例验证见[dsh-wfc-houdini.test.py](../tools/tests/dsh-wfc-houdini.test.py)；真实生成模型的视觉接缝仍按任务验收。
+[WFC skill](../skills/houdini-wfc-workflow/SKILL.md)维护[方法选择](../skills/houdini-wfc-workflow/references/method-selection.md)、[完整构件的实测目录与实例接入](../skills/houdini-wfc-workflow/references/asset-and-houdini.md)、独立外观变体和风格替换；随包simple-tiled求解器与原生packed适配器分别在[wfc.py](../skills/houdini-wfc-workflow/scripts/wfc.py)和[houdini_bridge.py](../skills/houdini-wfc-workflow/scripts/houdini_bridge.py)，由[src/skill.ts](../src/skill.ts)注册。纯算法回归见[dsh-wfc.test.py](../tools/tests/dsh-wfc.test.py)，H21/H22原生实例验证见[dsh-wfc-houdini.test.py](../tools/tests/dsh-wfc-houdini.test.py)；WFC不是生成资产接入的必经路径，真实模型的组合与用户编辑仍按任务验收。
 
 [模拟工作流](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时间与数据接口、缓存/重新修改和动态观察；由[src/skill.ts](../src/skill.ts)注册，机制验证复用[开发维护](development.md)的隔离执行与视口入口，效果与自然采用仍需任务验证。
 

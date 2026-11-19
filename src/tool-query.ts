@@ -14,8 +14,14 @@ export function readResource(args:{kind:'source'|'result';ref:string;pointer?:st
     const reference=recordedResultReference(events,args.ref)
     if(reference?.storage==='dsh-spill'||reference?.storage==='unavailable')return resultRetrievalResource(args.ref,reference)
     const retained=reference?.path??recordedLoadWarningPath(events,args.ref)
-    return args.select!==undefined?readResultSelection(workspaceOf(exec),args.ref,args.select,args.limit,retained)
+    const read=args.select!==undefined?readResultSelection(workspaceOf(exec),args.ref,args.select,args.limit,retained)
       :readResultDetail(workspaceOf(exec),args.ref,args.pointer,args.offset,args.limit,retained)
+    const spill=reference?.spill
+    if(!spill)return read
+    return read.catch(error=>{
+      if(!['ENOENT','ENOTDIR','EACCES','EPERM'].includes(error?.code))throw error
+      return resultRetrievalResource(args.ref,spill)
+    })
   }
   if(args.kind!=='source') throw Error('kind must be source or result')
   if(args.pointer!==undefined||args.select!==undefined) throw Error('pointer/select are only used for result resources')

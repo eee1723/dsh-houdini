@@ -43,7 +43,9 @@ Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该
 
 ## 职责分层
 
-外部生成服务继续使用其公开CLI/API和提供方skill；[资产接入skill](../skills/houdini-asset-integration/SKILL.md)维护Houdini消费者与工程修改方法。[prepare-glb.mjs](../skills/houdini-asset-integration/scripts/prepare-glb.mjs)仅离线外置自包含GLB的原始资源，保留BIN、变换与材质声明，由原生导入器解释几何；不复制厂商账户、生成队列或资产账本。此CLI沿已有终端/文件政策，缺少权限不借HOM绕过。验证见[资产准备回归](../tools/tests/asset-preparation.test.mjs)及节点知识的实际GLB消费检查。
+部件库驱动的程序化构件由[kit工作流](../skills/houdini-kit-workflow/SKILL.md)维护风格、来源拆分与装配方法：生成或现成资产提供共享部件，Houdini维护尺寸与连接，WFC／曲线／规则按需消费完整构件。它通过已有DSH技能注册与Houdini动词工作，不新增Host编排、供应商客户端或执行准入。产品目标见[开发方向](development-directions.md#部件库驱动的程序化构件)，真实首样与运行入口的缺口见handoff。
+
+外部生成服务使用其公开CLI/API和提供方skill。[资产接入skill](../skills/houdini-asset-integration/SKILL.md)维护Houdini消费者与工程修改方法。[prepare-glb.mjs](../skills/houdini-asset-integration/scripts/prepare-glb.mjs)可只读列出自包含GLB的网格分段、声明的局部范围、UV与材质，也可外置图像和原始BIN。节点变换、实际几何和安装关系由Houdini导入后求值。此CLI沿已有终端与文件政策。验证见[资产准备回归](../tools/tests/asset-preparation.test.mjs)及节点知识的实际GLB消费检查。
 
 ### 多Houdini执行端与任务恢复
 
@@ -57,7 +59,7 @@ Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该
 
 ### 现场长任务与在线状态
 
-现场长任务只通过`houdini_job_submit`启动，先取得DSH原生jobs准入，再向Bridge提交。DSH负责job_id、归属、界面、通知与job_output/job_kill；Bridge的jobId、request_ref和runtime保留真实执行身份。Host只观察原任务，不另建调度器。运行中的HOM不能强停，取消排队任务与请求取消已运行任务分别表达；Host/作者卸载只释放本机观察，不等待或终止用户Houdini。重开后houdini_request按原回执重新观察，不重发代码。队列异步不保证原生长计算期间Houdini界面可交互；适合独立副本的计算可用houdini_isolated。
+现场长任务只通过`houdini_job_submit`启动，先取得DSH原生jobs准入，再向Bridge提交。DSH负责job_id、归属、界面、通知与job_output/job_kill；Bridge的jobId、request_ref和runtime保留真实执行身份。Host只观察原任务，不另建调度器。运行中的HOM不能强停。排队任务取消后立即返回取消状态；已占用的后台执行名额等该工作项离开队列再释放。Host/作者卸载只释放本机观察，不等待或终止用户Houdini。重开后houdini_request按原回执重新观察，不重发代码。队列异步不保证原生长计算期间Houdini界面可交互；适合独立副本的计算可用houdini_isolated。
 
 当前目标、待处理执行及恢复摘要由同一个DSH session projection增量维护。根Host在启动时await注册并私有持有handle，再提供`houdiniExecutorState`域服务；在线路由、上下文和恢复经该服务读取，不按key直接访问注册表，也不在工具入口重扫日志。提交／恢复结果提供可直接调用的DSH job_id，界面沿用同一标识；模型上下文把内部任务显式标为bridge_job_id，不能传给原生作业工具。
 
@@ -155,7 +157,9 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [src/result-policy.ts](../src/result-policy.ts) | 结果归档阈值与64KiB展示/事实预算的唯一Host读取源；不把省略解释为执行缺失或语义结论 |
 | [src/result-details.ts](../src/result-details.ts) | 完整JSON的工作区hash长期归档、DSH原生opaque spill与明确durable unavailable；原生日志同源定位，文件hash校验和JSON Pointer分页仅用于可读归档，原生后端消费其真实读取指导；不执行HOM |
 | [src/skill.ts](../src/skill.ts) | 随包skill/resource注册；[任务拆分skill](../skills/houdini-task-decomposition/SKILL.md)维护跨领域模块与反馈方法，[模拟skill](../skills/houdini-simulation-workflow/SKILL.md)维护反馈状态、时序与缓存消费，[工具开发skill](../skills/houdini-tool-development/SKILL.md)维护HDA UI、脚本、Shelf与快捷键开发方法 |
-| [dsh-wfc](../skills/dsh-wfc/SKILL.md) | simple-tiled结构约束、确定性与预算、独立外观catalog和风格替换；[纯Python求解器](../skills/dsh-wfc/scripts/wfc.py)不调用HOM，[薄适配器](../skills/dsh-wfc/scripts/houdini_bridge.py)经现有动词建立原生packed实例；[算法回归](../tools/tests/dsh-wfc.test.py)与[H21/H22实例回归](../tools/tests/dsh-wfc-houdini.test.py)分别核对声明范围 |
+| [Unreal 交接](../skills/houdini-unreal-handoff/SKILL.md) | [独立实例提取与迁移复算](../skills/houdini-unreal-handoff/scripts/package-instance.py)、[文件校验](../skills/houdini-unreal-handoff/scripts/check-package.mjs)、[UE 只读依赖导出](../skills/houdini-unreal-handoff/scripts/ue-content-files.py)；[文件回归](../tools/tests/unreal-package.test.mjs)、[真实编辑器改参／烘焙／重开验收](../tools/tests/ue-handoff-editor.py)，不注册 UE 服务 |
+| [houdini-kit-workflow](../skills/houdini-kit-workflow/SKILL.md) | [风格、部件参考与成组来源](../skills/houdini-kit-workflow/references/style-and-sources.md)、[尺寸、共享实例与换源](../skills/houdini-kit-workflow/references/dimensions-and-assembly.md)；不依赖WFC。注册／资源验证见[bundled-skills](../tools/tests/bundled-skills.test.mjs)，真实构件质量按[首样验收](development-directions.md#屋顶首样与验收)，不由结构检查代替 |
+| [houdini-wfc-workflow](../skills/houdini-wfc-workflow/SKILL.md) | [方法选择](../skills/houdini-wfc-workflow/references/method-selection.md)、[完整构件的实测目录与实例接入](../skills/houdini-wfc-workflow/references/asset-and-houdini.md)、安装主体与外观包络、独立catalog和风格替换；[纯Python求解器](../skills/houdini-wfc-workflow/scripts/wfc.py)处理simple-tiled约束与预算，不调用HOM；[薄适配器](../skills/houdini-wfc-workflow/scripts/houdini_bridge.py)经现有动词建立原生packed实例，消费端检查piece并保留cell身份；[算法回归](../tools/tests/dsh-wfc.test.py)与[H21/H22实例回归](../tools/tests/dsh-wfc-houdini.test.py)分别核对声明范围 |
 | [src/generated-verb-contract.ts](../src/generated-verb-contract.ts) | 构建生成的Host名称/hash/语义版本，不手改 |
 | [dsh_scene_recovery.py](../houdini/python3.11libs/dsh_scene_recovery.py) | Bridge主线程维护保存快照、加载基线、场景代际及部分精确恢复；保留未激活作者的可信来源，复制及原生重建不认领 |
 | [dsh_recovery_store.py](../houdini/python3.11libs/dsh_recovery_store.py) | worker核对HIP字节、提交及查询可信末端保存点、保留原进程生命周期锁；查询不另建索引、不执行HOM |
@@ -207,7 +211,7 @@ client消费公开trajectory snapshot，不依赖已删除的Session内部字段
 | [dsh_hda_operations.py](../houdini/python3.11libs/dsh_hda_operations.py)、[dsh_hda_sections.py](../houdini/python3.11libs/dsh_hda_sections.py) | HDA创建/独立分叉/接口修改与section编辑；共享定义权限仍由hda_interfaces维护，节点身份转换交给ownership |
 | [dsh_scene.py](../houdini/python3.11libs/dsh_scene.py)、[dsh_usd_inspection.py](../houdini/python3.11libs/dsh_usd_inspection.py)、[dsh_geometry_queries.py](../houdini/python3.11libs/dsh_geometry_queries.py) | 场景保存/时间线、USD只读信息及正式渲染共用的stage/settings与产品文件观察、几何属性/分件/帧差与指纹观察 |
 | [dsh_media_output.py](../houdini/python3.11libs/dsh_media_output.py)、[dsh_image_pixels.py](../houdini/python3.11libs/dsh_image_pixels.py) | 请求级图片收集、输出路径及预览预留；有界像素读取与统计，不把像素检测当语义识图 |
-| [dsh_render.py](../houdini/python3.11libs/dsh_render.py)、[dsh_render_service.py](../houdini/python3.11libs/dsh_render_service.py)、[dsh_viewport.py](../houdini/python3.11libs/dsh_viewport.py)、[dsh_view_state.py](../houdini/python3.11libs/dsh_view_state.py) | 渲染编排、持久服务节点、viewport捕获、共享取景方向与界面状态恢复；服务标识与像素工具来自下层 |
+| [dsh_render.py](../houdini/python3.11libs/dsh_render.py)、[dsh_render_service.py](../houdini/python3.11libs/dsh_render_service.py)、[dsh_view_state.py](../houdini/python3.11libs/dsh_view_state.py) | 渲染编排、离屏视口预览、持久服务节点、取景方向与状态恢复；服务标识与像素工具来自下层 |
 | [dsh_preview_paths.py](../houdini/python3.11libs/dsh_preview_paths.py) | 验证/交付图片的managed/delivery/explicit路径、唯一capture预留及artifact元数据；不负责渲染或保留策略 |
 | [dsh_network_layout.py](../houdini/python3.11libs/dsh_network_layout.py) | 无HOM、完整矩形空间层级的避障/净距证明、迭代拓扑与Box handoff规划；预算约束实际搜索与空间关系计算，不按整网节点数准入 |
 | [dsh_network_boxes.py](../houdini/python3.11libs/dsh_network_boxes.py) | 受治理Network Box、语义色、类型化provenance和handoff应用；首次创建网络登记原生框，整根删除通过原生Undo核对框／便签成员；局部完整补偿与按原生identity首次状态去重的Bridge恢复journal |
@@ -304,7 +308,7 @@ Copernicus 图层/端口/关系、缓存和纹理交付，通过 [src/skill.ts](
 上下文通过DSH原生systemPrompt.context提供现场、运行状态和视觉通道事实，按本步toolSet和modelSelection装配；工具暂不可用时只移除插件拥有的贡献，尊重宿主覆盖与抑制。插件不重写会话surface，不自行执行上下文压缩或建立持久化门槛。DSH管理会话与上下文生命周期。
 
 图片由Bridge按请求关联产图事实，经Host送入DSH原生附件存储和多模态工具结果，不复制到工作区media目录、不调用独立识图工具。附件传递不是语义验证，当前模型须实际查看图像。
-Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifactCandidates`，区分`delivery-candidate`、`visual-check`和`diagnostic`；`scene_save`/`scene_save_as`、`component_export`、`render_frame`、`render_view`及`viewport_screenshot`只报告各自权威路径。整个exec失败时降为诊断。候选不调用`present`，不能替代用户要求和最终验收；未进入动词回执的图片只作visual-check。
+Bridge从成功动词回执提取绝对且非链接、存在且非空的`artifactCandidates`，区分`delivery-candidate`、`visual-check`和`diagnostic`；保存、组件导出、渲染和离屏预览报告各自权威路径。整个exec失败时降为诊断。候选不调用`present`，不能替代用户要求和最终验收；未进入动词回执的图片只作visual-check。
 正式渲染、预览服务和用户viewport分别管理，不能通过用户视口状态选择交付目标。
 节点交付使用普通执行结果或同源Bridge终态事实中的显式引用，由DSH公开Conversation回放和回复尾部插槽展示；后台交付按rootCallId关联原模型调用。Root导航RPC重读原事件，使用`agentPresets.serviceFor`取得该任务隔离preset内的连接；与普通工具共用执行端绑定。Bridge导航路由只接受持久节点ID和原工程身份，主线程执行固定定位动作；票据/排队取消由同一RequestRegistry负责，不扩展普通同步HOM修改的取消语义。节点ID保存在HIP节点上，原路径只作历史显示，不另写节点交付账本。
 Trace消费原生工具结果及同一Session的Bridge终态事实，保留动词ledger、rawUsage、Gate、transaction与execution观察；浏览器取得有界事实，完整原值按上文留存合同读取，不经canonical复制全文。离线Trace按需展开可验证的hash归档；历史`.dsh-houdini-results`仍按回执原路径读取，该目录是工具返回副本，不是HIP内容输出。

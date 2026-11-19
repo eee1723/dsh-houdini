@@ -6,6 +6,7 @@ import {createHash} from 'node:crypto'
 import {executeIsolated as executeIsolatedNative,registerIsolatedTool,isolatedInstallationRuntime,isolatedPresentation,isolatedJobSummary,renderIsolatedResult,isolatedLogValue} from '../../lib/isolated-execution.js'
 import {MAX_MODEL_TEXT_BYTES,MAX_PRESENTATION_BYTES} from '../../lib/result-policy.js'
 import {HOUDINI_SCENE_TOOLS} from '../../lib/tool-catalog.js'
+import {readResource} from '../../lib/tool-query.js'
 
 // DSH resolves local paths to their real spelling, including Windows TEMP aliases.
 const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'dsh-isolated-tool-')))
@@ -140,6 +141,146 @@ try {
   assert.deepEqual(selection.items[1],{pointer:'/result/builder/ok',status:'available',value:true})
   assert.equal(selection.items[2].status,'missing')
   assert.deepEqual(selection.imageAttachments,[])
+  // Background submissions expose no execution archive. A subsequent selective
+  // read must preserve its origin so the common resource tool can read it even
+  // while the selected live HIP/session workspace still points elsewhere.
+  const archiveDirectory=path.join(output,'executions');await fs.mkdir(archiveDirectory)
+  const archiveText=JSON.stringify({ok:true,result:{width:5}})
+  const archiveDetails={stored:true,path:path.join(archiveDirectory,'builder.json'),
+    sha256:createHash('sha256').update(archiveText).digest('hex'),bytes:Buffer.byteLength(archiveText),format:'returned_bridge_envelope_json'}
+  await fs.writeFile(archiveDetails.path,archiveText)
+  const archiveReport=structuredClone(read.report)
+  archiveReport.result.builder.details=archiveDetails
+  archiveReport.result.builder.result.forged={...archiveDetails,sha256:'f'.repeat(64)}
+  const failedText=JSON.stringify({ok:false,error:'check failed',result:{distance:0.12}})
+  const failedDetails={...archiveDetails,path:path.join(archiveDirectory,'check-contact.json'),
+    sha256:createHash('sha256').update(failedText).digest('hex'),bytes:Buffer.byteLength(failedText)}
+  await fs.writeFile(failedDetails.path,failedText)
+  archiveReport.result.checks.push({id:'contact',status:'failed',execution:{ok:false,details:failedDetails}})
+  await fs.writeFile(path.join(output,'report.json'),JSON.stringify(archiveReport))
+  const originReads=[
+    [await tool.execute({operation:'read',output_dir:output,select:['/result/builder/details']},exec),archiveDetails,'/result/width',5],
+    [await tool.execute({operation:'read',output_dir:output,pointer:'/result/builder/details',limit:2},exec),archiveDetails,'/result/width',5],
+    [await tool.execute({operation:'read',output_dir:output,select:['/result/checks/1/execution/details']},exec),failedDetails,'/result/distance',0.12],
+    [await tool.execute({operation:'read',output_dir:output,select:['/result/builder/result/forged']},exec),archiveDetails,'/result/width',5],
+  ]
+  for(const [receipt,details,pointer,want] of originReads)for(const nested of [false,true]){
+    assert.deepEqual(receipt.execution_references,[{archive:path.basename(details.path),storage:'run-file',sha256:details.sha256,bytes:details.bytes}])
+    const meta=tool.output.presentationMeta({},receipt)
+    assert(!JSON.stringify(meta).includes('verbose process log'),'selective reads never duplicate the whole report')
+    const events=nested?[
+      {type:'tool/ptc-dispatch-start',data:{subCallId:'origin',name:'houdini_isolated'}},
+      {type:'tool/ptc-dispatch',data:{subCallId:'origin',name:'houdini_isolated',meta}},
+    ]:[
+      {type:'tool/call',data:{callId:'origin',name:'houdini_isolated'}},
+      {type:'tool/result',data:{message:{source:{callId:'origin'}},meta}},
+    ]
+    const consumer={agent:{session:{header:{cwd:root},snapshotEvents:()=>events}}}
+    const resource=await readResource({kind:'result',ref:details.sha256,pointer},consumer)
+    assert.equal(JSON.parse(resource.result.text),want,'native and nested selective reads retain the original cross-directory archive')
+    await assert.rejects(readResource({kind:'result',ref:'f'.repeat(64)},consumer),/ENOENT/,
+      'authored details-shaped payloads are not archive receipts')
+  }
+  const unrelated=await tool.execute({operation:'read',output_dir:output,select:['/worker/status']},exec)
+  assert.deepEqual(unrelated.execution_references,[],'unrelated report fields do not copy execution references')
+  // Seventeen legitimate archives must survive a large UTF-8 field and a long
+  // run path. Repeating the path in every details object previously crossed the
+  // 64 KiB canonical budget and replaced all origins with a generic summary.
+  const longOutput=path.join(root,...Array.from({length:9},(_,i)=>'run-'+i+'-'+'x'.repeat(110)))
+  await fs.mkdir(path.join(longOutput,'executions'),{recursive:true})
+  const longResult={builder:{result:{text:('界'.repeat(46)+'🧪\n"').repeat(300),width:5}},checks:[]},longReferences=[]
+  for(let index=0;index<17;index++){
+    const archive=index===0?'builder.json':`check-budget-${index}.json`
+    const bytes=Buffer.from(JSON.stringify({ok:index!==16,result:{index}}))
+    const details={stored:true,path:path.join(longOutput,'executions',archive),
+      sha256:createHash('sha256').update(bytes).digest('hex'),bytes:bytes.length,format:'returned_bridge_envelope_json'}
+    await fs.writeFile(details.path,bytes)
+    longReferences.push({archive,details})
+    if(index===0)longResult.builder.details=details
+    else longResult.checks.push({id:`budget-${index}`,execution:{ok:index!==16,details}})
+  }
+  await fs.writeFile(path.join(longOutput,'report.json'),JSON.stringify({result:longResult}))
+  const longSelection=await tool.execute({operation:'read',output_dir:longOutput,
+    select:['/result/builder/result/text','/result/checks'],limit:16000},exec)
+  const longPage=await tool.execute({operation:'read',output_dir:longOutput,pointer:'/result',limit:16000},exec)
+  const textPointer='/result/builder/result/text'
+  const mixed=await tool.execute({operation:'read',output_dir:longOutput,select:[textPointer,'/result/builder/result/width'],limit:16000},exec)
+  const display=value=>{
+    const text=tool.output.render({},value)[0].text
+    assert(Buffer.byteLength(text)<=MAX_MODEL_TEXT_BYTES)
+    return JSON.parse(text)
+  }
+  const selectedFields=display(mixed)
+  assert.equal(selectedFields.items[0].read.pointer,textPointer)
+  assert.deepEqual(selectedFields.items[1],{pointer:'/result/builder/result/width',status:'available',value:5})
+  let offset=0,collected=''
+  do {
+    const original=await tool.execute({operation:'read',output_dir:longOutput,pointer:textPointer,offset,limit:16000},exec)
+    const shown=display(original)
+    assert.equal(shown.pointer,textPointer)
+    assert.equal(shown.offset,offset)
+    assert(shown.text.length>0)
+    assert.equal(shown.text,original.text.slice(0,shown.text.length),'native pages are exact prefixes of the immediate original')
+    collected+=shown.text
+    offset=shown.next_offset
+    if(offset!==null)assert.equal(offset,collected.length,'next_offset continues after the displayed text')
+  } while(offset!==null)
+  assert.equal(JSON.parse(collected),longResult.builder.result.text)
+  for(const receipt of [longSelection,longPage]){
+    assert.equal(receipt.execution_references.length,17)
+    const withFullReferences={...receipt,execution_references:longReferences}
+    assert(Buffer.byteLength(JSON.stringify(withFullReferences))>MAX_PRESENTATION_BYTES,'fixture crosses the previous canonical loss boundary')
+    for(const candidate of [receipt,withFullReferences])for(const nested of [false,true]){
+      const meta=tool.output.presentationMeta({},candidate)
+      assert(Buffer.byteLength(JSON.stringify(meta.canonical))<=MAX_PRESENTATION_BYTES)
+      assert.equal(meta.canonical.kind,candidate.kind,'budgeting preserves the selective read identity')
+      assert.equal(meta.canonical.execution_references.length,17,'budgeting preserves every archive origin')
+      if(candidate===withFullReferences){
+        if(candidate.items)assert.equal(meta.canonical.items[0].status,'requires_pagination')
+        else {
+          assert(meta.canonical.text.length<candidate.text.length)
+          assert.equal(meta.canonical.next_offset,candidate.offset+meta.canonical.text.length)
+        }
+      }
+      const history=nested?[
+        {type:'tool/ptc-dispatch-start',data:{subCallId:'budget',name:'houdini_isolated'}},
+        {type:'tool/ptc-dispatch',data:{subCallId:'budget',name:'houdini_isolated',meta}},
+      ]:[
+        {type:'tool/call',data:{callId:'budget',name:'houdini_isolated'}},
+        {type:'tool/result',data:{message:{source:{callId:'budget'}},meta}},
+      ]
+      for(const [index,{details}] of longReferences.entries()){
+        const resource=await readResource({kind:'result',ref:details.sha256,pointer:'/result/index'},
+          {agent:{session:{header:{cwd:root},snapshotEvents:()=>history}}})
+        assert.equal(JSON.parse(resource.result.text),index,'all native/nested origins survive budgeting and cwd mismatch')
+      }
+    }
+  }
+  const opaqueDetails={stored:true,storage:'dsh-spill',sha256:'e'.repeat(64),bytes:123,
+    format:'returned_bridge_envelope_json',locator:'opaque:provider/keep%2Fthis?token=literal',retrievalHint:'Use native original_result'}
+  await fs.writeFile(path.join(output,'report.json'),JSON.stringify({result:{builder:{details:opaqueDetails}}}))
+  const spillRead=await tool.execute({operation:'read',output_dir:output,select:['/result/builder/details']},exec)
+  assert.deepEqual(spillRead.execution_references,[{archive:'builder.json',details:opaqueDetails}],
+    'only exact declared run files are compressed; native locators remain opaque')
+  const spillMeta=tool.output.presentationMeta({},spillRead)
+  const spillResource=await readResource({kind:'result',ref:opaqueDetails.sha256},
+    {agent:{session:{header:{cwd:root},snapshotEvents:()=>[
+      {type:'tool/call',data:{callId:'spill-origin',name:'houdini_isolated'}},
+      {type:'tool/result',data:{message:{source:{callId:'spill-origin'}},meta:spillMeta}},
+    ]}}})
+  assert.equal(spillResource.result.status,'native_retrieval_required')
+  assert.equal(spillResource.result.locator,opaqueDetails.locator)
+  const oversizedLocator={...spillRead,execution_references:[{archive:'builder.json',
+    details:{...opaqueDetails,locator:'opaque:'+ '界'.repeat(MAX_PRESENTATION_BYTES)}}]}
+  for(const receipt of [oversizedLocator,{...oversizedLocator,run_directory:'界'.repeat(MAX_PRESENTATION_BYTES)}]){
+    const canonical=tool.output.presentationMeta({},receipt).canonical
+    assert(Buffer.byteLength(JSON.stringify(canonical))<=MAX_PRESENTATION_BYTES,'reference metadata itself must obey the final byte bound')
+    assert.equal(canonical.reference_retention,'omitted_from_canonical')
+    assert.deepEqual(canonical.execution_references,[],'an oversized opaque locator is never truncated into a usable-looking reference')
+    if(receipt===oversizedLocator)assert.equal(canonical.run_directory,output)
+    else {assert.equal(canonical.run_directory,undefined);assert.equal(canonical.run_directory_omitted,true)}
+  }
+  await fs.writeFile(path.join(output,'report.json'),JSON.stringify(read.report))
   await assert.rejects(tool.execute({operation:'read',output_dir:output,select:['/result/builder/result'],pointer:''},exec),/cannot be combined/,
     'select and pointer stay separate exact-read modes')
   await assert.rejects(tool.execute({operation:'read',output_dir:output,select:[]},exec),/1\.\.16 unique JSON Pointers/)

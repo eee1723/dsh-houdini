@@ -21,9 +21,43 @@ with tempfile.TemporaryDirectory(prefix='dsh-public-hda-') as temp:
         "box=tab_create(s,'box',name='shape')\n"
         "out=tab_create(s,'output',name='out')")
     source = hou.node('/obj/public_fixture/source')
-    # Native GUI initialization can wire a subnet indirect input. It is not a
-    # Node; this fixture recreates that state without running GUI or user scripts.
-    source.node('out').setInput(0, source.indirectInputs()[0])
+    slot = source.indirectInputs()[1]
+    run("s=hou.node('/obj/public_fixture/source')\n"
+        "tap=tab_create(s,'null',name='tap',inputs=[s.indirectInputs()[1]])")
+    r = run(f"__result__=connect({slot.path()!r}, '/obj/public_fixture/source/out')")['result']
+    assert r['source'] == slot.path() and r['subnet_input'] == 1 and r['source_output'] == 0
+    assert r['inputs_after']['connections'][0]['resolved_source'] is None
+    assert source.node('tap').inputConnections()[0].subnetIndirectInput() == slot
+    # A multi-output external node supplies port 1; the local wire still uses
+    # output 0 of the explicitly selected connector and keeps tracking rewires.
+    run("g=hou.node('/obj/public_fixture')\n"
+        "up=tab_create(g,'subnet',name='up')\n"
+        "b=tab_create(up,'box',name='wide',parms={'sizex':3})\n"
+        "o=tab_create(up,'output',name='o1',inputs=[b],parms={'outputidx':1})\n"
+        "connect(up, g.node('source'), index=1, output=1)")
+    r = run("__result__=connect(hou.node('/obj/public_fixture/source').indirectInputs()[1],"
+            "'/obj/public_fixture/source/out')")['result']
+    wire = r['inputs_after']['connections'][0]
+    assert (wire['subnet_input'], wire['source_output'], wire['source_item']) == (1, 0, slot.path())
+    assert (wire['resolved_source'], wire['resolved_output']) == ('/obj/public_fixture/up', 1)
+    assert abs(source.node('tap').geometry().boundingBox().sizevec()[0] - 3) < 1e-6
+    external = '/obj/public_fixture/up'
+    hou.node(external).setPosition(hou.Vector2(10000, -10000))
+    run("s=hou.node('/obj/public_fixture/source')\n"
+        "second=tab_create(s,'null',name='second_tap',inputs=[s.indirectInputs()[1]])\n"
+        "replacement=tab_create(s.parent(),'box',name='replacement',parms={'sizex':5})\n"
+        "connect(replacement,s,index=1)")
+    assert abs(source.node('second_tap').position().x() - slot.position().x()) < 100
+    assert abs(source.node('tap').geometry().boundingBox().sizevec()[0] - 5) < 1e-6
+    for bad in (f"connect({slot.path()!r}, {external!r})",
+                f"connect({slot.path()!r}, '/obj/public_fixture/source/out', output=1)",
+                f"tab_create({external!r}, 'null', name='wrong_network', inputs=[{slot.path()!r}])"):
+        run(bad, ok=False)
+    assert not hou.node(external+'/wrong_network')
+    foreign = bridge.run_code(f"connect({slot.path()!r}, '/obj/public_fixture/source/out')",
+                              owner_session='other-author', owner_call='foreign-wire')
+    assert not foreign['ok'] and source.node('out').inputConnections()[0].subnetIndirectInput() == slot
+    run("disconnect_input('/obj/public_fixture/source',1)")
     r = run("__result__=connect('/obj/public_fixture/source/shape','/obj/public_fixture/source/out')")['result']
     assert r['inputs_before']['connections'][0]['source'] is None
     assert r['inputs_before']['connections'][0]['source_kind'] == 'subnet_indirect_input'

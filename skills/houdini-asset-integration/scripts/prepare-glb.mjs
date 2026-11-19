@@ -9,6 +9,36 @@ import {fileURLToPath} from 'node:url'
 const extensions={'image/png':'.png','image/jpeg':'.jpg','image/webp':'.webp'}
 const integer=value=>Number.isSafeInteger(value)&&value>=0
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex')
+const vector3=value=>Array.isArray(value)&&value.length===3&&value.every(Number.isFinite)
+
+function meshPrimitives(document) {
+  function count(index) {
+    const value=document.accessors?.[index]?.count
+    return integer(value)?value:null
+  }
+  return (document.meshes??[]).flatMap((mesh,meshIndex)=>(mesh.primitives??[]).map((primitive,primitiveIndex)=>{
+    const mode=primitive.mode??4
+    const positionIndex=primitive.attributes?.POSITION
+    const position=document.accessors?.[positionIndex]
+    const vertices=count(positionIndex)
+    const elements=primitive.indices===undefined?vertices:count(primitive.indices)
+    let triangles=null
+    if(elements!==null){
+      if(mode===4&&elements%3===0)triangles=elements/3
+      if((mode===5||mode===6)&&elements>=3)triangles=elements-2
+    }
+    // POSITION bounds describe the base mesh in accessor coordinates. Node
+    // transforms, quantization, morphs and skinning belong to the importer.
+    const hasBounds=position?.type==='VEC3'&&vector3(position.min)&&vector3(position.max)
+      &&position.min.every((v,i)=>v<=position.max[i])
+    return {
+      mesh:meshIndex,primitive:primitiveIndex,mode,vertices,triangles,
+      ...(hasBounds?{position_bounds:{min:position.min,max:position.max}}:{}),
+      material:primitive.material??null,
+      texcoord_sets:Object.keys(primitive.attributes??{}).filter(name=>/^TEXCOORD_\d+$/.test(name))
+    }
+  }))
+}
 
 export function planGlb(bytes) {
   if(!Buffer.isBuffer(bytes)||bytes.length<20||bytes.readUInt32LE(0)!==0x46546c67||bytes.readUInt32LE(4)!==2)
@@ -62,8 +92,8 @@ export function planGlb(bytes) {
   return {document,files,summary:{source_sha256:hash(bytes),source_bytes:bytes.length,
     images:imageFacts,materials:document.materials??[],textures:document.textures??[],
     scenes:document.scenes??[],nodes:document.nodes??[],extensions_used:document.extensionsUsed??[],
-    mesh_count:document.meshes?.length??0,
-    scope:'Container/resource preparation only. Original BIN bytes, accessors, mesh topology, node transforms, material factors, texture indices, samplers and extensions are preserved. No geometry evaluation, texture conversion, appearance verification or network access.'}}
+    mesh_count:document.meshes?.length??0,mesh_primitives:meshPrimitives(document),
+    scope:'Container/resource preparation only. Mesh inventory uses declared accessors, not evaluated geometry. Original BIN bytes, accessors, mesh topology, node transforms, material factors, texture indices, samplers and extensions are preserved. No geometry evaluation, texture conversion, appearance verification or network access.'}}
 }
 
 export async function prepareGlb(input,output,{inspect=false}={}) {
@@ -73,7 +103,8 @@ export async function prepareGlb(input,output,{inspect=false}={}) {
   const destination=path.resolve(output)
   await fs.mkdir(destination) // Exclusive directory; existing assets are never overwritten.
   for(const file of plan.files)await fs.writeFile(path.join(destination,file.name),file.data,{flag:'wx'})
-  return {ok:true,source,...plan.summary,output_gltf:path.join(destination,'scene.gltf'),
+  const houdiniPath=path.join(destination,'scene.gltf').split(path.sep).join('/')
+  return {ok:true,source,...plan.summary,output_gltf:houdiniPath,
     files:plan.files.map(file=>({path:path.join(destination,file.name),bytes:file.data.length,sha256:hash(file.data)}))}
 }
 

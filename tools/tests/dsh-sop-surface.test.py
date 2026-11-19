@@ -34,15 +34,10 @@ def gui_run():
                 counts['blue']+=b>r*1.5 and b>g*1.2 and b>45
                 counts['green']+=g>r*1.5 and g>b*1.5 and g>45
         return counts
-    def observe(label,node,preview=True):
-        if preview:
-            result=call(f"__result__=render_view({node!r},direction='front',width=640,height=400,picture={label+'.png'!r})")
-            assert result['ok'] and result['user_state_restored'],result
-            image=result['output']
-        else:
-            result=call(f"__result__=viewport_screenshot({label+'.png'!r},frame_target={node!r},textures=True)")
-            assert result['ok'] and result['fresh'] and result['user_state_restored'],result
-            image=result['path']
+    def observe(label,node):
+        result=call(f"__result__=render_view({node!r},direction='front',width=640,height=400,picture={label+'.png'!r})")
+        assert result['ok'] and result['user_state_restored'],result
+        image=result['output']
         return {'image':image,'pixels':colors(image),'capture':result}
     try:
         report={'version':hou.applicationVersionString(),'mode':mode,'gui':hou.isUIAvailable(),'semantic_status':'unverified'}
@@ -77,7 +72,6 @@ __result__=verify_network(g,output=m)
 ''')
             yield
             report['cop']=observe('cop','/obj/surface/appearance')
-            report['cop_viewport']=observe('cop-viewport','/obj/surface/appearance',preview=False)
             (out/'cop-observation.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
             assert min(report['cop']['pixels'][x] for x in ('red','blue'))>200,report['cop']['pixels']
             call('''
@@ -110,9 +104,9 @@ __result__=render_frame(r)
         assert material,'actual SOP material assignment missing'
         report['material_paths']=sorted(set(node.geometry().primStringAttribValues('shop_materialpath')))
         assert all(hou.node(p) is not None for p in report['material_paths']),report['material_paths']
-        report['viewport']=observe(mode+'-viewport',node.path(),preview=False)
-        assert min(report['viewport']['pixels'][x] for x in ('red','blue'))>100,report['viewport']['pixels']
-        report['scope']='constant COP/pattern/file on one SOP material, vertex UV across dimension edit, proxy preview, viewport and saved dependency reopen; not autonomous model quality or Karma'
+        report['final_preview']=observe(mode+'-final-preview',node.path())
+        assert min(report['final_preview']['pixels'][x] for x in ('red','blue'))>100,report['final_preview']['pixels']
+        report['scope']='constant COP/pattern/file on one SOP material, vertex UV across dimension edit, offscreen preview and saved dependency reopen; not autonomous model quality or Karma'
         (out/(mode+'-result.json')).write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
         hou.exit(exit_code=0,suppress_save_prompt=True)
     except Exception:

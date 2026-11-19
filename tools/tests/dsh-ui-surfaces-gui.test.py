@@ -84,7 +84,6 @@ def probe():
     app = QtWidgets.QApplication.instance()
     state = {'step': 0, 'captures': [], 'failures': [], 'busy': False}
     only_size_shadow = os.environ.get('DSH_UI_SURFACES_SIZE_SHADOW_ONLY') == '1'
-    only_shading = os.environ.get('DSH_UI_SURFACES_SHADING_ONLY') == '1'
     timer = QtCore.QTimer(hou.qt.mainWindow())
     import ctypes
     user32 = ctypes.WinDLL('user32', use_last_error=True)
@@ -221,32 +220,6 @@ def probe():
                     state.setdefault('startup_dismissed_titles',[]).extend(dismissed)
                     return  # Process ordinary own-window closes at the outer GUI loop.
                 present_owned_fixture_window(native_parent)
-                if only_shading:
-                    import dsh_viewport
-                    display=state['scene'].curViewport().settings()
-                    sets=[display.displaySet(getattr(hou.displaySetType,name)) for name in
-                          ('CurrentModel','DisplayModel','SceneObject','SelectedObject')]
-                    before=(hou.frame(),[item.shadedMode() for item in sets])
-                    read=bridge.run_code("__result__=str(hou.ui.curDesktop().paneTabOfType(hou.paneTabType.SceneViewer).curViewport().settings().displaySet(hou.displaySetType.DisplayModel).shadedMode())",read_only=True)
-                    assert read['ok'],read
-                    seen=[];original=dsh_viewport._screenshot_readable
-                    def observe_shading(path):
-                        seen.append([item.shadedMode() for item in sets])
-                        return original(path)
-                    dsh_viewport._screenshot_readable=observe_shading
-                    try:
-                        result=bridge.run_code("__result__=viewport_screenshot(frame=5,frame_target='/obj/existing_surface_fixture',shading='Smooth')")
-                    finally:
-                        dsh_viewport._screenshot_readable=original
-                    assert result['ok'],result
-                    assert seen and all(mode==hou.glShadingType.Smooth for row in seen for mode in row)
-                    assert before==(hou.frame(),[item.shadedMode() for item in sets])
-                    assert result['images']==[os.path.abspath(result['result']['path'])]
-                    finish({'ok':True,'houdini':hou.applicationVersionString(),'capture':result,
-                            'read_only_settings':read['ok'],'requested_shading_observed':True,
-                            'frame_and_shading_restored':True,
-                            'scope':'Native GUI Bridge read/capture, actual pixels and all four shading sets; no user scene or semantic quality claim'})
-                    return
                 (output / 'parent-identities.json').write_text(json.dumps({
                     'main': QtCompat.getCppPointer(hou.qt.mainWindow()),
                     'pane_parent': QtCompat.getCppPointer(native_parent),
@@ -474,7 +447,6 @@ def main():
     parser.add_argument('--houdini', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--only-size-shadow',action='store_true',help='run the real observed QWidget.size attribute shadow regression only')
-    parser.add_argument('--only-shading',action='store_true',help='check native viewport temporary shading and restoration only')
     args = parser.parse_args()
     output = args.output.resolve()
     if output.is_relative_to(ROOT) or output.exists() and any(output.iterdir()):
@@ -502,7 +474,6 @@ def onCreateInterface():
 ]]></script><includeInPaneTabMenu menu_position="700" create_separator="false"/></interface></pythonPanelDocument>''', encoding='utf-8')
         env['DSH_UI_SURFACES_OUTPUT'] = str(output)
         env['DSH_UI_SURFACES_SIZE_SHADOW_ONLY'] = '1' if args.only_size_shadow else '0'
-        env['DSH_UI_SURFACES_SHADING_ONLY'] = '1' if args.only_shading else '0'
         info = subprocess.STARTUPINFO(); info.dwFlags |= subprocess.STARTF_USESHOWWINDOW; info.wShowWindow = 4
         with (output / 'gui-process.log').open('w', encoding='utf-8') as log:
             process = subprocess.Popen([str(args.houdini.resolve()), '-foreground', '-geometry=1000x800+20+20'],

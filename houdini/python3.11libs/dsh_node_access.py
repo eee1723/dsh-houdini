@@ -26,6 +26,21 @@ def _resolve_in_parent(parent, value) -> hou.Node:
     return _resolve(value)
 
 
+def _wire_source(value, parent=None):
+    """A source may also be the actual native input connector of a SOP subnet."""
+    if isinstance(value, str):
+        item = parent.item(value) if parent is not None else hou.item(value)
+    else:
+        item = value
+    if isinstance(item, hou.SubnetIndirectInput):
+        if not isinstance(item.parent(), hou.SopNode):
+            raise ValueError('Subnet input connectors are supported inside SOP networks')
+        return item
+    if isinstance(item, hou.Node):
+        return item
+    return _resolve_in_parent(parent, value) if parent is not None else _resolve(value)
+
+
 def _val(v):
     """把 HOM 值转成 JSON 安全（Vector/Matrix/Color → list），其余原样返回。"""
     if isinstance(v, (hou.Vector2, hou.Vector3, hou.Vector4)):

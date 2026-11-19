@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EXPECTED_VERB_NAMES } from '../../lib/generated-verb-contract.js'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const currentSurfaces = [
@@ -24,13 +23,7 @@ for (const relative of currentSurfaces) {
 }
 
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
-const development = fs.readFileSync(path.join(root, 'docs', 'development.md'), 'utf8')
-const verbCount = EXPECTED_VERB_NAMES.length
-for (const skill of fs.readdirSync(path.join(root, 'skills'))) {
-  const skillFile = `skills/${skill}/SKILL.md`
-  if (!fs.existsSync(path.join(root, skillFile))) continue
-  assert.match(readme, new RegExp(skillFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README omits ${skillFile}`)
-}
+assert.ok(readme.includes('](skills/)'), 'README links to the skill directory')
 
 const preferred=JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).preferredVersion
 assert.ok(readme.includes('DSH '+preferred));

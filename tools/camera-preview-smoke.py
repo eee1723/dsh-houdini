@@ -45,6 +45,14 @@ def run():
         sentinel.setSelected(True,clear_all_selected=True)
         initial_selection=tuple(n.path() for n in hou.selectedNodes())
         initial_visibility={n.path():n.isDisplayFlagSet() for n in (geo,sentinel,scene_camera)}
+        def viewer_state():
+            vp=viewer.curViewport()
+            return (viewer.pane().isMaximized(), viewer.isCurrentTab(), viewer.pwd().path(),
+                viewer.viewportLayout(), vp.name(), vp.camera(), vp.isCameraLockedToView(),
+                vp.settings().displayTextures(),
+                tuple(vp.settings().displaySet(getattr(hou.displaySetType,name)).shadedMode()
+                      for name in ('CurrentModel','DisplayModel','SceneObject','SelectedObject')))
+        original_viewer_state=viewer_state()
         def assert_user_state():
             assert float(hou.frame())==before_frame
             assert tuple(n.path() for n in hou.selectedNodes())==initial_selection
@@ -52,6 +60,7 @@ def run():
             assert viewer.curViewport().camera()==scene_camera and viewer.curViewport().isCameraLockedToView()
             assert tuple((key.frame(),key.value()) for key in scene_camera.parm('tx').keyframes())==camera_keys
             assert tuple(scene_camera.worldTransform().asTuple())==camera_matrix
+            assert viewer_state()==original_viewer_state
         for name,size,res,direction,projection in (
             ('cube_iso',(3.023,)*3,(640,360),'iso','perspective'),
             ('tall_portrait',(1,5,.7),(360,640),[1,.3,1],'perspective'),
@@ -134,29 +143,23 @@ def run():
         assert blended[1]>solid[1]+20 and min(blended[0],blended[2])>20,samples
         assert min(solid[0],solid[2])>solid[1]+20,samples
 
+        # Use the explicit result even when the display flag points at an empty SOP.
+        empty=geo.createNode('null','user_display');empty.setDisplayFlag(True);empty.setRenderFlag(True)
+        hou.clearAllSelected();sentinel.setSelected(True)
         root_pngs_before={item.name for item in output.glob('*.png')}
-        managed_viewports=[]
-        for index in range(6):
-            viewport=h.viewport_screenshot(f'viewport_{index+1}.png',frame=12+index,
-                                           clean=True,frame_target=box)
-            assert viewport['ok'] and viewport['fresh'] and viewport['user_state_restored'],viewport
-            assert float(hou.frame())==before_frame
-            assert Path(viewport['path']).parent.parent==output/'dsh-artifacts/checks',viewport
-            assert viewport['artifact']['output_policy']=='managed'
-            assert viewer.curViewport().camera()==scene_camera and viewer.curViewport().isCameraLockedToView()
-            assert tuple((key.frame(),key.value()) for key in scene_camera.parm('tx').keyframes())==camera_keys
-            managed_viewports.append(viewport)
-        assert len({item['path'] for item in managed_viewports})==6
+        managed_previews=[]
+        for frame in (12,13):
+            preview=h.render_view(box,picture='managed_preview.png',frame=frame,width=640,height=360)
+            assert preview['ok'] and preview['user_state_restored'],preview
+            assert preview['target']==box.path() and preview['check']['nonblack_pct']>1,preview
+            assert geo.displayNode()==empty and geo.renderNode()==empty
+            assert Path(preview['output']).parent.parent==output/'dsh-artifacts/checks/previews'/'managed-preview-fixture',preview
+            assert preview['artifact']['output_policy']=='managed'
+            assert_user_state()
+            managed_previews.append(preview)
+        assert len({item['output'] for item in managed_previews})==2
         assert {item.name for item in output.glob('*.png')}==root_pngs_before
-        record({'case':'managed_viewports','results':managed_viewports})
-        explicit_screens=[]
-        for extension in ('bmp','tga'):
-            capture=h.viewport_screenshot(str(output/f'viewport_compat.{extension}'),frame=20,
-                clean=True,frame_target=box,output_policy='explicit')
-            assert capture['ok'] and capture['fresh'] and capture['user_state_restored'],capture
-            assert capture['artifact']['output_policy']=='explicit'
-            explicit_screens.append(capture)
-        record({'case':'explicit_viewport_formats','results':explicit_screens})
+        record({'case':'managed_previews_with_empty_user_display','results':managed_previews})
         (output/'results.json').write_text(json.dumps({'ok':True,'version':hou.applicationVersionString(),
             'scope':'production render_view pixel framing, real alpha/backplate blending and user-state restoration; not new agent quality acceptance',
             'cases':records},indent=2),encoding='utf8')

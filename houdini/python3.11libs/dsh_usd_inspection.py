@@ -240,7 +240,12 @@ def usd_stage_summary(node, max_paths: int = 64) -> dict:
 
 
 def usd_prim_info(node, prim_path: str, max_properties: int = 200) -> dict:
-    """只读检查一个 USD prim 的属性、primvar、关系、绑定和 time samples。"""
+    """只读检查一个 USD prim 的属性、primvar、声明/有效绑定和 time samples。
+
+    effective_material_binding使用USD的all-purpose绑定解析，保留实际材质、来源关系和
+    强度；不写入API schema。它只覆盖请求的prim，不证明后代/面子集覆盖、纹理或视觉。
+    """
+    from pxr import UsdShade
     node, stage = _lop_stage(node)
     max_properties = int(max_properties)
     if max_properties < 1 or max_properties > 1000:
@@ -294,6 +299,15 @@ def usd_prim_info(node, prim_path: str, max_properties: int = 200) -> dict:
         relationship for relationship in relationships
         if relationship["name"].startswith("material:binding")
     ]
+    material, binding = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+    effective_material_binding = {
+        "status": "bound" if material else "unbound",
+        "material_path": str(material.GetPath()) if material else None,
+        "relationship_path": str(binding.GetPath()) if binding else None,
+        "strength": str(UsdShade.MaterialBindingAPI.GetMaterialBindingStrength(binding)) if binding else None,
+        "material_purpose": "allPurpose",
+        "scope": "All-purpose binding resolution for this prim only; does not verify descendant or face-subset coverage, shader inputs, textures, or visual appearance.",
+    }
     return {
         "node": node.path(),
         "path": str(prim.GetPath()),
@@ -309,6 +323,7 @@ def usd_prim_info(node, prim_path: str, max_properties: int = 200) -> dict:
         "primvars": primvars,
         "relationships": relationships,
         "material_bindings": material_bindings,
+        "effective_material_binding": effective_material_binding,
         "property_count": len(properties),
         "properties_truncated": len(properties) > max_properties,
     }

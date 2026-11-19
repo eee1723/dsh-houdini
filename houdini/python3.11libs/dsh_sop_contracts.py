@@ -99,41 +99,40 @@ def _content_nonempty(geometry, max_prims=100000, max_depth=16):
     Point-only data is valid; wrapper points do not prove embedded content.
     Bound traversal and never load external packed files to obtain a witness.
     """
-    pending = [(geometry, 0)]
-    checked = 0
-    unknown = False
-    while pending:
-        geo, depth = pending.pop()
+    remaining = max_prims
+
+    def witness(geo, depth):
+        nonlocal remaining
         if geo is None:
-            unknown = True
-            continue
+            return None
         count = int(geo.intrinsicValue('primitivecount'))
         points = int(geo.intrinsicValue('pointcount'))
         if not count:
-            if points:
-                return {'nonempty': True, 'status': 'observed_content'}
-            continue
-        # One concrete non-packed primitive is an existence witness, not a
-        # sample-based claim about the remaining geometry. Large meshes stay cheap.
-        if 'Packed' not in str(geo.prim(0).type()):
-            return {'nonempty': True, 'status': 'observed_content'}
-        if depth > max_depth or checked + count > max_prims:
-            unknown = True
-            continue
-        checked += count
+            return bool(points)
+        unresolved = False
         wrapper_points = set()
-        for prim in geo.prims():
-            if 'Packed' not in str(prim.type()):
-                return {'nonempty': True, 'status': 'observed_content'}
+        for index in range(count):
+            if remaining <= 0:
+                return None
+            remaining -= 1
+            prim = geo.prim(index)
+            if not isinstance(prim, hou.PackedPrim):
+                return True
             wrapper_points.update(v.point().number() for v in prim.vertices())
-            if isinstance(prim, hou.PackedGeometry):
-                pending.append((prim.getEmbeddedGeometry(), depth + 1))
+            if isinstance(prim, hou.PackedGeometry) and depth < max_depth:
+                nested = witness(prim.getEmbeddedGeometry(), depth + 1)
+                if nested is True:
+                    return True
+                unresolved |= nested is None
             else:
-                unknown = True
+                unresolved = True
         if points > len(wrapper_points):
-            return {'nonempty': True, 'status': 'observed_content'}
-    return {'nonempty': None if unknown else False,
-            'status': 'unverified_content' if unknown else 'empty_content'}
+            return True
+        return None if unresolved else False
+
+    value = witness(geometry, 0)
+    return {'nonempty': value, 'status': {True: 'observed_content', False: 'empty_content',
+                                          None: 'unverified_content'}[value]}
 
 
 def _vex_source_context(report):
@@ -447,7 +446,7 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             raise dsh_errors.CheckpointError('build_module interface contract failed/unverified; new module removed',
                                     {**validation,'ok':False,'failure_reasons':['interface_contract'],
                                      'interface_checks':interface_checks})
-        return {'valid': True, 'dry_run': False, 'parent': p.path(),
+        return {'valid': True, 'dry_run': False, 'applied': True, 'parent': p.path(),
                 'created': {name: n.path() for name, n in created.items()}, 'validation': validation,
                 **({'interface_checks':interface_checks} if interfaces is not None else {})}
     except BaseException as error:

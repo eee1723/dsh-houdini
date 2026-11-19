@@ -219,16 +219,21 @@ try{
  await fs.unlink(path.join(startup,'python3.11libs/uiready.py'));await fs.rmdir(path.join(startup,'python3.11libs'))
  await fs.symlink(outside,path.join(startup,'python3.11libs'),process.platform==='win32'?'junction':'dir')
  const ticketFile=path.join(r.home,'dsh-houdini/launches',rt.id+'.json'),rename=fs.rename
- let injected=false
+ let injected=0,retiredOnDisk=false
  fs.rename=async(from,to)=>{
-  if(!injected&&to===ticketFile&&JSON.parse(await fs.readFile(from,'utf8')).bootstrapRetired===true){
-   injected=true;throw Object.assign(new Error('fixture: transient Windows replacement lock'),{code:'EPERM'})
+  const retiring=to===ticketFile&&JSON.parse(await fs.readFile(from,'utf8')).bootstrapRetired===true
+  if(process.platform==='win32'&&injected<2&&retiring){
+   injected++;throw Object.assign(new Error('fixture: transient Windows replacement lock'),{code:'EPERM'})
   }
-  return rename(from,to)
+  await rename(from,to)
+  if(retiring)retiredOnDisk=true
  }
  try {
-  const rr=r.create();await rr.start();await until(async()=>(await r.disk(rt)).bootstrapRetired===true)
-  assert.ok(injected,'the retirement write must exercise the observed transient replacement failure')
+  // Poll the operation, not the file being replaced. Repeated Windows reads
+  // can themselves prevent a successful atomic rename.
+  const rr=r.create();await rr.start();await until(()=>retiredOnDisk)
+  assert.equal((await r.disk(rt)).bootstrapRetired,true)
+  assert.equal(injected,process.platform==='win32'?2:0,'Windows retirement writes survive repeated transient replacement failure')
   assert.equal(await fs.readFile(path.join(outside,'uiready.py'),'utf8'),source);assert.ok(await fs.stat(path.join(r.home,'dsh-houdini/launches',rt.id+'.log')))
   assert.equal((await rr.project(r.action(),new AbortController().signal)).phase,'error','ended request identity remains terminal')
   assert.equal(r.state.spawns,1,'a network retry of a retired operation cannot launch another window')

@@ -51,7 +51,7 @@ assert not blocked['ok'] and 'read-only' in blocked['error'], blocked
 
 created = ok(f"__result__=network_notes({parent!r},[{{'name':'README','text':'先调控制，再替换曲线。'}},{{'name':'INPUTS','text':'替换输入源'}}])")
 assert created['result']['created'] == ['README', 'INPUTS'], created
-assert created['execution']['impact']['attempted'] is False, created
+assert created['transaction']['status'] == 'committed' and created['transaction']['effects'] == 'registered', created
 a, b = p.findStickyNote('README'), p.findStickyNote('INPUTS')
 def rectangle(note):
     x, y = note.position(); w, h = note.size()

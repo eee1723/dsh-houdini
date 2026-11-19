@@ -140,7 +140,7 @@ export function registerHoudiniTools(ctx: Context, connection: HoudiniConnection
 
   ctx.tools.register(defineTool({
     name:'houdini_ui_screenshot',
-    description:HOUDINI_TOOLS.houdini_ui_screenshot.purpose+' Use the exact target returned by houdini_ui_list. Captures its currently displayed contents without opening, navigating or resizing UI. Native attachment transport is not semantic visual verification.',
+    description:HOUDINI_TOOLS.houdini_ui_screenshot.purpose+' Use for existing UI diagnosis with the exact target returned by houdini_ui_list. Captures the current visible contents without opening, navigating or resizing UI. For a model preview, use render_view with an explicit SOP. Native attachment transport is not semantic visual verification.',
     parameters:{
       target:{type:'string',required:true,description:'Exact target reference returned by houdini_ui_list in this runtime.'},
       path:{type:'string',description:'Safe PNG basename for managed/delivery, or absolute temporary path for explicit.'},
