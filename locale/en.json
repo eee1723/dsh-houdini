@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DSH Houdini",
-    "description": "Build, inspect, render, and maintain editable SideFX Houdini projects and tools from DSH."
+    "description": "Model, edit nodes and build tools in your Houdini scene using natural language."
   }
 }

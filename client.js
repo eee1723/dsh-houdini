@@ -1766,6 +1766,26 @@ function recordedJobExecution(event) {
       installDesktopNavigation(ctx, navigationFeedback);
       var slots = ctx.get("slots");
       if (slots === undefined) return;
+      var repository = "https://github.com/eee1723/dsh-houdini";
+      function projectLink(label, suffix, style) {
+        return React.createElement("a", { href: repository + suffix, target: "_blank",
+          rel: "noopener noreferrer", style: style }, label);
+      }
+      slots.inject("plugins.detail.actions", function () {
+        return slots.register({ name: "plugins.detail.actions", id: "houdini-repository" }, function (props) {
+          if (props.subject.kind !== "bundle" || props.subject.pkg.name !== "dsh-houdini") return null;
+          return projectLink("GitHub", "", { color: "inherit", textDecoration: "none", border: "1px solid var(--border, #7776)",
+            borderRadius: 6, padding: "4px 10px", fontSize: 13 });
+        });
+      });
+      slots.inject("plugins.bundle.config", function () {
+        return slots.register({ name: "plugins.bundle.config", key: "dsh-houdini" }, function () {
+          return React.createElement("section", { "aria-label": "开始使用 Houdini" },
+            React.createElement("p", null, "新建 Houdini 对话，选择工程，就可以开始建模。"),
+            React.createElement("nav", { "aria-label": "帮助", style: { display: "flex", gap: 16, flexWrap: "wrap" } },
+              projectLink("使用指南", "/blob/main/docs/setup.md"), projectLink("反馈问题", "/issues")));
+        });
+      });
       ctx.effect(function () {
         if (typeof document === "undefined") return;
         var style = document.createElement("style");

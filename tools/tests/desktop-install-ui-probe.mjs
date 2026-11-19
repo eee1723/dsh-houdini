@@ -73,6 +73,8 @@ async function directSourceUpdateEligibility(installed,label){
  await plugins()
  await click(`document.querySelector('[data-plugin-package="dsh-houdini"] button[aria-label]')`,'Native tarball package details')
  await until('document.querySelector("[data-plugin-detail=dsh-houdini]")','Native direct-source detail page')
+ await until(`["https://github.com/eee1723/dsh-houdini","https://github.com/eee1723/dsh-houdini/blob/main/docs/setup.md","https://github.com/eee1723/dsh-houdini/issues"].every(href=>document.querySelector('[data-plugin-detail=dsh-houdini] a[href="'+href+'"]'))`, 'Repository, guide and issues on enabled plugin page')
+ await shot(label+'-detail')
  assert.equal(await evaluate('!!document.querySelector("[data-plugin-versions]")'),false)
  const listing=await rpc('pluginManager/listVersions',{name:'dsh-houdini'})
  assert.equal(listing.status,'refused');assert.equal(listing.problem,'not-updatable')

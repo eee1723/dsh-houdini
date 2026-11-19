@@ -33,7 +33,7 @@ async function fixture(options={}){
   sessions:{list:sessions,refresh:async()=>{if(refreshGate)await refreshGate.promise},refreshProjections:async()=>{}},workspaces:{list:workspaces},
   configForms:{whileServed:(_names,fn)=>fn(),get:()=>({})},
   slots:{inject:(_name,install)=>{const stop=install();if(stop)disposers.push(stop);return stop},register:(entry,Component)=>{
-   assert(!slotsMap.has(entry.id),'duplicate slot '+entry.id);slotsMap.set(entry.id,{entry,Component});return()=>slotsMap.delete(entry.id)
+   const key=entry.id??entry.key;assert(!slotsMap.has(key),'duplicate slot '+key);slotsMap.set(key,{entry,Component});return()=>slotsMap.delete(key)
   }}}
  const window={__ModuleLoader__:{load:value=>load=value}},document={head:element(),body:element(),querySelector:()=>({}),createElement:element}
  vm.runInNewContext(source,{window,document,URL,AbortSignal,AbortController,setTimeout,clearTimeout,setInterval,clearInterval,console})
@@ -51,7 +51,8 @@ async function fixture(options={}){
 const enabledIds=['houdini-initial-project','houdini-initial-window-pin','houdini-project-label','houdini-window-pin','houdini-project-feedback','houdini-support-report']
 const app=await fixture()
 assert.equal(app.calls.filter(call=>call.method==='houdiniFrontend/desktopIntent').length,1,'root client owns one consumer')
-assert.deepEqual([...app.slotsMap.keys()],['houdini-navigation-feedback','houdini-video','houdini-delivery-scope'],'other modes expose no scene controls; global tutorial settings remain available')
+assert.deepEqual([...app.slotsMap.keys()],['houdini-repository','dsh-houdini','houdini-navigation-feedback','houdini-video','houdini-delivery-scope'],'other modes expose no scene controls')
+assert.equal(app.slotsMap.get('houdini-repository').Component({subject:{kind:'bundle',pkg:{name:'other'}}}),null)
 assert.equal(app.current.getSnapshot().key,'standard')
 app.current.set({key:'houdini-a'})
 await flush()
