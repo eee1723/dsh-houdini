@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "DSH Houdini",
+    "detail": "locale/detail.zh.md",
     "description": "用自然语言建模、改节点、做工具，成果留在你的 Houdini 工程里。"
   }
 }

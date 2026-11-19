@@ -51,7 +51,7 @@ async function fixture(options={}){
 const enabledIds=['houdini-initial-project','houdini-initial-window-pin','houdini-project-label','houdini-window-pin','houdini-project-feedback','houdini-support-report']
 const app=await fixture()
 assert.equal(app.calls.filter(call=>call.method==='houdiniFrontend/desktopIntent').length,1,'root client owns one consumer')
-assert.deepEqual([...app.slotsMap.keys()],['houdini-repository','dsh-houdini','houdini-navigation-feedback','houdini-video','houdini-delivery-scope'],'other modes expose no scene controls')
+assert.deepEqual([...app.slotsMap.keys()],['houdini-repository','houdini-navigation-feedback','houdini-video','houdini-delivery-scope'],'other modes expose no scene controls')
 assert.equal(app.slotsMap.get('houdini-repository').Component({subject:{kind:'bundle',pkg:{name:'other'}}}),null)
 assert.equal(app.current.getSnapshot().key,'standard')
 app.current.set({key:'houdini-a'})

@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "DSH Houdini",
+    "detail": "locale/detail.en.md",
     "description": "Model, edit nodes and build tools in your Houdini scene using natural language."
   }
 }
