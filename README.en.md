@@ -8,13 +8,17 @@ Use natural language in DeepSeek Harness Desktop to build and revise a real Houd
 
 **Windows x64 · DSH 0.2.2-rc.5 · Houdini 21.0 / 22.0**. Check your Desktop version first. On rc.3, use plugin **0.1.12**; on rc.1, use **0.1.11**.
 
-1. In Desktop, open **Plugins → Add plugin**, paste the published GitHub package URL, install and enable:
+1. In Desktop, open **Plugins → Add plugin**, choose the official npm registry or npmmirror, paste the package name, install and enable:
+
+```text
+dsh-houdini@0.1.13
+```
+
+2. Alternatively, paste the GitHub package URL into the same field, or download that file and enter its absolute path. Do not use the source archive. All three channels serve the same tarball.
 
 ```text
 https://github.com/eee1723/dsh-houdini/releases/download/v0.1.13/dsh-houdini-0.1.13.tgz
 ```
-
-2. Alternatively, download that file and enter its absolute path, not the GitHub source archive. Publication of 0.1.13 to npm and its mirror is not yet confirmed.
 
 3. Start a **Houdini** conversation and select your scene, or use **DSH-Houdini → Open Workspace** in Houdini. After updating, save and reopen the Houdini windows that need the new bridge.
 
