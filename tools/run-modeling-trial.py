@@ -73,7 +73,7 @@ DRIVER_ROOT=Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(DRIVER_ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
-from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli
+from houdini_test_environment import isolated_environment, launch_directory, reexec_unpacked_test_cli, registered_bridge_request
 from dsh_web_auth import DshWebSession
 from dsh_managed_runtime import spawn_frontend, stop_owned
 
@@ -362,12 +362,15 @@ def run_trial(result: dict) -> None:
         # Registration is published by a startup thread. The first queue-backed
         # observation can still precede GUI readiness; wait only on this owned,
         # read-only health endpoint before claiming the executor.
+        def bridge_rpc(route, body=None, timeout=90):
+            status, value = registered_bridge_request(REGISTRY, record, route, body, timeout=timeout)
+            if status >= 400:
+                raise RuntimeError(f'Owned Bridge {route} returned HTTP {status}: {value.get("error")}')
+            return value
         deadline=time.monotonic()+30
         while time.monotonic()<deadline:
             try:
-                request=urllib.request.Request(record['bridge_url']+'/health',
-                    headers={'X-DSH-Houdini-Executor':record['executor_id']})
-                with urllib.request.urlopen(request,timeout=2) as response:health=json.load(response)
+                health=bridge_rpc('/health',timeout=2)
                 if health.get('ok') and health.get('runtimeId')==record['runtime_id']:break
             except (OSError,ValueError):pass
             if supervisor.poll() is not None:raise RuntimeError('Owned worker exited before its health endpoint became ready')
@@ -396,23 +399,17 @@ def run_trial(result: dict) -> None:
         baseline, records = session_audit()
         result['actualPermissions'] = verify_trial_permissions(baseline, records, args.approval_policy)
         def owned_bridge_exec(code,call):
-            headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']}
             # Scene selection deliberately grants no write permission. This
             # trusted setup acts as the exact trial session on its owned worker.
-            request=urllib.request.Request(record['bridge_url']+'/executor/claim',
-                data=json.dumps({'task_id':session_id,'registration_id':record['registration_id'],
-                    'expected_hip':str(hip)}).encode(),headers=headers)
-            with urllib.request.urlopen(request,timeout=20) as response:claim=json.load(response)
+            claim=bridge_rpc('/executor/claim',{'task_id':session_id,'registration_id':record['registration_id'],
+                'expected_hip':str(hip)},timeout=20)
             if claim.get('ok') is not True:
                 raise RuntimeError('Owned trial setup could not claim its writer: '+str(claim.get('error')))
-            request=urllib.request.Request(record['bridge_url']+'/requests/prepare',
-                data=json.dumps({'owner_session':session_id}).encode(),headers=headers)
-            with urllib.request.urlopen(request,timeout=20) as response:ticket=json.load(response)
-            request=urllib.request.Request(record['bridge_url']+'/exec',data=json.dumps({
+            ticket=bridge_rpc('/requests/prepare',{'owner_session':session_id},timeout=20)
+            return bridge_rpc('/exec',{
                 'owner_session':session_id,'owner_call':call,'request_ref':ticket['requestRef'],
                 'expected_contract':{'version':ticket['executionContractVersion'],'hash':ticket['verbCatalog']['hash']},
-                'code':code}).encode(),headers=headers)
-            with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
+                'code':code},timeout=30)
         setup_module=str(DRIVER_ROOT/'tools/tests/modeling-trial-gui-setup.py')
         setup=owned_bridge_exec('import runpy\n__result__=runpy.run_path('+repr(setup_module)+
             ')["dismiss_owned_start_here"]()','trial-owned-gui-setup')
@@ -473,11 +470,6 @@ def run_trial(result: dict) -> None:
                 "content": [{"type": "text", "text": text}]}}, 30)
 
         if args.smoke:
-            def bridge_rpc(route,body=None):
-                request=urllib.request.Request(record['bridge_url']+route,
-                    data=None if body is None else json.dumps(body).encode(),
-                    headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':record['executor_id']})
-                with urllib.request.urlopen(request,timeout=90) as response:return json.load(response)
             ticket=bridge_rpc('/requests/prepare',{'owner_session':session_id})
             smoke_code=("before=scene_info()\nbefore_nodes=[{'path':n.path(),'owner':n.userData('dsh_houdini_task_owner')} for n in hou.node('/obj').children()]\n"
                 "g=tab_create('/obj','geo','evaluation_smoke')\n"

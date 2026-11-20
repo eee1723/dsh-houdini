@@ -26,6 +26,6 @@ const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8')
 assert.ok(readme.includes('](skills/)'), 'README links to the skill directory')
 
 const preferred=JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).preferredVersion
-assert.ok(readme.includes('DSH '+preferred));
+assert.ok(readme.replaceAll('`','').includes('DSH '+preferred), 'README identifies the supported DSH version');
 assert.match(readme,/docs\/tools.md/);
 console.log('current documentation consistency tests passed')

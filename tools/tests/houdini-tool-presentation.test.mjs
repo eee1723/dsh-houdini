@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { HoudiniBridge } from '../../lib/bridge.js';
+import {pairedBridge} from './fixture-bridge.mjs';
 import { registerHoudiniTools } from '../../lib/tools.js';
 import {renderJobStatus,renderJobObservation,execPresentationMeta,jobResultTitle,resultTitle} from '../../lib/tool-output.js';
 import {fixtureProjectionContext,fixtureSession} from './fixture-session.mjs';
@@ -299,13 +299,14 @@ const agentA = {id:'a',session:{header:{cwd:'C:/work'}}};
 const agentB = {id:'b',session:{header:{cwd:'C:/work'}}};
 const executeWorkspace = (agent, name = 'houdini_exec') =>
   workspaceDefinitions.get(name).execute({code:'pass'}, {agent,callId:`c${workspaceExecutions}`});
-assert.match((await executeWorkspace(agentA)).advisory, /successful Save As.*next model step/);
+const workspaceAdvice = /saves inside its original project.*working directory can follow.*next step.*native cd takes precedence/;
+assert.match((await executeWorkspace(agentA)).advisory, workspaceAdvice);
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'same agent/pair is deduplicated');
-assert.match((await executeWorkspace(agentB, 'houdini_inspect')).advisory, /successful Save As.*next model step/, 'other agent gets its own advice');
+assert.match((await executeWorkspace(agentB, 'houdini_inspect')).advisory, workspaceAdvice, 'other agent gets its own advice');
 workspaceResult = {...workspaceResult, execution:{hip_dir:'c:\\WORK\\'}};
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'Windows slashes/case do not cause false mismatch');
 workspaceResult = {...workspaceResult, execution:{hip_dir:'C:/project'}};
-assert.match((await executeWorkspace(agentA)).advisory, /successful Save As.*next model step/, 'a newly changed workspace is explained again');
+assert.match((await executeWorkspace(agentA)).advisory, workspaceAdvice, 'a newly changed workspace is explained again');
 workspaceResult = {...workspaceResult, execution:{hip_dir:null}};
 assert.equal((await executeWorkspace(agentA)).advisory, undefined, 'unnamed HIP is not a known project');
 workspaceResult = {ok:false,stdout:'',stderr:'',requestReceipt:{status:'unknown_transport'}};
@@ -384,7 +385,7 @@ const countingServer = http.createServer((request, response) => {
 });
 await new Promise((resolve) => countingServer.listen(0, '127.0.0.1', resolve));
 try {
-  const realBridge = new HoudiniBridge(`http://127.0.0.1:${countingServer.address().port}`, 1000);
+  const realBridge = pairedBridge(`http://127.0.0.1:${countingServer.address().port}`, 1000);
   registerHoudiniTools(await fixtureProjectionContext({tools:{register:d=>realDefs.set(d.name,d)}}), realBridge);
   for (const bad of badIdentities) {
     await assert.rejects(realDefs.get('houdini_exec').execute({code:'pass'},bad),/identity/);

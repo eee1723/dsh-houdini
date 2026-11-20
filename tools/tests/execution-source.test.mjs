@@ -6,7 +6,7 @@ import http from 'node:http'
 import {createHash} from 'node:crypto'
 import {resolveExecutionSource} from '../../lib/execution-source.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
-import {HoudiniBridge} from '../../lib/bridge.js'
+import {pairedBridge,fixtureToken} from './fixture-bridge.mjs'
 import {Context} from '@deepseek-ai/cordis'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH,EXPECTED_VERB_NAMES} from '../../lib/generated-verb-contract.js'
 
@@ -111,6 +111,7 @@ try {
 
   const received=[]
   server=http.createServer(async(request,response)=>{
+    assert.equal(request.headers.authorization,'Bearer '+fixtureToken)
     const chunks=[];for await(const chunk of request)chunks.push(chunk)
     const body=JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')
     response.setHeader('content-type','application/json')
@@ -119,7 +120,7 @@ try {
     else {received.push({url:request.url,body});response.end(JSON.stringify(request.url==='/jobs'?{jobId:'123456abcdef'}:receipt))}
   })
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
-  const bridge=new HoudiniBridge(`http://127.0.0.1:${server.address().port}`,1000),owner={sessionId:'source-owner',callId:'source-call'}
+  const bridge=pairedBridge(`http://127.0.0.1:${server.address().port}`,1000),owner={sessionId:'source-owner',callId:'source-call'}
   await bridge.exec(source.code,owner,exec.signal,undefined,false,source.script)
   await bridge.submitJob(source.code,owner,exec.signal,undefined,source.script)
   for(const request of received){assert.equal(request.body.code,content);assert.deepEqual(request.body.script,source.script);assert.equal(request.body.owner_session,owner.sessionId)}

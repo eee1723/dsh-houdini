@@ -46,6 +46,12 @@ let capturesExecuted=0
 let listsExecuted=0
 let bridgeReceipt
 const jobRuntime='b'.repeat(32),jobExecutor=fixtureExecutor
+const mediaRuntime='e'.repeat(32), imageRefs=new Set()
+function imageReceipt(callId) {
+  const ref=mediaRuntime+'.'+(imageRefs.size+1).toString(16).padStart(32,'0')
+  imageRefs.add(ref)
+  return {request_ref:ref,runtime_id:mediaRuntime,owner_call:callId,status:'done'}
+}
 const fixtureBridge={targetExecutorId:fixtureExecutor,
   forRuntime(){return this},
   async jobStatus(){return {jobId:'a'.repeat(12),status:'done',ok:true,stdout:'',stderr:''}},
@@ -53,14 +59,17 @@ const fixtureBridge={targetExecutorId:fixtureExecutor,
     evidence:[{operation:'ui_list',scene_writes:0}],transaction:{status:'no_scene_change'},
     execution:{runtime_id:'capture-runtime',sequence:listsExecuted,observed_at:9},
     requestReceipt:{request_ref:'list-'+listsExecuted,owner_call:owner.callId,status:'done'}}},
-  async fetchMedia(){return Buffer.from('image')},async exec(){executed++;if(bridgeReceipt)return structuredClone(bridgeReceipt);return {ok:true,stdout:'',stderr:'',result:{box:executed},images:['C:/fixture/output.png'],
-  execution:{runtime_id:'runtime',sequence:executed,observed_at:executed}}},
+  async fetchMedia({requestRef,ownerSession,index}){
+    assert(imageRefs.has(requestRef));assert.equal(ownerSession,session.id);assert.equal(index,0)
+    return Buffer.from('image')
+  },async exec(_code,owner){executed++;if(bridgeReceipt)return structuredClone(bridgeReceipt);return {ok:true,stdout:'',stderr:'',result:{box:executed},images:['C:/fixture/output.png'],
+  requestReceipt:imageReceipt(owner.callId),execution:{runtime_id:mediaRuntime,sequence:executed,observed_at:executed}}},
   async captureUi(args,owner){capturesExecuted++;return {ok:true,stdout:'',stderr:'',
     result:{node:args.node??null,target:args.target??null,path:'C:/fixture/ui.png',scene_writes:0,semantic_status:'unverified',user_state_restored:true},
     images:['C:/fixture/ui.png'],evidence:[{operation:'ui_capture',scene_writes:0,semantic_status:'unverified'}],
     outcome:{batch:'completed',operations:{total:1,failed:0},checks:{failed:0,warning:0,unverified:0}},transaction:{status:'no_scene_change'},
-    execution:{runtime_id:'capture-runtime',sequence:capturesExecuted,observed_at:10+capturesExecuted},
-    requestReceipt:{request_ref:'ui-'+capturesExecuted,owner_call:owner.callId,status:'done'}}},
+    execution:{runtime_id:mediaRuntime,sequence:capturesExecuted,observed_at:10+capturesExecuted},
+    requestReceipt:imageReceipt(owner.callId)}},
   async submitJob(){return {jobId:'a'.repeat(12),requestReceipt:{request_ref:jobRuntime+'.'+'c'.repeat(32),
     runtime_id:jobRuntime,executor_id:jobExecutor,status:'job_submitted'}}},
   async cancelJob(){return {jobId:'a'.repeat(12),status:'cancelled',ok:false,stdout:'',stderr:''}}}

@@ -5,6 +5,8 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'houdini/python3.11libs'))
 import dsh_errors
 import dsh_node_types
+import dsh_ownership
+from unittest.mock import patch
 import hou
 import dsh_hou_helpers as h
 import dsh_bridge as b
@@ -25,7 +27,9 @@ try:
     before={n.sessionId() for n in root.children()}
     assert h.build_module(root,scalar_specs,output='wire',dry_run=True)['valid']
     assert before=={n.sessionId() for n in root.children()}
-    built=h.build_module(root,scalar_specs,output='wire',required_outputs=['body','expr','string_expr','python_expr'])
+    with patch.object(dsh_ownership, 'snapshot', wraps=dsh_ownership.snapshot) as snapshot:
+        built=h.build_module(root,scalar_specs,output='wire',required_outputs=['body','expr','string_expr','python_expr'])
+        snapshot.assert_called_once_with()
     assert built['validation']['ok']
     for node,field,value in [('profile','divs',64),('body','height',2.5),('body','cols',18),
                               ('wire','radius',.02),('wire','div',8),('expr','divs',32),
@@ -164,12 +168,15 @@ try:
     assert env['verbs'][0]['summary']['scene_writes']==0 and env['verbs'][-1]['ok'],env
     assert source.evalParm('sizex')==4
     # Cook/VEX failure happens AFTER writes and may never acquire zero-write metadata.
+    owners_before = dsh_ownership.records()
     env=b.run_code(f'build_module({root.path()!r},[{{"name":"made","type":"box"}},'
                    '{"name":"bad_vex","type":"attribwrangle","inputs":["made"],'
-                   '"parms":{"snippet":"nonexistent_function_probe();"}}],output="bad_vex")')
+                   '"parms":{"snippet":"nonexistent_function_probe();"}}],output="bad_vex")',
+                   owner_session='module-failure')
     assert not env['ok'] and env['transaction']['status']!='no_scene_change',env
     assert all(e.get('scene_writes')!=0 for e in env.get('evidence',[])),env
     assert root.node('made') is None and root.node('bad_vex') is None
+    assert dsh_ownership.records() == owners_before
 finally:
     root.destroy()
 print('module preflight zero-write/previous mutation/caught failure/post-write recovery passed on '+hou.applicationVersionString())

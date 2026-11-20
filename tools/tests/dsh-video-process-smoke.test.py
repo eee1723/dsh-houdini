@@ -1,20 +1,27 @@
 """Pinned DSH native/nested local media and evidence calls; no paid provider or HOM."""
 from pathlib import Path
-import argparse,json,os,socket,subprocess,sys,tempfile,time
+import argparse,json,os,shutil,socket,subprocess,sys,tempfile,time
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tools'));sys.path.insert(0,str(ROOT/'houdini/python3.11libs'))
 from houdini_test_environment import isolated_environment,reexec_unpacked_test_cli
 from dsh_managed_runtime import spawn_frontend,stop_owned
 reexec_unpacked_test_cli()
-parser=argparse.ArgumentParser();parser.add_argument('--runtime-cache',required=True,type=Path);args=parser.parse_args()
+parser=argparse.ArgumentParser()
+parser.add_argument('--runtime-cache',required=True,type=Path)
+parser.add_argument('--media-runtime',type=Path,help='Use a staged runtime/video from the project distribution')
+args=parser.parse_args()
 cache=args.runtime_cache.resolve(strict=True);cli=cache/'node_modules/@deepseek-ai/dsh/lib/bin.js'
 assert json.loads((cli.parent.parent/'package.json').read_text())['version']==json.loads((ROOT/'dsh-runtime-compatibility.json').read_text())['preferredVersion']
 run=Path(tempfile.mkdtemp(prefix='dsh-local-video-smoke-'));workspace=run/'workspace';workspace.mkdir()
 env=isolated_environment(run);env['PYTHONUTF8']='1';env.pop('HFS',None)
-node=Path('C:/Program Files/nodejs/node.exe');ffmpeg=ROOT/'runtime/video/ffmpeg/bin/ffmpeg.exe'
+node=Path('C:/Program Files/nodejs/node.exe')
 def command(values):return subprocess.run([str(x) for x in values],cwd=ROOT,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',check=True,timeout=90)
-command([ffmpeg,'-v','error','-nostdin','-n','-f','lavfi','-i','testsrc2=size=96x64:rate=10:duration=2','-c:v','mpeg4',workspace/'source.mp4'])
 command([node,ROOT/'tools/tests/prepare-shared-host-fixture.mjs',cli,env['DSH_HOME'],ROOT])
+media=run/'installed/dsh-houdini/runtime/video'
+if args.media_runtime:
+ if media.exists(): raise ValueError('Fixture already contains the plugin media runtime; omit --media-runtime')
+ shutil.copytree(args.media_runtime.resolve(strict=True),media)
+command([media/'ffmpeg/bin/ffmpeg.exe','-v','error','-nostdin','-n','-f','lavfi','-i','testsrc2=size=96x64:rate=10:duration=2','-c:v','mpeg4',workspace/'source.mp4'])
 with socket.socket() as s:s.bind(('127.0.0.1',0));bridgeport=s.getsockname()[1]
 with socket.socket() as s:s.bind(('127.0.0.1',0));hostport=s.getsockname()[1]
 output=run/'result.json'

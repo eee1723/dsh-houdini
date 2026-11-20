@@ -19,7 +19,7 @@ const record=rows[0],flush=async()=>true
 const agentB={id:'task-b',status:'idle',session:fixtureSession('task-b',{agentPreset:'houdini'})}
 const agentA={id:'task-a',status:'idle',session:fixtureSession('task-a',{agentPreset:'houdini'})}
 const agents=[agentA,agentB]
-const ctx=fixtureProjectionContext()
+const ctx=await fixtureProjectionContext()
 const router=new ExecutorRouter(directory,5000,new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())),session=>projectedExecutorState(ctx,session),
   id=>agents.find(agent=>agent.id===id)?.status==='idle',flush)
 const tools=new Map()

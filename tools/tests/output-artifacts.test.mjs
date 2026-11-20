@@ -13,6 +13,14 @@ async function age(run) {
   await fs.writeFile(filename,JSON.stringify({...m,createdAt:old,completedAt:old}))
 }
 try {
+  const explicit=path.join(fixture,'release-reservation');await fs.mkdir(explicit)
+  const startRelease=()=>beginDirectory(explicit,{label:'candidate',kind:'release'},{root})
+  const owners=await Promise.allSettled([startRelease(),startRelease()])
+  assert.equal(owners.filter(result=>result.status==='fulfilled').length,1)
+  const frozen=path.join(explicit,'candidate.tgz')
+  await fs.writeFile(frozen,'original package')
+  await assert.rejects(startRelease(),/fresh batch/)
+  assert.equal(await fs.readFile(frozen,'utf8'),'original package')
   const first=await createRun({label:'browser',isolation:'isolated'},{root})
   await fs.writeFile(path.join(first.directory,'shot.png'),'fixture only')
   const started=JSON.parse(await fs.readFile(path.join(first.directory,manifestName),'utf8'))

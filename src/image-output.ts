@@ -60,7 +60,8 @@ export function imageBlocks(value: ExecResult): ContentBlock[] {
 
 /** No workspace copies or secondary vision agent. Failure never retries HOM. */
 export async function attachImages<T extends ExecResult>(value: T, exec: any, bridge: HoudiniBridge, ctx: any): Promise<T> {
-  const paths = Array.isArray(value.images) ? [...new Set(value.images.filter((p): p is string => typeof p === 'string'))] : []
+  const sources = Array.isArray(value.images) ? value.images : []
+  const paths = [...new Set(sources.filter((p): p is string => typeof p === 'string'))]
   if (!paths.length) return value
   const imageAttachments: any[] = []
   try {
@@ -75,7 +76,9 @@ export async function attachImages<T extends ExecResult>(value: T, exec: any, br
         if (!mediaType || !attachments.imageLimits.mediaTypes.includes(mediaType)) throw new Error('format unsupported by native image channel; use a PNG/JPEG preview for visual inspection')
         const cap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes - totalBytes)
         if (cap <= 0) throw new Error('native image message byte limit reached')
-        const data = await bridge.fetchMedia(from, exec.signal, cap)
+        const receipt=value.requestReceipt
+        const requestRef=receipt&&typeof receipt==='object'&&!Array.isArray(receipt)?receipt.request_ref:undefined
+        const data = await bridge.fetchMedia({requestRef,ownerSession:exec.agent?.id,index:sources.indexOf(from)}, exec.signal, cap)
         const attachment = await attachments.saveImage({ data, mediaType, name: path.basename(from.replaceAll('\\', '/')) })
         totalBytes += attachment.bytes
         imageAttachments.push({ from, attachment, image:imageAttachmentFacts(attachment), semantic_status: 'unverified', capability_status: capability.status })

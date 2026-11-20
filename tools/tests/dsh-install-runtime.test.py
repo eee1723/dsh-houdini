@@ -8,14 +8,32 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('helper_installer', ROOT / 'houdini/install.py')
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
-with patch.dict(os.environ, {'HOUDINI_USER_PREF_DIR': 'D:/Fixture/houdini__HVER__'}):
-    assert installer.default_packages_dirs() == [Path('D:/Fixture/houdini21.0/packages'), Path('D:/Fixture/houdini22.0/packages')]
+with tempfile.TemporaryDirectory(prefix='dsh-source-registration-') as temporary:
+    root = Path(temporary)
+    environment = dict(os.environ, HOUDINI_USER_PREF_DIR=str(root / 'fixture-pref'))
+    command = [sys.executable, str(ROOT / 'houdini/install.py')]
+    directory = root / 'explicit' / 'packages'
+    for options in ([], ['--print', '--packages-dir', str(directory)]):
+        preview = subprocess.run(command + options, env=environment, capture_output=True, check=True)
+        assert json.loads(preview.stdout) == installer.build_package()
+        assert not list(root.iterdir()), 'a preview must not create any registration'
+    install = command + ['--packages-dir', str(directory)]
+    subprocess.run(install, env=environment, capture_output=True, check=True)
+    target = directory / 'dsh-houdini.json'
+    assert json.loads(target.read_bytes()) == installer.build_package()
+    equivalent = json.dumps(installer.build_package(), indent=4).encode('utf-8')
+    target.write_bytes(equivalent)
+    subprocess.run(install, env=environment, capture_output=True, check=True)
+    assert target.read_bytes() == equivalent
+    foreign = b'{"env":[],"path":"managed-helper"}'
+    target.write_bytes(foreign)
+    assert subprocess.run(install, env=environment, capture_output=True).returncode != 0
+    assert target.read_bytes() == foreign and not (root / 'fixture-pref').exists()
 
 if os.name == 'nt':
     with tempfile.TemporaryDirectory(prefix='dsh-helper-install-中文 空格-') as temporary:

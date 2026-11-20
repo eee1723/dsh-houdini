@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {randomUUID} from 'node:crypto';
-import {HoudiniBridge} from '../../lib/bridge.js';
+import {pairedBridge,fixtureToken} from './fixture-bridge.mjs';
 import {registerHoudiniTools} from '../../lib/tools.js';
 import {projectExecutionState} from '../../lib/execution-state.js';
 import {executorIdentityProjection} from '../../lib/executor-identity-projection.js';
@@ -20,6 +20,7 @@ const host=await fixtureProjectionContext(new Context());
 let nativeJobs=0;
 host.provide('jobs',{start(spec){const id='houdini-live-fixture-'+(++nativeJobs);observers.push(spec.run({id,updateProgress(){},append(){}}).done);return id;}});
 const server=http.createServer((req,res)=>{
+ assert.equal(req.headers.authorization,'Bearer '+fixtureToken);
  res.setHeader('content-type','application/json');
  if(req.url==='/health'){res.end(JSON.stringify({ok:true,runtimeId:runtime,executionContractVersion:version,verbCatalog:{hash}}));return;}
  let text='';req.on('data',b=>text+=b);req.on('end',()=>{
@@ -103,7 +104,7 @@ const server=http.createServer((req,res)=>{
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 try{
- const bridge=new HoudiniBridge(`http://127.0.0.1:${server.address().port}`,80);
+ const bridge=pairedBridge(`http://127.0.0.1:${server.address().port}`,80);
  const owner={sessionId:'owner',callId:'call'};
  for(const invalid of ['missing','wrong-runtime']) {
   ticketMode=invalid;

@@ -384,7 +384,7 @@ def probe():
                         try:
                             connection.request('GET' if body is None else 'POST', path,
                                 body=json.dumps(body) if body is not None else None,
-                                headers={'Content-Type':'application/json'})
+                                headers={'Content-Type':'application/json','Authorization':'Bearer '+server.bridge_token})
                             response = connection.getresponse()
                             data = json.loads(response.read().decode('utf-8'))
                             assert response.status == 200, data

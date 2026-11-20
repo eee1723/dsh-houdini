@@ -5,6 +5,7 @@ import http.client
 import json
 import sys
 import threading
+import tempfile
 import time
 from http.server import ThreadingHTTPServer
 from unittest.mock import patch
@@ -13,12 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'houdini/python3.11
 import dsh_bridge as b
 
 server = ThreadingHTTPServer(('127.0.0.1', 0), b._Handler)
+server.bridge_token = b.secrets.token_hex(32)
 thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
 
 
 def post(path, value, headers=None):
     connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
-    connection.request('POST', path, json.dumps(value), headers=headers or {'Content-Type': 'application/json'})
+    connection.request('POST', path, json.dumps(value), headers={
+        'Authorization': 'Bearer ' + server.bridge_token, **(headers or {'Content-Type': 'application/json'})})
     response = connection.getresponse()
     status, result = response.status, json.loads(response.read())
     connection.close()
@@ -71,19 +74,55 @@ try:
     importlib.reload(runtime)
     assert identity==runtime.executor_identity(), 'module reload must not replace process identity'
     wrong='0'*32 if identity!='0'*32 else '1'*32
+    for unauthorized in ('', 'Bearer '+wrong):
+        assert post_rejecting('/requests/prepare', {}, {'Authorization':unauthorized})[0] == 401
+    assert post_rejecting('/requests/prepare', {}, {'Host':'unexpected.local'})[0] == 403
     headers={'Content-Type':'application/json','X-DSH-Houdini-Executor':wrong}
     for path in ('/exec','/jobs','/jobs/not-ours/cancel','/jobs/not-ours/status',
                  '/context','/requests/prepare','/requests/status'):
         status,result=post_rejecting(path,{'code':'raise RuntimeError("should never execute")'},headers)
         assert status==409 and 'executor_mismatch' in result['error'],(path,status,result)
     connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
-    connection.request('GET','/media?path=never-read.png',headers={'X-DSH-Houdini-Executor':wrong})
+    connection.request('GET','/media?path=never-read.png',headers={'Authorization':'Bearer '+server.bridge_token,'X-DSH-Houdini-Executor':wrong})
     response=connection.getresponse()
     assert response.status==409 and 'executor_mismatch' in response.read().decode()
     connection.close()
     good={'Content-Type':'application/json','X-DSH-Houdini-Executor':identity}
     status,prepared=post('/requests/prepare',{'owner_session':'bound-client'},good)
     assert status==200 and prepared['executorId']==identity,(status,prepared)
+    assert server.bridge_token not in json.dumps(prepared)
+    with tempfile.TemporaryDirectory() as raw:
+        rendered = Path(raw) / 'fixture.png'
+        rendered.write_bytes(b'original fixture bytes')
+        reported = Path(raw) / 'other.png'
+        reported.write_bytes(b'path-only fixture')
+        media_ref = prepare('media-owner')
+        b._request_registry.reserve(media_ref,'media-owner',{})
+        def fixture_render():
+            b.dsh_media_output._report_rendered_image(str(rendered))
+            b.dsh_media_output.report_image(str(reported))
+            return {'images':[str(rendered),str(reported)]}
+        with b.dsh_media_output.image_scope():
+            value = b._run_with_media(media_ref,'media-owner',fixture_render)
+        b._request_registry.complete(media_ref,value)
+        media = {'owner_session':'media-owner','request_ref':media_ref,'image_index':0}
+        def read_original(body):
+            connection = http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+            try:
+                connection.request('POST','/media',json.dumps(body),headers={
+                    'Content-Type':'application/json','Authorization':'Bearer '+server.bridge_token})
+                response = connection.getresponse()
+                return response.status,response.read()
+            finally:
+                connection.close()
+        assert read_original(media) == read_original(media) == (200,rendered.read_bytes())
+        assert read_original({**media,'owner_session':'different'})[0] == 404
+        assert read_original({**media,'image_index':1})[0] == 404
+        assert read_original({**media,'path':str(reported)})[0] == 400
+        rendered.write_bytes(b'changed! fixture bytes')
+        assert read_original(media)[0] == 409
+        with patch.object(b.time,'monotonic',return_value=time.monotonic()+601):
+            assert read_original(media)[0] == 404
     expected_runtime = {
         'hfs': b.hou.getenv('HFS') or '',
         'python': str(Path(sys.exec_prefix) / ('python.exe' if sys.platform == 'win32' else 'bin/python3')),
@@ -98,7 +137,7 @@ try:
     with patch.object(b.hou, 'getenv', side_effect=AssertionError('HTTP health called HOM')), \
          patch.object(b.hou, 'applicationVersionString', side_effect=AssertionError('HTTP health called HOM')):
         connection=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=3)
-        connection.request('GET','/health',headers={'X-DSH-Houdini-Executor':identity})
+        connection.request('GET','/health',headers={'Authorization':'Bearer '+server.bridge_token,'X-DSH-Houdini-Executor':identity})
         response=connection.getresponse()
         health=json.loads(response.read());connection.close()
         assert response.status == 200 and health['runtime'] == expected_runtime, health
@@ -272,7 +311,7 @@ try:
          patch.object(ui_capture, 'abort_ui_capture', side_effect=AssertionError('closed stage was aborted again')):
         status, terminal_ui = post('/ui/capture', ui_body)
     assert status == 200 and terminal_ui['ok'] is False, terminal_ui
-    scene_fence.assert_called_once_with(ui_body['request_ref'], ui_owner)
+    assert scene_fence.call_count == 3 and all(c.args == (ui_body['request_ref'],ui_owner) for c in scene_fence.call_args_list)
     assert terminal_ui['result'] == stage_facts and 'final UI observation queue failure' in terminal_ui['error'], terminal_ui
     assert terminal_ui['requestReceipt']['status'] == 'done' and 'execution' not in terminal_ui, terminal_ui
     assert ui_stage_calls == ['prepare', 'refresh', 'finish'] and b._request_registry.active_count() == active_before_ui
@@ -281,6 +320,22 @@ try:
     assert status == 200 and duplicate_ui == terminal_ui, (duplicate_ui, terminal_ui)
     status, retained_ui = post('/requests/status', {'request_ref': ui_body['request_ref'], 'owner_session': ui_owner})
     assert retained_ui['requestReceipt']['status'] == 'done' and retained_ui['requestReceipt']['result'] == terminal_ui
+
+    stage_state['closed'] = False
+    ui_stage_calls.clear()
+    ui_body = {**ui_body, 'request_ref': prepare(ui_owner), 'owner_call':'changed-scene'}
+    changed = RuntimeError('Scene changed before the screenshot')
+    with patch.object(b,'_execute',side_effect=lambda fn:fn()), \
+         patch.object(b,'_require_request_scene',side_effect=[None,None,changed,changed]), \
+         patch.object(ui_capture,'prepare_ui_capture',side_effect=prepare_ui_fixture), \
+         patch.object(ui_capture,'refresh_ui_capture',side_effect=refresh_ui_fixture), \
+         patch.object(ui_capture,'finish_ui_capture') as capture_after_change, \
+         patch.object(ui_capture,'abort_ui_capture',return_value={'user_state_restored':True}) as cleanup:
+        status, changed_ui = post('/ui/capture',ui_body)
+    assert status == 200 and not changed_ui['ok'] and 'Scene changed' in changed_ui['error'], changed_ui
+    assert 'images' not in changed_ui and 'execution' not in changed_ui
+    capture_after_change.assert_not_called()
+    cleanup.assert_called_once()
 
     # Real HTTP -> queue -> owning-thread HOM -> JSON response, in this
     # disposable hython process (no live Houdini session is contacted).
@@ -378,11 +433,16 @@ try:
         b._jobs.update(copy.deepcopy(fixtures))
         for name in fixtures:
             b._job_meta[name] = 1700.0 + len(name)   # initialized, distinct, comparable
+            job = b._jobs[name]
+            if job['status'] in ('done', 'failed'):
+                body = {key: job.pop(key) for key in ('ok', 'stdout', 'stderr', 'result', 'error') if key in job}
+                b._request_registry.store_job_result(name, body)
     def jobs_state():
         """Independent deep snapshot of the whole registry, including nested
         result payloads; taken inside the lock, never rebuilt from fixtures."""
         with b._jobs_lock:
-            return copy.deepcopy(b._jobs), copy.deepcopy(b._job_meta)
+            return (copy.deepcopy(b._jobs), copy.deepcopy(b._job_meta),
+                    {name: b._request_registry.job_result_bytes(name) for name in fixtures})
     state_before = jobs_state()   # frozen BEFORE the first rejection request
     # Envelope typing on job control: missing identity 400, bool version 400,
     # foreign contract value 409 - all before any job lookup or mutation.
@@ -433,11 +493,12 @@ try:
     # field AND a mutated nested result field, then the fixture is restored.
     with b._jobs_lock:
         b._jobs['da']['owner_call'] = 'tampered'
-        b._jobs['da']['result']['media'] = 'Z:/hip/TAMPERED.png'
+        saved_body = json.loads(b._request_registry.job_result_bytes('da'))
+        b._request_registry.store_job_result('da', {**saved_body, 'result': {'media': 'Z:/hip/TAMPERED.png'}})
     assert jobs_state() != state_before, 'snapshot comparator must detect real mutations'
     with b._jobs_lock:
         b._jobs['da']['owner_call'] = 'c1'
-        b._jobs['da']['result']['media'] = 'Z:/hip/a.png'
+        b._request_registry.store_job_result('da', saved_body)
     assert jobs_state() == state_before, 'fixture must be restored after the self-check'
     assert b._work_queue.empty(), 'rejected job control must not queue anything'
     # Same session, new callId: later tool calls collect results and cancel.
@@ -478,7 +539,8 @@ try:
         assert entered.wait(3), 'handler never reached the polling wait (or returned early)'
         got_lock = b._jobs_lock.acquire(timeout=2)
         assert got_lock, 'long-poll wait must not hold _jobs_lock while a poll is in flight'
-        b._jobs['ra2']['status'] = 'done'; b._jobs['ra2']['ok'] = True; b._job_meta['ra2'] = 1711.0
+        b._request_registry.store_job_result('ra2', {'ok': True, 'stdout': '', 'stderr': ''})
+        b._jobs['ra2']['status'] = 'done'; b._job_meta['ra2'] = 1711.0
         b._jobs_lock.release()
     finally:
         release.set()
@@ -492,13 +554,18 @@ try:
     try:
         b._execute = lambda fn: {'ok': True, 'stdout': 'actual result', 'stderr': ''}
         b._run_job('ra', 'pass')
-        assert b._jobs['ra']['status'] == 'done' and b._jobs['ra']['stdout'] == 'actual result'
+        assert b._jobs['ra']['status'] == 'done' and b._public_job(b._jobs['ra'])['stdout'] == 'actual result'
+        b._jobs['no-body'] = {'jobId': 'no-body', 'status': 'running', 'owner_session': 'alice'}
+        with patch.object(b._request_registry, 'store_job_result', side_effect=MemoryError):
+            b._run_job('no-body', 'pass')
+        assert b._jobs['no-body']['status'] == 'done'
+        assert post('/jobs/no-body/status', job_control(owner='alice'))[0] == 410
         def fail(fn):
             raise RuntimeError('pump failed')
         b._execute = fail
         b._jobs['ra']['status'] = 'queued'
         b._run_job('ra', 'pass')
-        assert b._jobs['ra']['status'] == 'failed' and 'pump failed' in b._jobs['ra']['error']
+        assert b._jobs['ra']['status'] == 'failed' and 'pump failed' in b._public_job(b._jobs['ra'])['error']
     finally:
         b._execute = original
 
@@ -518,6 +585,13 @@ finally:
 # server_close joins them. The watchdog makes the former deadlock fail promptly.
 server = b.start(0)
 b._pump_active = True
+with patch.object(b._request_registry, 'retention', 0.05):
+    b._request_registry.store_job_result('idle-worker', {'stdout': 'retained job output'})
+    assert b._request_registry.bytes > 0
+    expiry_deadline = time.monotonic() + 3
+    while b._request_registry.bytes and time.monotonic() < expiry_deadline:
+        time.sleep(0.05)
+    assert b._request_registry.bytes == 0, 'the idle HTTP loop must reclaim bodies without another client request'
 stopped, timed_out = threading.Event(), threading.Event()
 queued_reply, queued_error = [], []
 body = admission('raise AssertionError("queued code must never start")', read_only=True)

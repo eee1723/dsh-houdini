@@ -5,8 +5,33 @@ are used. Keep licensing and OS essentials; never inherit another DSH runtime,
 Python hook, Qt override or model credential. Does not touch the parent's env.
 """
 from pathlib import Path
+import http.client
+import json
 import os
 import re
+
+
+def registered_bridge_request(registry, record, route, body=None, *, expected=None, timeout=30):
+    """Read JSON from the caller's isolated executor, without following proxies or redirects."""
+    executor = record['executor_id']
+    address = re.fullmatch(r'http://127\.0\.0\.1:(\d+)', record['bridge_url'])
+    if not address or not re.fullmatch(r'[0-9a-f]{32}', executor) or record.get('bridge_auth') != 'bearer-v1':
+        raise ValueError('Expected a registered local Bridge in the isolated test registry')
+    port = int(address[1])
+    credential = json.loads((Path(registry) / 'credentials' / (executor + '.json')).read_bytes())
+    if (credential['runtime_id'] != record['runtime_id'] or credential['port'] != port
+            or not re.fullmatch(r'[0-9a-f]{64}', credential['token'])):
+        raise ValueError('Credential does not match the isolated Bridge')
+    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=timeout)
+    try:
+        connection.request('GET' if body is None else 'POST', route,
+                           None if body is None else json.dumps(body).encode(),
+                           {'Content-Type': 'application/json', 'X-DSH-Houdini-Executor': expected or executor,
+                            'Authorization': 'Bearer ' + credential['token']})
+        response = connection.getresponse()
+        return response.status, json.load(response)
+    finally:
+        connection.close()
 
 
 def read_desktop_debug_port(port_file, owned_log):

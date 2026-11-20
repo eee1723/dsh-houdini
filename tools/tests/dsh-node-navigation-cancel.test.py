@@ -16,6 +16,7 @@ import dsh_bridge as bridge
 
 owner = 'node-navigation-http-fixture'
 server = ThreadingHTTPServer(('127.0.0.1', 0), bridge._Handler)
+server.bridge_token = bridge.secrets.token_hex(32)
 serving = threading.Thread(target=server.serve_forever, daemon=True)
 serving.start()
 contract = {'version': bridge._EXECUTION_CONTRACT_VERSION, 'hash': bridge._VERB_CATALOG_HASH}
@@ -25,7 +26,8 @@ original_run, original_pump = bridge.run_code, bridge._pump_active
 
 def post(path, body):
     connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
-    connection.request('POST', path, json.dumps(body), headers={'Content-Type': 'application/json'})
+    connection.request('POST', path, json.dumps(body), headers={'Content-Type': 'application/json',
+                       'Authorization':'Bearer '+server.bridge_token})
     response = connection.getresponse()
     result = response.status, json.loads(response.read())
     connection.close()

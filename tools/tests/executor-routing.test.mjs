@@ -5,6 +5,8 @@ import path from 'node:path'
 import os from 'node:os'
 import http from 'node:http'
 import {spawn} from 'node:child_process'
+import {randomBytes} from 'node:crypto'
+import {writeBridgeCredential} from './fixture-bridge.mjs'
 import {once} from 'node:events'
 import {fileURLToPath} from 'node:url'
 import {Context} from '@deepseek-ai/cordis'
@@ -43,11 +45,13 @@ try {
   for(let i=0;i<2;i++) {
     const session=fixtureSession('task-'+i,{agentPreset:'houdini'})
     agents.push({id:session.id,status:'idle',session})
+    const token=randomBytes(32).toString('hex')
     health.push({activeRequests:0,activeJobs:0})
     const server=http.createServer(async(req,res)=>{
       const record=records[i]
       res.setHeader('content-type','application/json')
       if(req.headers['x-dsh-houdini-executor']!==record.executor_id){res.writeHead(409);res.end('{}');return}
+      if(req.headers.authorization!=='Bearer '+token){res.writeHead(401);res.end('{}');return}
       let text='';for await(const chunk of req)text+=chunk
       const body=text?JSON.parse(text):{}
       bodies.push({executor:record.executor_id,route:req.url,body})
@@ -74,11 +78,12 @@ try {
     })
     servers.push(server);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
     const record={schema:1,executor_id:String(i+1).repeat(32),registration_id:String(i+5).repeat(32),runtime_id:String(i+3).repeat(32),
-      installation,bridge_url:`http://127.0.0.1:${server.address().port}`,houdini_version:i?'22.0.368':'21.0.440',pid:100+i,
+      installation,bridge_auth:'bearer-v1',bridge_url:`http://127.0.0.1:${server.address().port}`,houdini_version:i?'22.0.368':'21.0.440',pid:100+i,
       state:'registered',task_id:null,workbench:true,scene_id:String(i+7).repeat(32),scene_epoch:(i?'a':'9').repeat(32),hip_is_new:false,
       hip_path:path.join(directory,'project-'+i,'asset.hip'),workspace_path:path.join(directory,'project-'+i)}
     record.runtime={hfs:path.join(directory,'H'+i),python:path.join(directory,'H'+i,'python.exe'),
       pythonVersion:i?'3.13.7':'3.11.7',executable:path.join(directory,'H'+i,'houdini.exe')}
+    await writeBridgeCredential(directory,record,token)
     records.push(record);await write(record)
   }
   const identityOf=session=>projectedExecutorState(ctx,session)

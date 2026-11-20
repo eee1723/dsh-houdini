@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,randomBytes} from 'node:crypto'
+import {writeBridgeCredential} from './fixture-bridge.mjs'
 import {LlmAdapter,createUserMessage,createToolResultMessage} from '@deepseek-ai/dsh-llm'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
 import {NativeToolExecutor} from '@deepseek-ai/dsh-tool-executor-native'
@@ -14,11 +15,13 @@ export function apply(ctx) {
   const root=process.env.DSH_MENU_FIXTURE_ROOT,output=path.join(root,'result.json'),registry=path.join(process.env.DSH_HOME,'dsh-houdini/executors/endpoints')
   let report,stopped=false,releaseBusy,enteredBusy=false
   const gate=new Promise(resolve=>releaseBusy=resolve),records=[],claims=[],executions=[]
+  const credentials=new Map()
   const write=value=>{fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2));fs.renameSync(output+'.tmp',output)}
   const publish=record=>{fs.mkdirSync(registry,{recursive:true});fs.writeFileSync(path.join(registry,record.executor_id+'.json'),JSON.stringify(record))}
   const server=http.createServer(async(request,response)=>{
     try {
       const record=records.find(row=>row.executor_id===request.headers['x-dsh-houdini-executor']);assert(record)
+      if(request.headers.authorization!=='Bearer '+credentials.get(record.executor_id)){response.writeHead(401);response.end();return}
       let raw='';for await(const block of request)raw+=block;const body=raw?JSON.parse(raw):{}
       const health={ok:true,executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
         houVersion:record.houdini_version,executionContractVersion:version,verbCatalog:{hash},activeRequests:0,activeJobs:0}
@@ -83,10 +86,12 @@ export function apply(ctx) {
         await ready;await ctx.loader.await()
         for(let index=0;index<2;index++){
           const folder=path.join(root,'scene-'+index);fs.mkdirSync(folder,{recursive:true})
-          const record={schema:1,executor_id:id(),registration_id:id(),runtime_id:id(),installation:process.env.DSH_MENU_PLUGIN_ROOT,
+          const record={schema:1,bridge_auth:'bearer-v1',executor_id:id(),registration_id:id(),runtime_id:id(),installation:process.env.DSH_MENU_PLUGIN_ROOT,
             bridge_url:'http://127.0.0.1:'+server.address().port,houdini_version:'22.0.368',pid:process.pid,state:'registered',task_id:null,
             hip_path:path.join(folder,'owned.hip'),hip_is_new:false,workbench:true,workspace_path:folder,scene_id:id(),scene_epoch:id()}
-          records.push(record);publish(record)
+          const token=randomBytes(32).toString('hex')
+          await writeBridgeCredential(path.dirname(registry),record,token)
+          credentials.set(record.executor_id,token);records.push(record);publish(record)
         }
         const record=records[0],workspace=await ctx.workspaceRegistry.create(path.join(root,'scene-0'),'Owned menu fixture')
         const created=await ctx.sessionController.create({workspaceId:workspace.id,agentPreset:'houdini'})

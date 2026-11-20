@@ -17,6 +17,7 @@ export interface ExecutorRecord {
   runtime_id:string
   installation:string
   bridge_url:string
+  bridge_auth?:'bearer-v1'
   houdini_version:string
   pid:number
   processStarted?:string|null
@@ -38,8 +39,25 @@ const ID=/^[0-9a-f]{32}$/
 const canonical = (p:string) => process.platform==='win32' ? path.normalize(p).toLowerCase() : path.normalize(p)
 export class ExecutorUnavailableError extends Error {}
 
+/** The discovery record is public to the UI. Only a Bridge client reads its private credential. */
+export function registeredCredential(root:string,record:ExecutorRecord):(()=>Promise<string>)|undefined {
+  if(record.bridge_auth===undefined)return undefined // Earlier helpers support read-only compatibility checks.
+  if(record.bridge_auth!=='bearer-v1'||!ID.test(record.executor_id))throw Error('Unsupported Houdini Bridge authentication')
+  let loaded:Promise<string>|undefined
+  const read=async()=>{
+    const file=path.join(root,'credentials',record.executor_id+'.json')
+    const stat=await fs.lstat(file)
+    if(!stat.isFile()||stat.size>512)throw Error('Invalid Houdini Bridge credential file')
+    const value=JSON.parse(await fs.readFile(file,'utf8'))
+    if(value?.runtime_id!==record.runtime_id||value.port!==Number(new URL(record.bridge_url).port)
+      ||typeof value.token!=='string'||!/^[a-f0-9]{64}$/.test(value.token))throw Error('Houdini Bridge credential belongs to a different runtime')
+    return value.token as string
+  }
+  return ()=>loaded??=read().catch(()=>{throw Error('无法读取所选 Houdini 当前连接的凭据，请从该窗口重新连接。')})
+}
+
 export class ExecutorDirectory {
-  constructor(private readonly root:string, private readonly installation:string, private readonly compatibleInstallations=false) {
+  constructor(readonly root:string, private readonly installation:string, private readonly compatibleInstallations=false) {
     if (!path.isAbsolute(root)||!path.isAbsolute(installation)) throw new Error('Executor registry and installation paths must be absolute')
   }
   requireRoot(root:string):void {
@@ -177,7 +195,8 @@ export class ExecutorRouter {
     return state
   }
   private bridge(record:ExecutorRecord,expected:{runtimeId?:string;sceneEpoch?:string}) {
-    return new HoudiniBridge(record.bridge_url,this.timeoutMs,record.executor_id,this.lifetime.signal,expected)
+    return new HoudiniBridge(record.bridge_url,this.timeoutMs,record.executor_id,this.lifetime.signal,expected,
+      registeredCredential(this.directory.root,record))
   }
   private async verified(target:TargetSnapshot,signal?:AbortSignal):Promise<{record:ExecutorRecord;bridge:HoudiniBridge}> {
     const bounded=this.signal(signal)

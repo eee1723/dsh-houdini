@@ -3,7 +3,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {DesktopIntegration,DesktopIntents} from '../../lib/desktop-integration.js'
-import {HoudiniBridge} from '../../lib/bridge.js'
+import http from 'node:http'
+import {fixtureToken,writeBridgeCredential} from './fixture-bridge.mjs'
 import {HoudiniFrontend} from '../../lib/frontend-host.js'
 import {processStarted} from '../../lib/desktop-process.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH} from '../../lib/generated-verb-contract.js'
@@ -61,16 +62,21 @@ try {
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(home,'dsh-houdini/desktop.json'),'utf8')),descriptor,
     'another Host cannot replace an active Desktop descriptor')
   await assert.rejects(service.project({action:'new',sessionId:'standard-session',hfs:home},new AbortController().signal))
+  const endpoint=http.createServer((req,res)=>{
+    if(req.url!=='/health'||req.headers.authorization!=='Bearer '+fixtureToken){res.writeHead(401);res.end('{}');return}
+    res.end(JSON.stringify({ok:true,executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
+      activeRequests:2,activeJobs:1,executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH}}))
+  })
+  await new Promise(resolve=>endpoint.listen(0,'127.0.0.1',resolve))
   const record={schema:1,executor_id:'a'.repeat(32),registration_id:'b'.repeat(32),runtime_id:'c'.repeat(32),
-    installation:home,bridge_url:'http://127.0.0.1:18765',houdini_version:'22.0.368',pid:process.pid,processStarted:await processStarted(process.pid),state:'registered',
+    installation:home,bridge_auth:'bearer-v1',bridge_url:'http://127.0.0.1:'+endpoint.address().port,houdini_version:'22.0.368',pid:process.pid,processStarted:await processStarted(process.pid),state:'registered',
     task_id:'session-a',hip_path:'E:/work/scene.hip',workbench:true,scene_id:'d'.repeat(32),scene_epoch:'e'.repeat(32),
     hip_is_new:false,workspace_path:'E:/work'}
   targets.getRouter=()=>({directory:{list:async()=>[record]}})
-  const inspect=HoudiniBridge.prototype.observeExecutor
   try {
-    HoudiniBridge.prototype.observeExecutor=async()=>({ok:true,executorId:record.executor_id,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch,
-      activeRequests:2,activeJobs:1,executionContractVersion:117})
+    await writeBridgeCredential(targets.registry,record,fixtureToken)
     const [observed]=await service.presence()
+    assert(!JSON.stringify(observed).includes(fixtureToken),'the private Bridge credential must stay out of the UI')
     assert.equal(observed.candidate,record,'the client receives the original registry candidate')
     assert.equal(observed.executorId,record.executor_id)
     assert.equal(observed.hipPath,record.hip_path)
@@ -90,7 +96,7 @@ try {
       await new Promise(resolve=>setImmediate(resolve))
       assert.equal(preparations,1,'presence polling must not reinstall explicitly removed components')
     } finally {service.components.observe=observeComponents}
-  } finally {HoudiniBridge.prototype.observeExecutor=inspect}
+  } finally {await new Promise(resolve=>endpoint.close(resolve))}
   const mismatch=await HoudiniFrontend.prototype.projectPresence.call({desktop:()=>({presence:async()=>[
     {status:'online',contractVersion:1}]})},new AbortController().signal)
   assert.equal(mismatch[0].contractMismatch,true)

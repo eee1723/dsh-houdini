@@ -13,14 +13,12 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.request
-import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
 sys.path.insert(0, str(ROOT / 'tools'))
 from dsh_executor_registry import ExecutorRegistration, read_candidates
-from houdini_test_environment import isolated_environment
+from houdini_test_environment import isolated_environment, registered_bridge_request
 
 
 def worker(args):
@@ -70,23 +68,13 @@ def worker(args):
         cleanup.start(); cleanup.join()
 
 
-def call(record, path, body=None, expected=None):
-    request = urllib.request.Request(record['bridge_url'] + path,
-        data=None if body is None else json.dumps(body).encode(),
-        headers={'Content-Type': 'application/json', 'X-DSH-Houdini-Executor': expected or record['executor_id']})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        with opener.open(request, timeout=30) as response:
-            return response.status, json.load(response)
-    except urllib.error.HTTPError as error:
-        return error.code, json.load(error)
-
-
 def driver(args):
     children=[]
     with tempfile.TemporaryDirectory(prefix='dsh-multi-test-') as temporary:
         base=Path(temporary)
         registry=base/'registry'
+        def call(record, path, body=None, expected=None):
+            return registered_bridge_request(registry, record, path, body, expected=expected)
         try:
             # Render slot mechanics: re-entrant inside one process, absent without a registry.
             import dsh_executor_registry as registry_module

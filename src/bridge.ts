@@ -141,19 +141,29 @@ export interface BridgeTargetExpectation { runtimeId?:string; sceneEpoch?:string
 
 // These known older receipt and job-status endpoints still enforce the
 // original owner/runtime and return the same facts. They admit no new work.
-const previousReceiptVersions = new Set([120,121,122,123])
+const previousReceiptVersions = new Set([120,121,122,123,126])
+const pairingRequired='当前 Houdini 尚未与 Desktop 建立调用凭据。请在 Desktop 准备或更新组件，保存工程并重新打开该 Houdini，再从 Open Workspace 连接。'
 
 export class HoudiniBridge {
   readonly baseUrl: string
 
   constructor(baseUrl: string, private readonly timeoutMs: number, private readonly executorId?: string,
-    private readonly lifetime?:AbortSignal, private readonly expectedTarget?:BridgeTargetExpectation) {
+    private readonly lifetime?:AbortSignal, private readonly expectedTarget?:BridgeTargetExpectation,
+    private readonly credential?:()=>Promise<string>) {
     this.baseUrl = normalizeBaseUrl(baseUrl)
+    if(!/^http:\/\/127\.0\.0\.1:\d+$/.test(this.baseUrl))throw Error('Houdini Bridge requires IPv4 loopback')
     if (executorId !== undefined && !/^[0-9a-f]{32}$/.test(executorId)) throw new Error('Invalid Houdini executor identity')
   }
 
-  private targetHeaders(): Record<string, string> {
-    return this.executorId ? {'X-DSH-Houdini-Executor': this.executorId} : {}
+  private async targetHeaders():Promise<Record<string,string>> {
+    const headers:Record<string,string>={}
+    if(this.executorId)headers['X-DSH-Houdini-Executor']=this.executorId
+    if(this.credential) {
+      const token=await this.credential()
+      if(!/^[0-9a-f]{64}$/.test(token))throw Error(pairingRequired)
+      headers.Authorization='Bearer '+token
+    }
+    return headers
   }
 
   /** Host routing identity, never a tool argument or node edit permission. */
@@ -164,7 +174,7 @@ export class HoudiniBridge {
   /** Historical results belong to a runtime, independent of its current loaded scene. */
   forRuntime(runtimeId:string):HoudiniBridge {
     if(!/^[0-9a-f]{32}$/.test(runtimeId))throw new Error('Invalid historical Houdini runtime')
-    return new HoudiniBridge(this.baseUrl,this.timeoutMs,this.executorId,this.lifetime,{runtimeId})
+    return new HoudiniBridge(this.baseUrl,this.timeoutMs,this.executorId,this.lifetime,{runtimeId},this.credential)
   }
 
   private expectedTargetBody():Record<string,string> {
@@ -186,6 +196,7 @@ export class HoudiniBridge {
   async observeExecutor(signal?:AbortSignal):Promise<BridgeHealth> {
     const health=await this.get<BridgeHealth>('/health',signal)
     if(!health.ok||this.executorId&&health.executorId!==this.executorId)throw Error('暂时无法确认这个 Houdini 的连接。')
+    if(!this.credential&&health.executionContractVersion===EXPECTED_EXECUTION_CONTRACT_VERSION)throw Error(pairingRequired)
     return health
   }
 
@@ -355,7 +366,7 @@ export class HoudiniBridge {
   private async checkContract(signal?: AbortSignal, owner?: OwnershipScope, requestKind?:'node_navigation', receiptRead=false): Promise<BridgeHealth> {
     // No cached handshake: the process can restart on the same port. Preparing
     // a ticket also returns the contract, so admission costs no extra round trip.
-    const health = owner
+    const health = owner && this.credential
       ? await this.post<BridgeHealth>('/requests/prepare', { owner_session: owner.sessionId,
         ...(requestKind?{request_kind:requestKind}:{}),...this.expectedTargetBody() }, signal)
       : await this.get<BridgeHealth>('/health', signal)
@@ -369,6 +380,7 @@ export class HoudiniBridge {
     }
     const readablePreviousReceipt = receiptRead && this.expectedTarget?.runtimeId && !this.expectedTarget.sceneEpoch
       && previousReceiptVersions.has(health.executionContractVersion!) && actual?.hash===EXPECTED_VERB_CATALOG_HASH
+    if(!this.credential&&health.executionContractVersion===EXPECTED_EXECUTION_CONTRACT_VERSION)throw Error(pairingRequired)
     if (health.ok && (isExecutionContractCompatible(health.executionContractVersion,actual?.hash)||readablePreviousReceipt)) {
       if (owner && (typeof health.runtimeId !== 'string' || typeof health.requestRef !== 'string'
           || !/^[0-9a-f]{32}\.[0-9a-f]{32}$/.test(health.requestRef)
@@ -446,11 +458,17 @@ export class HoudiniBridge {
    * can read $HIP-side outputs that dsh-side tools (sandboxed to the session
    * workspace) cannot; the caller commits bytes to native DSH attachments.
    */
-  async fetchMedia(path: string, signal?: AbortSignal, maxBytes = 32 * 1024 * 1024): Promise<Buffer> {
-    const url = `${this.baseUrl}/media?path=${encodeURIComponent(path)}`
+  async fetchMedia(image:{requestRef:unknown;ownerSession:unknown;index:number}, signal?: AbortSignal, maxBytes = 32 * 1024 * 1024): Promise<Buffer> {
+    if(!this.credential)throw Error('此旧连接无法取得可验证的原请求图片，请使用已留存的原生附件。')
+    if(typeof image.requestRef!=='string'||!/^([0-9a-f]{32})\.([0-9a-f]{32})$/.test(image.requestRef)
+      ||typeof image.ownerSession!=='string'||!image.ownerSession||!Number.isSafeInteger(image.index)||image.index<0)
+      throw Error('Original request image receipt unavailable')
     let res: Response
     try {
-      res = await fetch(url, { headers: this.targetHeaders(), signal: this.withTimeout(signal) })
+      res = await fetch(this.baseUrl+'/media', {method:'POST',redirect:'error',
+        headers:{...await this.targetHeaders(),'Content-Type':'application/json'},
+        body:JSON.stringify({request_ref:image.requestRef,owner_session:image.ownerSession,image_index:image.index}),
+        signal:this.withTimeout(signal)})
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause)
       throw new Error(`cannot reach the Houdini bridge at ${this.baseUrl} (${reason})`)
@@ -517,11 +535,14 @@ export class HoudiniBridge {
     extraMs = 0,
     honorLifetime = true,
   ): Promise<T> {
+    if(!this.credential&&path!=='/health'&&!(this.expectedTarget?.runtimeId&&!this.expectedTarget.sceneEpoch
+      &&(path==='/requests/status'||/^\/jobs\/[^/]+\/status$/.test(path))))throw Error(pairingRequired)
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         ...init,
-        headers: {...Object.fromEntries(new Headers(init.headers)), ...this.targetHeaders()},
+        redirect:'error',
+        headers: {...Object.fromEntries(new Headers(init.headers)), ...await this.targetHeaders()},
         signal: this.withTimeout(signal, extraMs, honorLifetime),
       })
     } catch (cause) {
@@ -535,6 +556,7 @@ export class HoudiniBridge {
     }
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
+      if(res.status===401)throw Error(pairingRequired)
       throw new Error(`Houdini bridge ${path} returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`)
     }
     try {

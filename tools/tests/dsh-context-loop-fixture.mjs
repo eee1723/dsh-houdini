@@ -51,7 +51,7 @@ export function apply(ctx) {
   const registry=path.join(process.env.DSH_HOME,'dsh-houdini','executors')
   assert.equal(path.resolve(ctx.houdiniTargets.registry),path.resolve(registry),'fixture uses the shared Desktop target registry')
   const endpoint=path.join(registry,'endpoints',executorId+'.json')
-  const record={schema:1,executor_id:executorId,registration_id:registrationId,runtime_id:runtimeId,
+  const record={schema:1,bridge_auth:'bearer-v1',executor_id:executorId,registration_id:registrationId,runtime_id:runtimeId,
     installation:fileURLToPath(new URL('../../',import.meta.url)),bridge_url:process.env.DSH_HOUDINI_BRIDGE_URL,
     houdini_version:'22.0.368',pid:process.pid,state:'registered',task_id:null,hip_path:hipPath,
     workbench:true,scene_id:sceneId,scene_epoch:sceneEpoch,hip_is_new:originalExecution?.hip_is_new??true,
@@ -141,6 +141,7 @@ export function apply(ctx) {
       hip_path:hipPath,hip_is_new:record.hip_is_new,scene_id:sceneId,scene_epoch:sceneEpoch,sequence:++sequence, observed_at:sequence}})
   const server = http.createServer(async (req,res) => {
     try {
+      if(req.headers.authorization!=='Bearer '+fixtureToken){res.writeHead(401);res.end();return}
       let raw = ''
       for await (const chunk of req) raw += chunk
       assert.equal(req.headers['x-dsh-houdini-executor'],executorId,'all live requests must explicitly target this owned fixture')
@@ -660,6 +661,7 @@ export function apply(ctx) {
     queueMicrotask(async () => {
       try {
         await ready
+        await writeBridgeCredential(registry,record,fixtureToken)
         publish()
         await ctx.loader.await()
         const workspace=await ctx.workspaceRegistry.create(path.dirname(output),'Owned context fixture')
@@ -690,3 +692,4 @@ export function apply(ctx) {
     return () => {for(const id of jobWaiters.keys())releaseJob(id);server.close()}
   })
 }
+import {fixtureToken,writeBridgeCredential} from './fixture-bridge.mjs'

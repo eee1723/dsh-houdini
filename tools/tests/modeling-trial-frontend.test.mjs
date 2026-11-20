@@ -34,8 +34,10 @@ try{
   const attachment={attachmentId:'native-image',mediaType:'image/png',bytes:bytes.length,width:1,height:1,name:'capture.png'};
   const ctx={get:name=>name==='attachments'?{imageLimits:{maxImagesPerMessage:2,maxImageBytes:100,maxMessageImageBytes:100,mediaTypes:['image/png']},saveImage:async()=>attachment}:
     {resolveModelInfo:async()=>({inputModalities:['image']})}};
-  const attached=await attachImages({ok:true,images:[capturePath],result:{path:capturePath,fresh:true,file_status:'passed'}},
-    {route:{provider:'fixture',model:'fixture'},signal:new AbortController().signal},{fetchMedia:async()=>bytes},ctx);
+  const requestRef='a'.repeat(32)+'.'+'b'.repeat(32);
+  const attached=await attachImages({ok:true,requestReceipt:{request_ref:requestRef},images:[capturePath],result:{path:capturePath,fresh:true,file_status:'passed'}},
+    {agent:{id:'fixture-task'},route:{provider:'fixture',model:'fixture'},signal:new AbortController().signal},
+    {async fetchMedia(ref){assert.deepEqual(ref,{requestRef,ownerSession:'fixture-task',index:0});return bytes}},ctx);
   assert.equal(attached.imageAttachments[0].from,capturePath);
   assert.equal(attached.imageAttachments[0].path,undefined);
   assert.deepEqual(frontendArtifacts([],[{tool:'houdini_ui_screenshot',canonical:attached}],options).uiCaptures[0].attachment,attachment,

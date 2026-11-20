@@ -8,6 +8,7 @@ import json
 import math
 from pathlib import Path
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "houdini/python3.11libs"))
@@ -44,6 +45,15 @@ def main():
     args = parser.parse_args()
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="wfc-project-") as scratch:
+        run(output, Path(scratch))
+
+
+def run(output, scratch):
+    project = scratch / "original"
+    project.mkdir()
+    hip = project / "wfc.hip"
+    hou.hipFile.save(hip.as_posix())
     rows = [
         {"cell_id": "wall_cell", "asset_key": "wall", "variant": "a", "piece": "wall::a",
          "asset": "native-box-wall", "P": [4.0, 3.0, 5.0], "pivot": [1.0, -0.5, 2.0],
@@ -57,7 +67,7 @@ def main():
     for row in rows:
         angle = math.radians(row["yaw"])
         row["orient"] = [0.0, math.sin(angle / 2), 0.0, math.cos(angle / 2)]
-    instances = output.parent / (output.stem + "-instances.json")
+    instances = project / "instances.json"
     instances.write_text(json.dumps({"schema_version": 1, "status": "resolved", "cell_count": 2,
                                      "instances": rows}), encoding="utf-8")
     code = '''
@@ -103,10 +113,16 @@ __result__ = {'built': built, 'points_only': points_only,
                              for prim in hou.node(built['output']).geometry().prims()],
               'packed_count': len(hou.node(built['output']).geometry().prims()),
               'houdini': hou.applicationVersionString()}
-''' % (str(instances), str(instances))
+''' % (str(instances), "$HIP/instances.json")
     result = bridge.run_code(code, owner_session="wfc-skill-development", owner_call="adapter-test")
     assert result.get("ok"), result
     facts = result["result"]
+    for built in (facts["built"], facts["points_only"]):
+        parm = hou.node(built["points"]).parm("instances")
+        assert parm.parmTemplate().stringType() == hou.stringParmType.FileReference
+        assert parm.unexpandedString() == "$HIP/instances.json"
+        assert Path(parm.evalAsString()) == instances
+    hou.hipFile.save()
     assert facts["packed_count"] == 2, facts
     assert len(facts['built']['prototypes']) == 3, facts
     assert {row["cell_id"]: row for row in facts["identities"]} == {
@@ -213,13 +229,26 @@ verify_network('/obj/wfc_points_test', output=%r)
 ''' % (facts['points_only']['points'], str(invalid_instances), facts['points_only']['output']),
                               owner_session="wfc-skill-development", owner_call="duplicate-cell")
     assert not invalid.get('ok') and 'Duplicate instance cell_id' in invalid.get('error', ''), invalid
+    # A relocated HIP and its JSON must cook using the new directory alone.
+    moved = scratch / "relocated"
+    project.rename(moved)
+    relocated_rows = copy.deepcopy(rows)
+    relocated_rows[0]["cell_id"] = "relocated_wall"
+    (moved / instances.name).write_text(json.dumps({"schema_version": 1, "status": "resolved",
+        "cell_count": len(relocated_rows), "instances": relocated_rows}), encoding="utf-8")
+    hou.hipFile.load((moved / hip.name).as_posix(), suppress_save_prompt=True)
+    layout = hou.node(facts["points_only"]["points"])
+    assert Path(layout.parm("instances").evalAsString()) == moved / instances.name
+    layout.cook(force=True)
+    assert not layout.errors() and layout.geometry().point(0).stringAttribValue("cell_id") == "relocated_wall"
     report = {"ok": True, "houdini": hou.applicationVersionString(),
               "scope": ["two distinct packed pieces", "90-degree quaternion", "nonuniform scale",
                         "nonzero source pivot", "off-center source bounds", "points-only output",
                         "final unpacked vertex positions", "packed cell identity metadata", "style/anchor change",
                         "source part names and material paths retained",
                         "preloaded unused variant selected without rebuilding",
-                        "missing piece recook rejected", "emptied source recook rejected", "duplicate cell recook rejected"],
+                        "missing piece recook rejected", "emptied source recook rejected", "duplicate cell recook rejected",
+                        "relocated HIP file parameter reads relocated JSON"],
               "packed_primitives": facts["packed_count"], "unpacked_points": 16, "unpacked_primitives": 12}
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report))

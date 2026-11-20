@@ -22,6 +22,9 @@ sub = root.node('module')
 try:
     # Ordinary geo delivery needs only an explicit SOP and flags, no Output.
     run(f"plain=tab_create({root.path()!r},'box','plain')\nsop_set_output(plain)")
+    plain = root.node('plain')
+    flags = run(f"__result__=sop_set_output({plain.path()!r},render=False)")['result']
+    assert flags['display'] == plain.isDisplayFlagSet() and flags['render'] == plain.isRenderFlagSet() is True
     assert root.node('output0') is None
     r=run(f"__result__=verify_network({root.path()!r},output='plain',nodes=[{root.node('plain').path()!r}])")['result']
     assert r['error_nodes_count']==len(r['error_nodes']) and r['warning_nodes_count']==len(r['warning_nodes'])

@@ -23,6 +23,7 @@ cli = args.runtime_cache.resolve() / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
 assert json.loads((cli.parent.parent/'package.json').read_text())['version'] == json.loads((ROOT/'dsh-runtime-compatibility.json').read_text())['preferredVersion']
 run = Path(tempfile.mkdtemp(prefix='dsh-hda-version-smoke-'))
 env = isolated_environment(run, executable=args.hython)
+env['DSH_HOUDINI_EXECUTOR_REGISTRY'] = str(run / 'executor-registry')
 node = shutil.which('node')
 subprocess.run([node, str(ROOT/'tools/tests/prepare-shared-host-fixture.mjs'), str(cli), env['DSH_HOME'], str(ROOT)], cwd=ROOT, env=env, check=True, capture_output=True, timeout=60)
 with socket.socket() as sock:
@@ -32,7 +33,8 @@ library.parent.mkdir(parents=True)
 (run/'packages/Fixture.json').write_text(json.dumps({'path': str(run/'package')}), encoding='utf8')
 worker = run/'bridge.py'
 worker.write_text(f"""
-import sys,time,json
+import sys,time,json,os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 sys.path.insert(0,{str(ROOT/'houdini/python3.11libs')!r})
 import hou,dsh_bridge as b
@@ -44,6 +46,11 @@ n.type().definition().addSection('PythonModule','VALUE = 1\\n')
 n.matchCurrentDefinition()
 hou.node('/obj').createNode('fixture::asset','peer',exact_type_name=True)
 b.start({port});b._pump_active=True
+hou.hipFile.save({str(run/'scene.hip')!r})
+from dsh_shared_executor import prepare_registration,publish_registration
+facts=prepare_registration(workbench=True)
+with ThreadPoolExecutor(max_workers=1) as publisher:
+ publisher.submit(publish_registration,os.environ['DSH_HOUDINI_EXECUTOR_REGISTRY'],facts).result()
 Path({str(run/'ready.json')!r}).write_text(json.dumps({{'executorId':b._EXECUTOR_ID,'runtimeId':b._RUNTIME_ID}}))
 while not Path({str(run/'stop')!r}).exists():
  b._pump();time.sleep(.02)
@@ -58,7 +65,7 @@ with (run/'bridge.log').open('wb') as blog, (run/'host.log').open('wb') as hlog:
             assert bridge.poll() is None and time.monotonic()<deadline, str(run)
             time.sleep(.1)
         identity = json.loads((run/'ready.json').read_text())
-        env.update(DSH_HOUDINI_EXECUTOR_ID=identity['executorId'], DSH_HOUDINI_BRIDGE_URL=f'http://127.0.0.1:{port}', DSH_HDA_TEST_OUT=str(run/'result.json'))
+        env.update(DSH_HDA_FIXTURE_EXECUTOR=identity['executorId'], DSH_HDA_TEST_OUT=str(run/'result.json'))
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0)); hostport=sock.getsockname()[1]
         patch=run/'fixture.patch.yml'

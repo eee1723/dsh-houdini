@@ -53,7 +53,7 @@ const State=z.object({identity:z.string().nullable(),conflict:z.boolean(),
   selectedTarget:targetSnapshotSchema.nullable(),selectionRecorded:z.boolean(),selectionRevision:z.number(),
   pendingSelections:z.record(z.string(),z.number()),
   executors:z.array(z.string()),recovery:Recovery.nullable(),recoverySeq:z.number(),
-  project:Project.nullable(),projectObservedAt:z.number(),projectSequence:z.number(),
+  project:Project.nullable(),projectObservedAt:z.number(),projectSequence:z.number(),directoryChangeSeq:z.number(),
   execution:executionFactsSchema,
   sceneObservation:z.object({lastUserKey:z.string().optional(),key:z.string().optional(),text:z.string().optional()})})
 type State=z.infer<typeof State>
@@ -131,9 +131,9 @@ function projectMessage(state:State,message:any,event:SessionEvent):State {
 }
 
 export const executorIdentityProjection={
-  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:14,
+  key:'houdiniExecutorIdentity' as const,stateSchema:State,stateVersion:15,
   init:():State=>({identity:null,conflict:false,invalid:null,bindingRecorded:false,pending:{},queuedBindings:{},
-    executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,queuedProjects:{},
+    executors:[],recovery:null,recoverySeq:0,hasOperations:false,project:null,projectObservedAt:0,projectSequence:0,directoryChangeSeq:0,queuedProjects:{},
     selectedTarget:null,selectionRecorded:false,selectionRevision:0,pendingSelections:{},execution:initExecutionFacts(),sceneObservation:{}}),
   wire:{viewSchema:Project.nullable(),view:(state:State)=>state.invalid||state.conflict?REVIEW_PROJECT:state.project},
   apply(state:State,event:SessionEvent):State {
@@ -159,6 +159,7 @@ export function transitionExecutorState(state:State,event:SessionEvent) {
 }
 
 function applyIdentity(state:State,event:SessionEvent):State {
+    if(event.type==='working-directory/change')return {...state,directoryChangeSeq:event.seq??state.directoryChangeSeq}
     const messages=houdiniSourceMessages(event)
     if (messages.length) {
       let next=state

@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,9 +36,16 @@ def worker(config):
     def png_chunk(kind, data):
         return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
     pixels = b'\x00\xff\x00\x00\xff\x00\xff\x00\xff\x00\x00\x00\xff\xff\xff\xff\xff\xff'
-    (root / 'reported-image.png').write_bytes(b'\x89PNG\r\n\x1a\n'
-        + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0))
-        + png_chunk(b'IDAT', zlib.compress(pixels)) + png_chunk(b'IEND', b''))
+    def render_calibration():
+        from dsh_media_output import _report_rendered_image
+        image = root / 'reported-image.png'
+        image.write_bytes(b'\x89PNG\r\n\x1a\n'
+            + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 2, 8, 6, 0, 0, 0))
+            + png_chunk(b'IDAT', zlib.compress(pixels)) + png_chunk(b'IEND', b''))
+        _report_rendered_image(str(image))
+    calibration = types.ModuleType('job_fixture_calibration')
+    calibration.render = render_calibration
+    sys.modules[calibration.__name__] = calibration
     hou.hipFile.save(str(root / 'owned-fixture.hip'))
     server = bridge.start(0)
     bridge._pump_active = True
@@ -97,7 +105,7 @@ def worker(config):
     activate(root / 'executor-registry', bridge._EXECUTOR_ID, installation=str(ROOT),
              version=hou.applicationVersionString(), port=relay.server_port,
              runtime_id=bridge._RUNTIME_ID, hip=str(root / 'owned-fixture.hip'), workbench=True,
-             scene={**facts(), 'workspace_path': str(root)})
+             scene={**facts(), 'workspace_path': str(root)}, bridge_token=server.bridge_token)
     (root / 'ready.json').write_text(json.dumps({'executorId': bridge._EXECUTOR_ID,
         'runtimeId': bridge._RUNTIME_ID, 'houdiniVersion': hou.applicationVersionString(), 'port': relay.server_port,
         'contract': {'version': bridge._EXECUTION_CONTRACT_VERSION, 'hash': bridge._VERB_CATALOG_HASH}}))
@@ -177,8 +185,7 @@ def main():
                 assert bridge.poll() is None and time.monotonic() < deadline, str(directory)
                 time.sleep(.1)
             ready = json.loads((directory / 'ready.json').read_text())
-            env.update(DSH_HOUDINI_EXECUTOR_ID=ready['executorId'],
-                       DSH_HOUDINI_BRIDGE_URL=f"http://127.0.0.1:{ready['port']}")
+            config.update(executorId=ready['executorId'], metricsUrl=f"http://127.0.0.1:{ready['port']}/fixture-metrics")
             for phase in ('initial', 'restart'):
                 check_build('before ' + phase)
                 config['phase'] = phase

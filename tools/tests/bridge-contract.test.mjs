@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { HoudiniBridge } from '../../lib/bridge.js';
+import {pairedBridge,fixtureToken} from './fixture-bridge.mjs';
 import {
   EXPECTED_VERB_CATALOG_HASH,
   EXPECTED_VERB_NAMES,
@@ -17,7 +18,18 @@ let lastUiListBody = null;
 let lastPrepareBody = null;
 let semanticVersion = EXPECTED_EXECUTION_CONTRACT_VERSION;
 const server = http.createServer((request, response) => {
+  if (request.headers.authorization!=='Bearer '+fixtureToken) {response.writeHead(401);response.end('{}');return}
   response.setHeader('content-type', 'application/json');
+  if (request.url === '/media') {
+    assert.equal(request.method,'POST');
+    let body='';request.setEncoding('utf8');
+    request.on('data',chunk=>{body+=chunk});
+    request.on('end',()=>{
+      assert.deepEqual(JSON.parse(body),{request_ref:'c'.repeat(32)+'.'+'d'.repeat(32),owner_session:'session-owner',image_index:1});
+      response.end('registered image bytes');
+    });
+    return;
+  }
   if (request.url === '/health') {
     response.end(JSON.stringify({
       ok: true,
@@ -102,15 +114,17 @@ try {
   const owner = { sessionId: 'session-owner', callId: 'call-1' };
 
   await assert.rejects(
-    new HoudiniBridge(url, 1000).exec('__result__ = 1', owner),
+    pairedBridge(url, 1000).exec('__result__ = 1', owner),
     /安装 \/ 更新 Houdini 组件[\s\S]*contract mismatch/,
   );
   assert.equal(execCalls, 0, 'mismatch must fail before scene code reaches /exec');
-  await assert.rejects(new HoudiniBridge(url,1000).captureUi({target:'ui:fixture'},owner),/contract mismatch/);
+  await assert.rejects(pairedBridge(url,1000).captureUi({target:'ui:fixture'},owner),/contract mismatch/);
   assert.equal(uiCalls,0,'stale catalog rejects capture before the UI business route; prepare remains the non-HOM handshake');
 
   stale = false;
-  const bridge = new HoudiniBridge(url, 1000);
+  const bridge = pairedBridge(url, 1000);
+  const media = await bridge.fetchMedia({requestRef:'c'.repeat(32)+'.'+'d'.repeat(32),ownerSession:owner.sessionId,index:1});
+  assert.equal(media.toString(),'registered image bytes');
   const result = await bridge.exec('__result__ = 1', owner);
   assert.equal(result.ok, true);
   assert.equal(execCalls, 1);
@@ -147,7 +161,7 @@ try {
   assert.equal(uiCalls,2,'fresh prepare checks reject same-name stale semantics before any UI preparation request');
   assert.equal(uiListCalls,1,'UI target discovery also refuses stale contracts before dispatch');
   semanticVersion=EXPECTED_EXECUTION_CONTRACT_VERSION;
-  await assert.rejects(new HoudiniBridge(url,1000,'a'.repeat(32)).captureUi(uiOptions,owner),/executor mismatch/);
+  await assert.rejects(pairedBridge(url,1000,'a'.repeat(32)).captureUi(uiOptions,owner),/executor mismatch/);
   assert.equal(uiCalls,2,'explicit target mismatch stops at ticket/contract facts before preparing any native UI');
 
   const queries=[{id:'scene',verb:'scene_info'},{id:'fields',verb:'read_parms',
@@ -168,7 +182,7 @@ try {
   });
   await new Promise((resolve) => counting.listen(0, '127.0.0.1', resolve));
   try {
-    const counted = new HoudiniBridge(`http://127.0.0.1:${counting.address().port}`, 1000);
+    const counted = pairedBridge(`http://127.0.0.1:${counting.address().port}`, 1000);
     const badOwners = [undefined, null, 'owner', 7, {}, {sessionId: 's'}, {sessionId: '', callId: 'c'},
       {sessionId: 's', callId: ''}, {sessionId: 's', callId: '  '}, {sessionId: 5, callId: 'c'},
       {sessionId: 's', callId: 0}, {sessionId: 's', callId: null}];
@@ -187,7 +201,7 @@ try {
 
   // A new Host must stop at the non-HOM health check against an old Bridge:
   // job-control POSTs are never sent and no ticket is prepared for them.
-  let prepareRequests = 0, jobControlPosts = 0;
+  let prepareRequests = 0, jobControlPosts = 0, advertisedVersion = 120;
   const oldRuntime = 'e'.repeat(32), oldReads = [];
   const oldBridgeServer = http.createServer((request, response) => {
     response.setHeader('content-type', 'application/json');
@@ -195,7 +209,7 @@ try {
       response.end(JSON.stringify({
         ok: true,
         runtimeId: oldRuntime,
-        executionContractVersion: 120,
+        executionContractVersion: advertisedVersion,
         verbCatalog: {hash: EXPECTED_VERB_CATALOG_HASH, count: EXPECTED_VERB_NAMES.length, names: EXPECTED_VERB_NAMES},
       }));
       return;
@@ -228,6 +242,14 @@ try {
       ['/jobs/'+ 'a'.repeat(12) +'/status',{owner_session:owner.sessionId,owner_call:owner.callId,
         runtime_id:oldRuntime,expected_contract:{version:120,hash:EXPECTED_VERB_CATALOG_HASH}}],
     ],'Only original-runtime receipt reads use the known older protocol');
+    advertisedVersion=126;
+    await original.jobStatus('a'.repeat(12),owner);
+    assert.equal(oldReads.at(-1)[1].expected_contract.version,126);
+    await assert.rejects(legacy.exec('pass',owner),/contract mismatch/);
+    advertisedVersion=EXPECTED_EXECUTION_CONTRACT_VERSION;
+    await assert.rejects(legacy.exec('pass',owner),/凭据/);
+    await assert.rejects(original.jobStatus('a'.repeat(12),owner),/凭据/);
+    assert.equal(jobControlPosts,3,'a current endpoint needs its private credential even for a known-runtime receipt');
     assert.equal(prepareRequests,0,'historical reads do not prepare or replay execution');
   } finally {
     await new Promise((resolve) => oldBridgeServer.close(resolve));

@@ -154,11 +154,6 @@ window.__ModuleLoader__.load({
     // DSH exposes stable semantic shell attributes. Scope this layout to the
     // mounted Trace, so leaving it restores the resident composer and its draft.
     var shellCss =
-      '[data-conversation-content]:has(.dsh-trace) [data-chain-overlay-fallback="conversation.composer"]{display:none!important}' +
-      '[data-conversation-content]:has(.dsh-trace) [data-conversation-scroll]{overflow:hidden;scrollbar-gutter:auto;margin:0}' +
-      '[data-conversation-content]:has(.dsh-trace) [data-slot="conversation.session"],' +
-      '[data-conversation-content]:has(.dsh-trace) [data-slot="conversation.session"]>div,' +
-      '[data-conversation-content]:has(.dsh-trace) [data-slot="conversation.view"]{display:flex;flex:1 1 0;min-height:0;overflow:hidden}' +
       '.dsh-houdini-project-mark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:none;color:var(--dsw-alias-label-secondary);vertical-align:middle}' +
       '[data-houdini-presence="online"] .dsh-houdini-project-symbol,[data-houdini-presence="online"].dsh-houdini-project-mark{color:var(--dsw-alias-state-success-primary,#3da36b)}' +
       '[data-houdini-presence="unknown"] .dsh-houdini-project-symbol,[data-houdini-presence="changed"] .dsh-houdini-project-symbol,[data-houdini-presence="unknown"].dsh-houdini-project-mark,[data-houdini-presence="changed"].dsh-houdini-project-mark{color:var(--dsw-alias-state-warn-primary,#c6974c)}' +
@@ -884,12 +879,10 @@ window.__ModuleLoader__.load({
         else if (setup && setup.state === "preparing") componentNotice = { label: "正在准备 Houdini 组件", detail: setup.message, action: null };
         var managementActions = [];
         if (target) managementActions.push({ id: "clear", label: "取消此对话的绑定", disabled: !!switchingDisabled });
-        if (setup && setup.state === "failed") managementActions.push({ id: "prepareBridge", label: "重试组件准备", disabled: !presence.available || !!switchingDisabled });
         function actionItem(item) {
           return React.createElement(ui.MenuItemButton, { key: item.id, disabled: !!item.disabled,
             onSelect: function () {
               if (item.id === "clear") { request("clear"); return; }
-              if (item.id === "prepareBridge") { request("prepareBridge"); return; }
               ticket.current++; if (pending.current) pending.current.abort(); pending.current = null;
               set(Object.assign({}, value, { open: false, busy: false, message: "" })); action(item.id, props.sessionId, item.id === "reopen" ? displayTarget.hip_path : "");
             } }, React.createElement("span", { "data-houdini-project-action": item.id }, item.label));

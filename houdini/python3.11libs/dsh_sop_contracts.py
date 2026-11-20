@@ -413,7 +413,8 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
     created = {}
     try:
         for spec in specs:
-            created[spec['name']] = dsh_node_creation.tab_create(p, spec['type'], name=spec['name'])
+            created[spec['name']] = dsh_node_creation._create_tab_node(
+                p, spec['type'], spec['name'], module_owns_rollback=True)
         sources = existing | created
         for spec in specs:
             n = created[spec['name']]
@@ -454,6 +455,13 @@ def build_module(parent, nodes: list, output: str, dry_run: bool = False, interf
             if n not in baseline:
                 n.destroy()
         dsh_ownership.restore(provenance)
+        if created and isinstance(error, dsh_errors.CheckpointError):
+            # The failed suboperation can establish its own zero writes or local
+            # restoration, not those of the module that already created nodes.
+            facts = dict(error.evidence)
+            facts.pop('restored', None)
+            facts['scene_writes'] = None
+            raise dsh_errors.CheckpointError(str(error), facts) from error
         raise
     finally:
         # Creation may auto-select a display node; existing flags stay user-owned.

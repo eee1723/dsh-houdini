@@ -3,6 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import {NATIVE_SELECTION} from './browser-selection.mjs'
+import {HoudiniBridge} from '../../lib/bridge.js'
+import {registeredCredential} from '../../lib/executor-routing.js'
 
 const config=JSON.parse(await fs.readFile(process.argv[2],'utf8'))
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
@@ -48,9 +50,10 @@ try {
     report.ownedMainWindows=result.result.value
   }else if(config.phase==='health') {
     const state=JSON.parse(await fs.readFile(config.stateFile,'utf8'))
-    const response=await fetch(state.record.bridge_url+'/health',{headers:{'X-DSH-Houdini-Executor':state.target.executor_id},signal:AbortSignal.timeout(5000)})
-    assert.equal(response.status,200)
-    const value=await response.json()
+    const registry=path.join(process.env.DSH_HOME,'dsh-houdini','executors')
+    const bridge=new HoudiniBridge(state.record.bridge_url,5000,state.target.executor_id,undefined,undefined,
+      registeredCredential(registry,state.record))
+    const value=await bridge.observeExecutor(AbortSignal.timeout(5000))
     assert.equal(value.executorId,state.target.executor_id);assert.equal(value.runtimeId,state.target.runtime_id);assert.equal(value.sceneEpoch,state.target.scene_epoch)
     report.sameHoudiniBridge=true
     report.health={executorId:value.executorId,runtimeId:value.runtimeId,sceneEpoch:value.sceneEpoch,houVersion:value.houVersion,

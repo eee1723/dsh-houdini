@@ -34,7 +34,7 @@ __result__ = result
 
 生成结构：
 
-- `WFC_POINTS`：薄Python SOP，读取公开`instances`文件参数并创建点，没有求解逻辑。实例模式显式连接原型输入，每次cook核对所需piece是否存在，源被清空或新JSON缺原型不能悄悄少放模块。
+- `WFC_POINTS` 的 `instances` 是 Houdini 原生文件参数。已命名工程内的 JSON 以 `$HIP` 相对路径保存，交付时和 HIP 一起携带；工程外或未命名工程使用实际绝对路径。Python SOP 读取 JSON 并创建点。实例模式显式连接原型输入，每次 cook 核对所需 piece 是否存在。
 - 点属性：`P`、`pivot`、`scale`、`orient`、`cell_id`、`asset_key`、`variant`、`wfc_piece`、`asset`。
 - `PIECE_*`／`PACK_*`：只写`wfc_piece`作为匹配身份，每个构件原型打包一次，Pack pivot显式为origin；保留源内部`name`、材质和几何。构件内部若已有packed部件，要另查嵌套消费者，不能用外层中心代替真实顶点判断偏移。
 - `PROTOTYPES`：多个原型时Merge。

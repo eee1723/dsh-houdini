@@ -10,7 +10,7 @@ import {executionHistory} from '../../lib/execution-history.js'
 import {expandArchivedExecution} from '../trace-session-lib.mjs'
 import {recordedJobExecution} from '../../lib/dsh-adapter.js'
 
-export const inject=['loader','llm','sessions','agents','sessionController','jobs','attachments']
+export const inject=['loader','llm','sessions','agents','sessionController','jobs','attachments','houdiniTargets']
 const provider='live-job-fixture',model='scripted-local'
 const finish=text=>[{type:'block-start',index:0,blockType:'text'},
   {type:'block-end',index:0,block:{type:'text',text}},{type:'finish',reason:{kind:'stop'}}]
@@ -64,8 +64,7 @@ while not Path(${JSON.stringify(path.join(directory,'release-'+name))}).exists()
     if time.monotonic()>deadline: raise RuntimeError('owned fixture release timed out')
     time.sleep(0.02)` : ''}
 node=tab_create('/obj','geo',name='__livejobs_${name}')
-${name==='native'?`from dsh_media_output import report_image
-report_image(${JSON.stringify(path.join(directory,'reported-image.png'))})`:''}
+${name==='native'?'from job_fixture_calibration import render\nrender()':''}
 __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()${['native','running'].includes(name)?",'payload':'LIVE_BULK_HEAD:'+'x'*70000+':LIVE_BULK_TAIL'":''}}
 `
   const captureHandle=(name,value,rootCallId)=>{
@@ -88,7 +87,7 @@ __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()
       assert.equal(value.status,'done')
       assert.equal(value.result.node,'/obj/__livejobs_'+name)
       assert.equal(value.execution.owner_session,sessionId)
-      assert.equal(value.execution.executor_id,process.env.DSH_HOUDINI_EXECUTOR_ID)
+      assert.equal(value.execution.executor_id,config.executorId)
       assert.equal(ctx.jobs.get(envelope.job_id,sessionId).status,'completed')
     }else{
       assert.equal(value.status,'cancelled')
@@ -140,7 +139,7 @@ __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()
           if(stage===3){
             const names=native('restart-observe').result
             assert.deepEqual([...names].sort(),['lost','native','restart','running'].map(name=>'/obj/__livejobs_'+name).sort())
-            const metrics=await fetch(process.env.DSH_HOUDINI_BRIDGE_URL+'/fixture-metrics').then(r=>r.json())
+            const metrics=await fetch(config.metricsUrl).then(r=>r.json())
             const submissions=metrics.calls.filter(row=>row.path==='/jobs')
             assert.equal(submissions.length,5,'four executed jobs plus the single queued cancellation; recovery never resubmits')
             assert.equal(metrics.dropped.length,1)
@@ -235,6 +234,11 @@ __result__={'marker':'${name==='lost'?'TRANSPORT_LOST':name}','node':node.path()
       }else{
         ;({sessionId}=await ctx.sessionController.create({cwd:directory,agentPreset:'houdini'}))
         setSandboxMode(ctx.sessions.get(sessionId),'workspace-write')
+        const {candidates}=await ctx.houdiniTargets.list({sessionId})
+        const record=candidates.find(row=>row.executor_id===config.executorId)
+        assert.equal(record?.bridge_auth,'bearer-v1','the registered target must require its runtime credential')
+        await ctx.houdiniTargets.select({sessionId,executorId:record.executor_id,registrationId:record.registration_id,
+          expectedHip:record.hip_path,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch},AbortSignal.timeout(15000))
       }
       await ctx.sessionController.selectModel({sessionId,provider,model})
       await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:

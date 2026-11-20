@@ -1,20 +1,4 @@
-"""dsh-houdini 安装脚本：生成本机 Houdini package 文件（每台机器跑一次）。
-
-参照 EEEAgent / Edini 项目的验证做法：把仓库绝对路径直接写进生成的 package json，
-不依赖提前 setx 环境变量（setx 需要新开进程才生效，容易踩空）。Houdini package
-文件里的相对路径不是相对 package 文件位置解析，所以必须用绝对路径——这里经
-`$DSH_HOUDINI_PATH` 展开。生成的 `dsh-houdini.json` 会被写进本机 Houdini packages
-目录，供 Houdini 启动时加载（追加顶级 `DSH-Houdini` 菜单、把 python3.11libs 加进 sys.path）。
-
-用法（仅需标准库）：
-    python houdini/install.py                # 装到本机所有已检测到的 Houdini 版本的 packages 目录
-    python houdini/install.py --print        # 只打印生成内容，不写文件
-    python houdini/install.py --packages-dir <dir>   # 覆盖安装目标目录
-
-package 按用户 pref 目录隔离（H21 读 houdini21.0/packages、H22 读
-houdini22.0/packages，互不可见），所以默认给每个检测到的版本各装一份；
-新装了一个大版本的 Houdini 后重跑本脚本即可。
-"""
+"""预览当前源码的 Houdini Package，或用 --packages-dir 登记到指定的隔离开发目录。"""
 
 from __future__ import annotations
 
@@ -22,12 +6,9 @@ import argparse
 import json
 import os
 from pathlib import Path
-import sys
+import tempfile
 
 PACKAGE_ROOT = Path(__file__).resolve().parent  # houdini/
-PROJECT_ROOT = PACKAGE_ROOT.parent
-PYTHON_LIB = PACKAGE_ROOT / "python3.11libs"
-sys.path.insert(0, str(PYTHON_LIB))
 
 
 def build_package() -> dict:
@@ -47,45 +28,38 @@ def build_package() -> dict:
     }
 
 
-def default_packages_dirs() -> list[Path]:
-    """本机所有 Houdini 版本的用户 package 目录（每个大版本各装一份）。
-
-    HOUDINI_USER_PREF_DIR 优先（只装它一个）；否则扫描 Documents/houdini*
-    全部命中——package 按 pref 目录隔离，H21 不读 houdini22.0 的、反之亦然。
-    """
-    pref = os.environ.get("HOUDINI_USER_PREF_DIR", "").strip()
-    if pref:
-        if "__HVER__" in pref:
-            return [Path(pref.replace("__HVER__", version)) / "packages"
-                    for version in ("21.0", "22.0")]
-        return [Path(pref) / "packages"]
-    dirs = [d for d in Path.home().glob("Documents/houdini*") if d.is_dir()]
-    if dirs:
-        return [d / "packages" for d in sorted(dirs)]
-    return [Path.home() / "Documents" / "houdini21.0" / "packages"]
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--packages-dir", type=Path, default=None, help="覆盖安装目标目录")
+    parser.add_argument("--packages-dir", type=Path, help="当前隔离 Houdini profile 的 packages 目录")
     parser.add_argument("--print", action="store_true", help="只打印生成内容，不写文件")
     args = parser.parse_args()
 
     package = build_package()
-    if args.print:
-        print(json.dumps(package, indent=2))
+    content = json.dumps(package, indent=2) + "\n"
+    if args.print or args.packages_dir is None:
+        print(content, end="")
         return 0
 
-    packages_dirs = [args.packages_dir] if args.packages_dir else default_packages_dirs()
-    for packages_dir in packages_dirs:
-        packages_dir.mkdir(parents=True, exist_ok=True)
-        out = packages_dir / "dsh-houdini.json"
-        out.write_text(json.dumps(package, indent=2), encoding="utf-8")
-        print(f"已写入 {out}")
-
-    print("仅登记 Houdini 连接插件；请在官方 DSH Desktop 安装并启用 dsh-houdini。")
-    print(f"houdini 目录已烘焙：{PACKAGE_ROOT.as_posix()}")
-    print("重开 Houdini 后，菜单栏应出现顶级菜单 dsh。")
+    directory = args.packages_dir
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "dsh-houdini.json"
+    with tempfile.TemporaryDirectory(dir=directory) as staging:
+        staged = Path(staging) / target.name
+        staged.write_text(content, encoding="utf-8")
+        try:
+            if os.name == "nt":
+                staged.rename(target)  # Windows rename never replaces an existing entry.
+            else:
+                os.link(staged, target)
+        except FileExistsError:
+            try:
+                same = (not target.is_symlink() and target.is_file()
+                        and json.loads(target.read_text(encoding="utf-8-sig")) == package)
+            except (OSError, ValueError):
+                same = False
+            if not same:
+                parser.error(f"已有其他登记，已保留 {target}。请选择隔离开发目录。")
+    print(f"源码 Package 已登记至 {target}")
     return 0
 
 

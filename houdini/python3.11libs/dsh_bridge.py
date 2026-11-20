@@ -6,10 +6,13 @@ server and this server executes the agent's Python code in the live session.
 Start from Houdini's Python Shell (Windows > Python Shell) — after installing the
 package, `python3.11libs` is already on sys.path, so a plain import works:
 
-    import dsh_bridge
-    dsh_bridge.start()                      # serves http://127.0.0.1:8765
+    import os, dsh_bridge
+    server = dsh_bridge.start(token=os.environ['DSH_HOUDINI_BRIDGE_TOKEN'])
 
-Or headless with hython:
+For a fixed development client, explicitly share a fresh 64-character lowercase
+hex DSH_HOUDINI_BRIDGE_TOKEN with that client. Production Desktop obtains a
+separate generated token from the local registration of each listening runtime.
+The standalone hython entry uses the same explicit development credential:
 
     hython <path-to-repo>/houdini/python3.11libs/dsh_bridge.py [scene.hip]
 
@@ -19,6 +22,7 @@ Endpoints:
     POST /jobs                admission envelope -> {"jobId": str}
     POST /jobs/<id>/status    identity + contract envelope -> JobStatus
     POST /jobs/<id>/cancel    identity + contract envelope -> JobStatus
+    POST /media               original request_ref + owner_session + image_index -> bytes
 
 The admission envelope is {"code", "owner_session", "owner_call",
 "expected_contract", "request_ref"}: every execution and job submission carries
@@ -53,6 +57,8 @@ from __future__ import annotations
 import dsh_ownership
 
 import hashlib
+import hmac
+import secrets
 import json
 import os
 import sys
@@ -60,11 +66,11 @@ import queue
 import threading
 import time
 import traceback
-import urllib.parse
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import hou  # noqa: F401  (imported so it is bound in the exec namespace)
+import dsh_media_output
 
 
 # Cached while this module is imported on Houdini's owning thread. HTTP handler
@@ -86,7 +92,7 @@ _HELPER = loaded_helper()
 
 # Bump when operation semantics change without renaming verbs. Host generation
 # reads the matching version declaration in docs/tool-design.md.
-_EXECUTION_CONTRACT_VERSION = 126
+_EXECUTION_CONTRACT_VERSION = 127
 from dsh_managed_runtime import executor_identity
 _EXECUTOR_ID = executor_identity()
 _RUNTIME_ID = uuid.uuid4().hex
@@ -105,8 +111,6 @@ _job_meta: dict[str, float] = {}         # jobId -> created/finished timestamp
 _jobs_lock = threading.Lock()
 
 # /media 端点（图片字节回传）的限制
-_MEDIA_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp"}
-_MEDIA_MAX_BYTES = 64 * 1024 * 1024
 _MEDIA_MIME = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
     ".bmp": "image/bmp", ".tga": "image/x-tga", ".webp": "image/webp",
@@ -163,6 +167,13 @@ def _require_selected_target(body):
     if rejection:
         raise RuntimeError(rejection[1])
 
+
+def _run_with_media(ref, owner, operation):
+    with dsh_media_output.image_scope(), dsh_media_output.capture_output_fingerprints() as produced:
+        result = operation()
+        if produced and ref:
+            _request_registry.record_media(ref, owner, result.get('images', []), produced)
+        return result
 
 def _require_request_scene(ref, owner):
     epoch = _request_registry.scene_epoch(ref)
@@ -313,9 +324,16 @@ def _prune_jobs() -> None:
                 _job_meta.pop(job_id, None)
 
 
-def _public_job(job: dict) -> dict:
-    """API-visible snapshot of a job record; internal owner fields never leak
-    into status/cancel responses or tool output schemas."""
+def _public_job(job: dict) -> dict | None:
+    """After the owner check, return the original body or its actual availability."""
+    if job['status'] in ('done', 'failed'):
+        encoded = _request_registry.job_result_bytes(job['jobId'])
+        if encoded is None:
+            return None
+        result = json.loads(encoded)
+        if 'advisory' in job and 'advisory' not in result:
+            result['advisory'] = job['advisory']
+        return {**result, 'jobId': job['jobId'], 'status': job['status']}
     return {key: value for key, value in job.items()
             if key not in ('owner_session', 'owner_call', '_worker_pending')}
 
@@ -328,7 +346,8 @@ def _request_status(ref, owner):
             job = _jobs.get(receipt['jobId'])
             if job is not None and job.get('owner_session') == owner:
                 receipt['job_status'] = job['status']
-                receipt['job_result_available'] = job['status'] in ('done', 'failed', 'cancelled')
+                receipt['job_result_available'] = (job['status'] == 'cancelled' or
+                    job['status'] in ('done', 'failed') and _request_registry.job_result_bytes(job['jobId']) is not None)
             elif receipt.get('job_finished'):
                 receipt['job_result_available'] = False
     return receipt
@@ -362,13 +381,15 @@ def _job_body(job_id: str, code: str, allow_raw: str | None = None,
         if job is None or job["status"] == "cancelled":
             return None
         job["status"] = "running"
-    return run_code(code, allow_raw, owner_session, owner_call, script=script)
+    return _run_with_media(request_ref, owner_session,
+                           lambda: run_code(code, allow_raw, owner_session, owner_call, script=script))
 
 
 def _run_job(job_id: str, code: str, allow_raw: str | None = None,
              owner_session: str | None = None,
              owner_call: str | None = None, request_ref: str | None = None,
              script: dict | None = None) -> None:
+    registry = _request_registry
     try:
         try:
             outcome = _execute(
@@ -378,20 +399,23 @@ def _run_job(job_id: str, code: str, allow_raw: str | None = None,
             outcome = {"ok": False, "stdout": "", "stderr": "", "error": traceback.format_exc()}
         if outcome is None:
             return  # cancelled while queued: code never ran, scene untouched
+        try:
+            registry.store_job_result(job_id, outcome)
+        except (TypeError, ValueError, OverflowError, RecursionError, MemoryError):
+            # The receipt can still report the terminal state with no available body.
+            pass
         with _jobs_lock:
             job = _jobs.get(job_id)
-            if job is None or job["status"] == "cancelled":
-                return
-            job.update(outcome)
-            job["status"] = "done" if outcome["ok"] else "failed"
-            _job_meta[job_id] = time.time()
+            if job is not None and job["status"] != "cancelled":
+                job["status"] = "done" if outcome["ok"] else "failed"
+                _job_meta[job_id] = time.time()
     finally:
         with _jobs_lock:
             job = _jobs.get(job_id)
             if job is not None:
                 job.pop('_worker_pending', None)
         if request_ref is not None:
-            _request_registry.finish_job(request_ref)
+            registry.finish_job(request_ref)
 
 
 def _capture_ui(options, owner_session, request_ref, owner_call=None):
@@ -414,13 +438,26 @@ def _capture_ui(options, owner_session, request_ref, owner_call=None):
         state = _execute(prepare)
         if not state['ready'].wait(10):
             raise TimeoutError('Houdini native UI did not finish a normal GUI refresh before capture')
-        _execute(lambda: capture.refresh_ui_capture(state))
+        def refresh():
+            _require_request_scene(request_ref, owner_session)
+            capture.refresh_ui_capture(state)
+        _execute(refresh)
         if not state['ready'].wait(10):
             raise TimeoutError('Houdini native controls did not finish displaying their bound values')
-        facts = _execute(lambda: capture.finish_ui_capture(state))
+        def finish():
+            nonlocal facts
+            _require_request_scene(request_ref, owner_session)
+            try:
+                facts = capture.finish_ui_capture(state)
+            except Exception as failure:
+                if not state.get('closed'):
+                    raise
+                return _runtime.ui_observation_result(getattr(failure, 'evidence', None), str(failure), owner_session)
+            return _runtime.ui_observation_result(facts, None, owner_session)
+        return _execute(lambda: _run_with_media(request_ref, owner_session, finish))
     except BaseException as exc:
         error = str(exc)
-        facts = getattr(exc, 'evidence', None)
+        facts = getattr(exc, 'evidence', None) or facts
         if state is not None and not state.get('closed'):
             try:
                 cleanup = _execute(lambda: capture.abort_ui_capture(state))
@@ -431,7 +468,10 @@ def _capture_ui(options, owner_session, request_ref, owner_call=None):
                     'restore_errors': [str(cleanup_error)]}
                 error += '; owned UI cleanup failed: ' + str(cleanup_error)
     try:
-        return _execute(lambda: _runtime.ui_observation_result(facts, error, owner_session))
+        def observe_failure():
+            _require_request_scene(request_ref, owner_session)
+            return _runtime.ui_observation_result(facts, error, owner_session)
+        return _execute(observe_failure)
     except BaseException as observation_error:
         # No worker-thread HOM fallback and no invented execution identity.
         # The HTTP route still completes a dispatched request's real error.
@@ -483,38 +523,43 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._send({"ok": False, "error": traceback.format_exc()}, status=500)
             return
-        # Relay request-produced image bytes to Host native attachments; no HOM.
-        if urllib.parse.urlparse(self.path).path == "/media":
-            try:
-                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-                target = os.path.abspath(params.get("path", [""])[0])
-                ext = os.path.splitext(target)[1].lower()
-                if ext not in _MEDIA_EXTS:
-                    self._send({"ok": False, "error": f"media type not allowed: {ext or '(none)'}"}, status=403)
-                    return
-                if not os.path.isfile(target):
-                    self._send({"ok": False, "error": f"no such file: {target}"}, status=404)
-                    return
-                size = os.path.getsize(target)
-                if size > _MEDIA_MAX_BYTES:
-                    self._send({"ok": False, "error": f"file too large ({size} > {_MEDIA_MAX_BYTES})"}, status=413)
-                    return
-                with open(target, "rb") as fh:
-                    data = fh.read(_MEDIA_MAX_BYTES + 1)
-                if len(data) > _MEDIA_MAX_BYTES:
-                    self._send({"ok": False, "error": "media grew beyond size limit"}, status=413)
-                    return
-                self.send_response(200)
-                self.send_header("content-type", _MEDIA_MIME.get(ext, "application/octet-stream"))
-                self.send_header("content-length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            except Exception:
-                self._send({"ok": False, "error": traceback.format_exc()}, status=500)
-            return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
 
+    def _media(self, body):
+        if (set(body) != {'request_ref', 'owner_session', 'image_index'}
+                or not isinstance(body['request_ref'], str) or not isinstance(body['owner_session'], str)
+                or type(body['image_index']) is not int or body['image_index'] < 0):
+            self._send({'ok': False, 'error': 'Expected an original receipt, owner and image index'}, status=400)
+            return
+        image = _request_registry.media(body['request_ref'], body['owner_session'], body['image_index'])
+        if image is None:
+            self._send({'ok': False, 'error': 'Original request image unavailable'}, status=404)
+            return
+        path, length, digest = image
+        try:
+            with open(path, 'rb') as source:
+                data = source.read(length + 1) if os.fstat(source.fileno()).st_size == length else b''
+        except OSError:
+            data = b''
+        if len(data) != length or hashlib.sha256(data).hexdigest() != digest:
+            self._send({'ok': False, 'error': 'Original image changed or is unavailable'}, status=409)
+            return
+        self.send_response(200)
+        self.send_header('content-type', _MEDIA_MIME[os.path.splitext(path)[1].lower()])
+        self.send_header('content-length', str(length))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _check_executor(self):
+        credential = self.headers.get('Authorization', '').encode('utf-8')
+        if not hmac.compare_digest(credential, ('Bearer ' + self.server.bridge_token).encode('ascii')):
+            self.close_connection = True
+            self._send({'ok': False, 'error': 'Houdini Bridge caller credential missing or invalid; reconnect the selected component'}, status=401)
+            return False
+        if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}':
+            self.close_connection = True
+            self._send({'ok': False, 'error': 'Invalid Bridge Host'}, status=403)
+            return False
         expected = self.headers.get('X-DSH-Houdini-Executor')
         if expected is not None and expected != _EXECUTOR_ID:
             self.close_connection = True
@@ -554,6 +599,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send({"ok": False, "error": traceback.format_exc()}, status=500)
 
     def _route(self, body: dict) -> None:
+        if self.path == '/media':
+            return self._media(body)
         if self.path.startswith('/recovery/'):
             try:
                 return self._recover(body)
@@ -837,7 +884,7 @@ class _Handler(BaseHTTPRequestHandler):
                     return {'ok':False,'stdout':'','stderr':'',
                             'requestReceipt':_request_registry.status(ref,owner_session),
                             'error':'Request no longer queued; original code was not started again.'}
-                try:result=invoke()
+                try:result=_run_with_media(ref, owner_session, invoke)
                 except BaseException:
                     result={'ok':False,'stdout':'','stderr':'','error':traceback.format_exc()}
                 result['requestReceipt']={'request_ref':ref,'runtime_id':_RUNTIME_ID,'status':'done'}
@@ -981,8 +1028,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
                 return
             with _jobs_lock:
-                snapshot = _public_job(job)
-            self._send(snapshot)
+                public_state = dict(job)
+            snapshot = _public_job(public_state)
+            if snapshot is None:
+                self._send({"ok": False, "error": "The original job finished; its result is no longer retained."}, status=410)
+            else:
+                self._send(snapshot)
             return
         self._send({"ok": False, "error": f"unknown endpoint {self.path}"}, status=404)
 
@@ -1122,7 +1173,23 @@ class _Handler(BaseHTTPRequestHandler):
                     'checkpoint_executor': record['executor_id'], 'executor_id': _EXECUTOR_ID, 'runtime_id': _RUNTIME_ID})
 
 
+class _BridgeServer(ThreadingHTTPServer):
+    def service_actions(self):
+        # The HTTP loop runs even when Houdini is idle. Expiry needs no HOM work.
+        super().service_actions()
+        _request_registry.expire_results()
+
+
 _server: ThreadingHTTPServer | None = None
+
+
+def registration_credential(executor, runtime, port):
+    """Local worker only. Bind the secret to the listening server captured on the actor."""
+    server = _server
+    if (server is None or executor != _EXECUTOR_ID or runtime != server.bridge_runtime
+            or port != server.server_port):
+        raise RuntimeError('Houdini 连接已变化，请从所选窗口重新连接。')
+    return server.bridge_token
 
 
 def stop() -> None:
@@ -1160,7 +1227,7 @@ def stop() -> None:
             pass
 
 
-def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
+def start(port: int = 8765, host: str = "127.0.0.1", *, token=None) -> ThreadingHTTPServer:
     """Start the bridge in a daemon thread; restarts if one is already running.
 
     In GUI mode call this from the main thread (Python Shell / menu — the
@@ -1169,17 +1236,26 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     global _server, _RUNTIME_ID, _request_registry, _runtime
     if threading.get_ident() != _HOU_THREAD_ID:
         raise RuntimeError("start must run on Houdini's owning thread")
+    if host != "127.0.0.1":
+        raise ValueError("Houdini Bridge requires IPv4 loopback")
+    if token is not None and (not isinstance(token, str) or len(token) != 64 or any(c not in '0123456789abcdef' for c in token)):
+        raise ValueError("Bridge credential must be a 256-bit lowercase hex string")
     stop()
     _RUNTIME_ID=uuid.uuid4().hex
     _request_registry=RequestRegistry(_RUNTIME_ID)
+    with _jobs_lock:
+        _jobs.clear()
+        _job_meta.clear()
     _runtime=ExecutionRuntime(_HOU_THREAD_ID, _RUNTIME_ID, _EXECUTOR_ID)
     if hou.isUIAvailable() and not _install_gui_pump():
         raise RuntimeError("Cannot start bridge without a Houdini GUI main-thread pump")
     try:
-        server = ThreadingHTTPServer((host, port), _Handler)
+        server = _BridgeServer((host, port), _Handler)
     except BaseException:
         stop()
         raise
+    server.bridge_token = token if token is not None else secrets.token_hex(32)
+    server.bridge_runtime = _RUNTIME_ID
     _server = server
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True).start()
     return server
@@ -1188,11 +1264,13 @@ def start(port: int = 8765, host: str = "127.0.0.1") -> ThreadingHTTPServer:
 if __name__ == "__main__":
     import sys
 
+    if not os.environ.get('DSH_HOUDINI_BRIDGE_TOKEN'):
+        raise SystemExit('Set a private DSH_HOUDINI_BRIDGE_TOKEN for this fixed development Bridge and its Host')
     if len(sys.argv) > 1:
         hou.hipFile.load(sys.argv[1])
         print(f"[dsh-houdini] loaded scene {sys.argv[1]}")
-    server = start()
-    print(f"[dsh-houdini] bridge serving on http://127.0.0.1:{server.server_port}")
+    server = start(token=os.environ['DSH_HOUDINI_BRIDGE_TOKEN'])
+    print(f"[dsh-houdini] bridge serving on http://127.0.0.1:{server.server_port} (executor {_EXECUTOR_ID})")
     _pump_active = True  # headless: the main thread below IS the pump
     while True:  # hython exits when the script returns; keep the session alive
         _pump()

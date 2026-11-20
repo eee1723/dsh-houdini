@@ -7,11 +7,10 @@ import subprocess
 import sys
 import tempfile
 import threading
-import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from houdini_test_environment import isolated_environment
+from houdini_test_environment import isolated_environment, registered_bridge_request
 
 expect_dirty_final = '--expect-dirty-final' in sys.argv
 if expect_dirty_final and '--gui' not in sys.argv:
@@ -19,11 +18,9 @@ if expect_dirty_final and '--gui' not in sys.argv:
 
 
 def request(record, route, body=None):
-    req = urllib.request.Request(record['bridge_url'] + route,
-                                 data=None if body is None else json.dumps(body).encode(),
-                                 headers={'Content-Type': 'application/json', 'X-DSH-Houdini-Executor': record['executor_id']})
-    with urllib.request.urlopen(req, timeout=10) as response:
-        return json.load(response)
+    status, value = registered_bridge_request(fixture / 'registry', record, route, body, timeout=10)
+    assert status == 200, (route, status, value.get('error'))
+    return value
 
 
 fixture = Path(tempfile.mkdtemp(prefix='dsh-isolated-workers-'))

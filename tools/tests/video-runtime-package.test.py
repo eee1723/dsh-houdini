@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import tarfile
+from types import SimpleNamespace
 from unittest.mock import patch
 import zipfile
 
@@ -28,6 +29,34 @@ def rejects(callback, match):
 
 with tempfile.TemporaryDirectory(prefix="dsh-private-media-package-") as temporary:
     root = Path(temporary)
+    release = root / "release"
+    release.mkdir()
+    contents = [{"path": f"runtime/video/ffmpeg/bin/{name}.exe"} for name in ("ffmpeg", "ffprobe")]
+    def pack(args, **kwargs):
+        staging = Path(args[args.index("--pack-destination") + 1])
+        assert staging.parent == release
+        (staging / "fixture.tgz").write_bytes(b"frozen package")
+        return json.dumps([{"filename": "fixture.tgz", "integrity": "fixture", "files": contents}])
+    def assemble():
+        with tempfile.TemporaryDirectory(dir=root) as work, patch.object(builder, "run", pack), \
+             patch.object(builder, "stage_video_runtime", return_value={"version": "fixture", "license": "LGPL"}):
+            return builder.package_staged(SimpleNamespace(media_cache=None, media_runtime=None), "npm",
+                                          release, [{"path": "package.json"}], Path(work))
+    # An occupied final name cannot leave a partially delivered batch.
+    checksum = release / "SHA256SUMS.txt"
+    checksum.write_bytes(b"existing")
+    try:
+        assemble()
+    except FileExistsError:
+        assert list(release.iterdir()) == [checksum] and checksum.read_bytes() == b"existing"
+    else:
+        raise AssertionError("the occupied checksum was replaced")
+    checksum.unlink()
+    receipt = assemble()
+    manifest = json.loads((release / "release-manifest.json").read_text(encoding="utf-8"))
+    artifact = Path(receipt["file"])
+    assert manifest["file"] == artifact.name and manifest["sha256"] == media.digest(artifact)
+    assert checksum.read_text(encoding="ascii").strip() == manifest["sha256"] + "  " + artifact.name
     cache = root / "cache"
     cache.mkdir()
     source = cache / "ffmpeg-source.zip"

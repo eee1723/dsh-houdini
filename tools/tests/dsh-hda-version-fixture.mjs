@@ -1,4 +1,5 @@
 import {fixturePresentation} from './fixture-presentation.mjs'
+import {expandArchivedExecution} from '../trace-session-lib.mjs'
 // Real DSH native/nested tools and a real isolated HOM Bridge; only the model is scripted.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -7,7 +8,7 @@ import {randomUUID} from 'node:crypto'
 import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 
-export const inject=['loader','llm','sessions','agents','sessionController','sandboxPolicy']
+export const inject=['loader','llm','sessions','agents','sessionController','sandboxPolicy','houdiniTargets']
 export function apply(ctx) {
   const output=process.env.DSH_HDA_TEST_OUT, workspace=path.dirname(output)
   const library=path.join(workspace,'package','otls','asset.hda')
@@ -35,7 +36,7 @@ export function apply(ctx) {
       try {
         const step=steps++
         const events=ctx.sessions.get(options.sessionId).snapshotEvents()
-        const native=id=>events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical
+        const native=id=>expandArchivedExecution(events.find(e=>e.type==='tool/result'&&e.data?.message?.source?.callId===id)?.data?.meta?.canonical)
         const checkOwned=(r,type)=>{
           assert(r?.ok,JSON.stringify(r));assert.equal(r.result.type,type)
           assert.equal(r.result.geometry.points,8);assert.equal(r.result.geometry.prims,6)
@@ -51,7 +52,7 @@ export function apply(ctx) {
         if(step===3){
           const dispatch=events.find(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec')
           assert(dispatch&&!dispatch.data.isError,JSON.stringify(dispatch))
-          const r=dispatch.data.meta?.canonical
+          const r=expandArchivedExecution(dispatch.data.meta?.canonical)
           assert(r?.ok,JSON.stringify(dispatch));assert.equal(r.result,'fixture::asset::1.1');receipts.push(r)
         }
         if(step===4){
@@ -63,12 +64,12 @@ export function apply(ctx) {
         if(step===6){
           const dispatch=events.filter(e=>e.type==='tool/ptc-dispatch'&&e.data?.name==='houdini_exec').at(-1)
           assert(dispatch&&!dispatch.data.isError,JSON.stringify(dispatch))
-          const r=dispatch.data.meta?.canonical
+          const r=expandArchivedExecution(dispatch.data.meta?.canonical)
           checkOwned(r,'fixture::asset')
         }
         if(step===7){
           checkOwned(native('hda-6'),'fixture::asset::1.1')
-          const ids=new Set(receipts.map(r=>r.execution.executor_id));assert.deepEqual([...ids],[process.env.DSH_HOUDINI_EXECUTOR_ID])
+          const ids=new Set(receipts.map(r=>r.execution.executor_id));assert.deepEqual([...ids],[process.env.DSH_HDA_FIXTURE_EXECUTOR])
           assert(receipts.every(r=>r.execution.owner_session===options.sessionId))
           yield*text('Native versions verified through the selected Houdini session.');return
         }
@@ -87,6 +88,11 @@ export function apply(ctx) {
       await ctx.loader.await()
       const {sessionId}=await ctx.sessionController.create({cwd:workspace,agentPreset:'houdini'})
       setSandboxMode(ctx.sessions.get(sessionId),'workspace-write')
+      const {candidates}=await ctx.houdiniTargets.list({sessionId})
+      const record=candidates.find(row=>row.executor_id===process.env.DSH_HDA_FIXTURE_EXECUTOR)
+      assert.equal(record?.bridge_auth,'bearer-v1')
+      await ctx.houdiniTargets.select({sessionId,executorId:record.executor_id,registrationId:record.registration_id,
+        expectedHip:record.hip_path,runtimeId:record.runtime_id,sceneEpoch:record.scene_epoch},AbortSignal.timeout(15000))
       await ctx.sessionController.selectModel({sessionId,provider:'hda-fixture',model:'scripted'})
       await ctx.sessionController.prompt({sessionId,requestId:randomUUID(),mode:'queue',content:[{type:'text',text:'Upgrade the fixture asset in its original package library and preserve its peer.'}]},AbortSignal.timeout(90000))
       const agent=ctx.agents.get(sessionId);await agent.whenIdle();assert(!failure,failure);assert.equal(steps,8)

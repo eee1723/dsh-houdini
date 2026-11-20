@@ -81,6 +81,7 @@ def publish_registration(root, facts):
 
 
 def _publish_registration(root, facts):
+    from dsh_bridge import registration_credential
     from dsh_executor_registry import activate, active_registration
     root = Path(root)
     if not root.is_absolute():
@@ -89,12 +90,14 @@ def _publish_registration(root, facts):
         raise ValueError('工程尚未保存到磁盘。')
     if facts.get('workbench') and not observation_current(facts):
         raise RuntimeError('工程在连接过程中已变化，请从当前 Houdini 重新打开工作区。')
+    credential = registration_credential(facts['executor_id'], facts['runtime_id'], facts['port'])
     try:
         registration = active_registration()
     except RuntimeError:
         registration = activate(root, facts['executor_id'], installation=facts['installation'],
             version=facts['version'],port=facts['port'],runtime_id=facts['runtime_id'],hip=facts['hip'],
-            workbench=facts.get('workbench', False),scene=facts.get('scene'),runtime=facts.get('runtime'),helper=facts.get('helper'))
+            workbench=facts.get('workbench', False),scene=facts.get('scene'),runtime=facts.get('runtime'),helper=facts.get('helper'),
+            bridge_token=credential)
         atexit.register(registration.close)
     else:
         if registration.root != root.resolve() or registration.executor_id != facts['executor_id']:
@@ -105,7 +108,8 @@ def _publish_registration(root, facts):
         if registration.workbench and not registration.observe(facts['hip'], facts['scene'],
                 is_current=lambda: observation_current(facts)):
             raise RuntimeError('工程在连接过程中已变化，请重新打开工作区。')
-        return registration.publish(facts['port'], facts['runtime_id'], hip=facts['hip'], scene=facts.get('scene'))
+        return registration.publish(facts['port'], facts['runtime_id'], hip=facts['hip'], scene=facts.get('scene'),
+                                    bridge_token=credential)
 
 
 def repair_registration():

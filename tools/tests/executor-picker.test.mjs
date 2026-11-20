@@ -229,8 +229,7 @@ const prepareCalls=()=>requests.filter(r=>r.method==='houdiniFrontend/prepareBri
 assert.equal(prepareCalls().length,0,'observing scenes does not reinstall components')
 componentSetup={state:'failed',message:'自动准备未完成，可重试。',details:'owned installation failure'}
 intervals.at(-1)();await settle();tree=render(menu)
-assert.match(text(tree),/重试组件准备/)
-assert.match(text(tree),/连接与组件/)
+assert.equal(text(tree).split("重试组件准备").length-1,1,'one repair action is visible for the failed component')
 const prepareAction=()=>by(tree,n=>n.props.role==='menuitem'&&by(n,c=>c.props['data-houdini-project-action']==='prepareBridge'))
 assert(prepareAction(),'automatic setup failures retain an explicit component repair action')
 prepareAction().props.onClick();await settle();tree=render(menu)

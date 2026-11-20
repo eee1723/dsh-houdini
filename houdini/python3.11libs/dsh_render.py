@@ -314,7 +314,7 @@ def render_frame(rop, picture=None, frame=None, timeout: float = 110, *, framing
                 errors.append(f"render() 未报错但产物缺失、为空或与渲染前指纹相同：{output['output']}")
     for output in outputs:
         if output.get('fresh'):
-            dsh_media_output.report_image(output['output'])
+            dsh_media_output._report_rendered_image(output['output'])
     return {
         "path": n.path(),
         "output": target,

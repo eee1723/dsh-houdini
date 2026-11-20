@@ -76,7 +76,11 @@ exec 的未处理异常使批次失败并恢复 Houdini 可撤销状态。动词
 
 worker/report中的执行投影只控制显示大小，不重算状态；大信封单份归档到run的`executions/`，保留路径、摘要及字段pointer。模型默认看到run/read紧凑摘要（builder `__result__`键级事实、check事实、输入版本与失败文本）；execution渲染块留在report与归档，按`detail_pointer`经read的`select`/pointer取回，摘要未展开不表示字段不存在。归档或详情读取失败与原执行结果分开，不能以报告体积、stdout或旧progress猜测完成。每次builder/check单独捕获原生及子进程输出并恢复描述符；完整扫描已确认的Mantra/Karma `Unable to load texture`（含Husk Error Summary），保留有界首尾文本、实际路径与`native_diagnostics`，计入failed并停止后续checks，不能因envelope.ok或文件fresh形成假绿。只有实际`native_diagnostics`触发这项停止；其他warning/unverified及普通几何checks.failed不被纹理解释一刀切。未观察到后端身份时renderer=unknown，不从测试目标或ROP名称补造。manifest小文档预算和同源完整结果预算分别应用。运行中的progress会变化，不冒充不可变档案。`released`表示GO已发出；只有自有Job中的实际进程归零才返回`tree_reaped=true`，随后才可清理本次独占临时prefs。工程、固定输入、报告与产物不属于这项清理。
 
-HTTP 请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
+Bridge 在 IPv4 回环上核对 HTTP Host 和每个运行实例独立的 Bearer 凭据。Desktop 从本机用户登记目录的 `credentials` 子目录取得该值。会话、公开现场登记及菜单回执只保存身份事实。能读取凭据文件或已能在 Houdini 进程中执行 Python 的程序属于此信任范围。Windows 上该文件继承用户资料目录的访问控制，自定义登记目录的读取权限也决定谁能使用该连接。固定开发入口通过独立的 `DSH_HOUDINI_BRIDGE_TOKEN` 配对。
+
+HTTP 执行请求使用一次性 request_ref。断联、超时或坏回包后先通过 houdini_request 读取原请求状态；缺回执表示未知，不能据此认定零执行。查回 jobId 只证明提交，后续仍读取 job 状态。job入场回执正文过期不代表计算结束；Bridge同时返回实际job是否结束及结果是否仍保留。已结束且结果已清理时，Host保留结果未知事实并清除活动任务提示，不再要求轮询不存在的job或重新提交。运行实例改变或回执过期不自动重复修改。
+
+现场图片按原回执、当前会话及图片序号重复取回。渲染或窗口截图确认产出时记录文件的大小及完整 SHA-256，取回时核对同一份字节。原文件被覆盖、读不到或关联已过期时返回图片不可用。脚本声明的路径可留作文件提示；Desktop 只接收对应可信产图动作的附件。独立执行的文件和已存入 DSH 的原生附件沿各自的读取合同。
 
 调用日志完整记录实际动词，不以日志条数拒绝批量操作。大结果首选Host工作区hash归档并通过resource分页读取；模型正文优先返回显式选择的结果、检查与恢复事实。原生/嵌套canonical与后台生产者记录只保留恢复、事务和节点交付所需的有界事实，完整动词参数与作者结果不再复制进会话或浏览器，离线Trace按实际后端展开原值。重复内容可用明确详情指针表示，省略与读取缺口须可见。只读时不向工程写档案，工作区不可用或归档失败转DSH原生opaque留存；其生命周期与读取指导由宿主管理。两种存储均失败时保留完整即时结构返回、明确持久原值不可用和原请求恢复范围，不改变原执行结论、不重放代码；文字与canonical始终受展示预算约束。
 

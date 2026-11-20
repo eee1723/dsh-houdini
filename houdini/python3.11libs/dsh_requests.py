@@ -50,19 +50,53 @@ class RequestRegistry:
                 break
             self._tickets.popitem(last=False)
 
-    def _drop_payload(self, ref, status):
-        record = self.records[ref]
-        self.bytes -= record['bytes']
-        record.update(payload=None, bytes=0, status=status)
-        self._payloads.pop(ref, None)
+    def _drop_payload(self, key):
+        entry = self._payloads.pop(key, None)
+        if entry is not None:
+            self.bytes -= len(entry[1])
+            if key in self.records:
+                self.records[key]['status'] = 'result_expired'
 
     def _expire_payloads(self):
         now = time.monotonic()
         while self._payloads:
-            ref = next(iter(self._payloads))
-            if now - self.records[ref]['finished'] <= self.retention:
+            key, (stored, _) = next(iter(self._payloads.items()))
+            if now - stored <= self.retention:
                 break
-            self._drop_payload(ref, 'result_expired')
+            self._drop_payload(key)
+
+    def expire_results(self):
+        with self.lock:
+            self._expire_payloads()
+
+    @staticmethod
+    def _encode(payload):
+        return json.dumps(payload, ensure_ascii=False).encode('utf-8', errors='backslashreplace')
+
+    def _store_payload(self, key, encoded):
+        size = len(encoded)
+        if size > self.result_bytes:
+            return False
+        while self.bytes + size > self.result_bytes:
+            self._drop_payload(next(iter(self._payloads)))
+        self._payloads[key] = (time.monotonic(), encoded)
+        self.bytes += size
+        return True
+
+    def store_job_result(self, job_id, payload):
+        """The terminal body shares the receipt byte budget, with its own completion time."""
+        encoded = self._encode(payload)
+        key = ('job', job_id)
+        with self.lock:
+            self._expire_payloads()
+            self._drop_payload(key)
+            self._store_payload(key, encoded)
+
+    def job_result_bytes(self, job_id):
+        with self.lock:
+            self._expire_payloads()
+            entry = self._payloads.get(('job', job_id))
+            return entry[1] if entry is not None else None
 
     def reserve(self, ref, owner, payload):
         if not isinstance(ref, str) or not ref.startswith(self.runtime_id + '.'):
@@ -95,12 +129,12 @@ class RequestRegistry:
                 if not self._finished:
                     raise ValueError('too many active requests; no execution admitted')
                 old, _ = self._finished.popitem(last=False)
-                if self.records[old]['payload'] is not None:
-                    self._drop_payload(old, 'result_expired')
+                self._drop_payload(old)
+                self._drop_payload(('media', old))
                 del self.records[old]
             self.records[ref] = {
-                'owner': owner, 'digest': digest, 'status': 'queued', 'payload': None,
-                'finished': None, 'bytes': 0, 'owner_call': payload.get('owner_call'),
+                'owner': owner, 'digest': digest, 'status': 'queued',
+                'finished': None, 'owner_call': payload.get('owner_call'),
                 'kind': payload.get('request_kind', 'exec'), 'admitted_at': time.time(),
                 'scene_epoch': ticket[3],
             }
@@ -137,6 +171,30 @@ class RequestRegistry:
         with self.lock:
             return self.records[ref].get('scene_epoch')
 
+    def record_media(self, ref, owner, paths, fingerprints):
+        """Keep only verified producer metadata, on the original bounded receipt."""
+        entries = {index: (path, *fingerprints[path]) for index, path in enumerate(paths)
+                   if path in fingerprints}
+        if not entries:
+            return
+        encoded = self._encode(entries)
+        with self.lock:
+            record = self.records.get(ref)
+            if record is not None and record['owner'] == owner:
+                self._expire_payloads()
+                key = ('media', ref)
+                self._drop_payload(key)
+                self._store_payload(key, encoded)
+
+    def media(self, ref, owner, index):
+        with self.lock:
+            self._expire_payloads()
+            record = self.records.get(ref)
+            if record is None or record['owner'] != owner:
+                return None
+            retained = self._payloads.get(('media', ref))
+        return json.loads(retained[1]).get(str(index)) if retained is not None else None
+
     def running(self, ref):
         with self.lock:
             record = self.records.get(ref)
@@ -148,8 +206,7 @@ class RequestRegistry:
     def complete(self, ref, payload):
         # Keep non-ASCII text compact and preserve lone surrogates as JSON
         # escapes. A result that HTTP can deliver must also reach a terminal receipt.
-        encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8', errors='backslashreplace')
-        size = len(encoded)
+        encoded = self._encode(payload)
         with self.lock:
             self._expire_payloads()
             record = self.records[ref]
@@ -160,14 +217,7 @@ class RequestRegistry:
                 record['job_id'] = payload['jobId']
             if 'job_id' not in record or record.get('job_finished'):
                 self._finished[ref] = None
-            if size > self.result_bytes:
-                record['status'] = 'result_unavailable'
-                return
-            while self.bytes + size > self.result_bytes:
-                self._drop_payload(next(iter(self._payloads)), 'result_expired')
-            record.update(status='done', payload=encoded, bytes=size)
-            self._payloads[ref] = None
-            self.bytes += size
+            record['status'] = 'done' if self._store_payload(ref, encoded) else 'result_unavailable'
 
     def fail_before_dispatch(self, ref, reason):
         with self.lock:
@@ -203,7 +253,7 @@ class RequestRegistry:
                     'owner_call': record['owner_call'], 'kind': record['kind'],
                     **({'jobId': record['job_id'], 'job_finished': bool(record.get('job_finished'))}
                        if record.get('job_id') else {}),
-                    **({'result': json.loads(record['payload'])} if record['payload'] is not None else {}),
+                    **({'result': json.loads(self._payloads[ref][1])} if ref in self._payloads else {}),
                     **({'reason': record['reason']} if 'reason' in record else {}),
                     'note': 'Same-runtime receipt only. Read status/results; never repeat a mutation to retrieve its result.'}
 

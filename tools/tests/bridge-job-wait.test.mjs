@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {HoudiniBridge} from '../../lib/bridge.js';
+import {pairedBridge,fixtureToken} from './fixture-bridge.mjs';
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH,EXPECTED_VERB_NAMES} from '../../lib/generated-verb-contract.js';
 
 const originalFetch=globalThis.fetch;
@@ -11,13 +11,14 @@ const jobId='a'.repeat(12);
 const health={ok:true,executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,
   verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH,count:EXPECTED_VERB_NAMES.length,names:EXPECTED_VERB_NAMES}};
 const snapshot=status=>({jobId,status,ok:status==='done',stdout:'',stderr:''});
-const reset=next=>{clock=0;clockReadMs=0;calls=[];timeoutDelays=[];handler=next;return new HoudiniBridge('http://127.0.0.1:8765',1000)};
+const reset=next=>{clock=0;clockReadMs=0;calls=[];timeoutDelays=[];handler=next;return pairedBridge('http://127.0.0.1:8765',1000)};
 const restoreClock=()=>{if(clockDescriptor)Object.defineProperty(performance,'now',clockDescriptor);else delete performance.now};
 Object.defineProperty(performance,'now',{configurable:true,value:()=>{const now=clock;clock+=clockReadMs;return now}});
 AbortSignal.timeout=delay=>{timeoutDelays.push(delay);return originalTimeout(delay)};
 globalThis.fetch=async(url,init)=>{
   init.signal.throwIfAborted();
   const path=new URL(url).pathname;
+  assert.equal(new Headers(init.headers).get('authorization'),'Bearer '+fixtureToken);
   if(path==='/health')return Response.json(health);
   assert.equal(path,`/jobs/${jobId}/status`,'long polling never resubmits scene code or the job');
   const body=JSON.parse(init.body);calls.push(body);

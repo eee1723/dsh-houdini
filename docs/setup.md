@@ -127,14 +127,6 @@ FFmpeg/ffprobe随完整插件包交付，普通用户不用安装到PATH。普�
 
 正式插件媒体资源位于 runtime/video，包含FFmpeg/ffprobe、所需运行库、许可及媒体库对应源码；各版随包SOURCE-NOTICE说明附带归档和精确来源引用。构建使用现有受控媒体构建/暂存入口，不从用户系统 PATH 猜测另一套默认工具。源码开发可以显式指定经过验证的 FFmpeg/ffprobe；缺失资源时返回实际依赖原因，不宣称离线功能已就绪。方法与验证见[开发规范](development.md)及[媒体契约](../skills/houdini-video-tutorial/references/video-processing.md)。
 
-## ChatGPT / Codex 订阅（可选）
-
-当前选择社区插件 [dsh-codex-subscription](https://github.com/WSL043/dsh-codex-subscription)，固定版本 **3.1.8**。它由独立作者维护，不随Houdini发行包捆绑，可用于Houdini和其他模式；Houdini连接组件不管理其账户，也不读取或迁移其他订阅插件的授权。
-
-在官方Desktop原生插件管理中添加 **dsh-codex-subscription@3.1.8**，按页面提示安装、启用或重开。随后打开「设置 → Codex 订阅」，由用户亲自完成ChatGPT授权，再从DSH原生模型菜单选择账户实际可用的模型。插件安装、账户连接和模型目录可见分别不代表一次真实推理已经成功；型号、额度和功能以账户及服务端返回为准。
-
-该插件的联网搜索、生图、其他模型扩展和可选工具由它自己的设置控制；只开启实际需要的能力，不把生成图片当作真实Houdini工程验收。订阅OAuth不等于转录API授权。宿主兼容检查和安装由官方插件管理负责，不为它设置版本豁免、修改共享依赖或升级Desktop。未完成的实际账户验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)。
-
 ## 网络与代理
 
 当前官方Windows Desktop的Node Host依据启动时的显式代理环境工作；它没有继承Windows系统代理、PAC或WPAD的完整合同。浏览器或Desktop更新器能够联网，不证明模型请求、转录子进程也能使用同一代理。使用代理时，按官方DSH方式在启动前配置HTTP_PROXY/HTTPS_PROXY/NO_PROXY并正常重开Desktop；具体值由所用代理服务提供。PAC地址不能直接充当HTTPS_PROXY。
@@ -154,7 +146,7 @@ npm run runtime:prepare
 npm run docs:check
 ```
 
-官方宿主准备器仅用于隔离开发验证。开发/测试必须显式使用临时 DSH_HOME、profile、依赖缓存和浏览器数据；不要把未验证的 checkout 安装进用户正在使用的 Desktop。源码 Houdini Package 可用 python houdini/install.py --print 预览或安装；该命令不改 DSH profile。
+官方宿主准备器仅用于隔离开发验证。开发/测试必须显式使用临时 DSH_HOME、profile、依赖缓存和浏览器数据。运行 `python houdini/install.py` 或加 `--print` 会预览源码 Houdini Package。要在开发现场加载它，运行 `python houdini/install.py --packages-dir <隔离偏好目录>/packages`。已有相同登记会原样保留，其他登记占用该文件名时会提示选择其他目录。
 
 具体职责、替代方案比较和宿主共存纪律见[开发维护](development.md#插件职责与方案选择)。受支持版本与公开接口见[DSH 适配](dsh-update-compatibility.md)，未完成验收只维护于[交接](handoff.md)。
 

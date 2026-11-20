@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import {HoudiniBridge} from '../../lib/bridge.js'
+import {pairedBridge,fixtureToken} from './fixture-bridge.mjs'
 import {HoudiniToolRuntime} from '../../lib/tool-runtime.js'
 import {registerHoudiniTools} from '../../lib/tools.js'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
@@ -23,6 +23,7 @@ async function endpoint(executor,runtime) {
     requests.push({executor,path:req.url,body})
     res.setHeader('content-type','application/json')
     assert.equal(req.headers['x-dsh-houdini-executor'],executor)
+    assert.equal(req.headers.authorization,'Bearer '+fixtureToken)
     const health={ok:true,executorId:executor,runtimeId:runtime,sceneEpoch:liveEpoch,
       executionContractVersion:version,verbCatalog:{hash}}
     if(req.url==='/health')return res.end(JSON.stringify(health))
@@ -39,7 +40,7 @@ async function endpoint(executor,runtime) {
     res.statusCode=404;res.end('{}')
   })
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));servers.push(server)
-  return new HoudiniBridge('http://127.0.0.1:'+server.address().port,1000,executor,undefined,{runtimeId:runtime,sceneEpoch:epochA})
+  return pairedBridge('http://127.0.0.1:'+server.address().port,1000,executor,undefined,{runtimeId:runtime,sceneEpoch:epochA})
 }
 function event(value,seq=1){return{type:'tool/result',seq,time:seq,surfaceOp:'append',data:{message:createToolResultMessage({callId:'submit-'+seq,content:[],isError:false}),meta:{canonical:value}}}}
 try {

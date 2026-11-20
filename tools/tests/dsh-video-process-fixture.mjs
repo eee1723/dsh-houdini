@@ -10,7 +10,7 @@ import {LlmAdapter} from '@deepseek-ai/dsh-llm'
 import {setSandboxMode} from '@deepseek-ai/dsh-sandbox-policy'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION,EXPECTED_VERB_CATALOG_HASH,EXPECTED_VERB_NAMES} from '../../lib/generated-verb-contract.js'
 export const inject=['loader','llm','settings','sessions','agents','sessionController','sandboxPolicy','houdiniFrontend','houdiniTargets']
-export function apply(ctx){
+export async function apply(ctx){
   const workspace=process.env.DSH_LOCAL_VIDEO_WORKSPACE,output=process.env.DSH_LOCAL_VIDEO_RESULT
   const frames=path.join(workspace,'frames'),index=path.join(workspace,'index'),indexFile=path.join(index,'index.json')
   const source=path.join(workspace,'source.mp4'),sourceHash=createHash('sha256').update(fs.readFileSync(source)).digest('hex')
@@ -18,9 +18,10 @@ export function apply(ctx){
   const hip=path.join(workspace,'unused.hip')
   const runtime={hfs:process.env.DSH_LOCAL_VIDEO_HFS,python:process.env.DSH_LOCAL_VIDEO_PYTHON,
     pythonVersion:process.env.DSH_LOCAL_VIDEO_PYTHON_VERSION,executable:path.join(process.env.DSH_LOCAL_VIDEO_HFS,'bin','houdini.exe')}
-  const target=mediaTarget(ctx,{runtimeId:'b'.repeat(32),hip,workspace,houdiniVersion:'22.0.368',runtime})
+  const target=await mediaTarget(ctx,{runtimeId:'b'.repeat(32),hip,workspace,houdiniVersion:'22.0.368',runtime})
   const report=value=>fs.writeFileSync(output,JSON.stringify(value,null,2))
   const server=http.createServer(async(req,res)=>{
+    if(!target.accepts(req)){res.writeHead(401);res.end('{}');return}
     res.setHeader('content-type','application/json')
     const health={ok:true,...target.health,
       executionContractVersion:EXPECTED_EXECUTION_CONTRACT_VERSION,verbCatalog:{hash:EXPECTED_VERB_CATALOG_HASH,count:EXPECTED_VERB_NAMES.length,names:EXPECTED_VERB_NAMES},

@@ -2,13 +2,10 @@
 <!--
   dsh-houdini: add a top-level "DSH-Houdini" menu to Houdini's menu bar.
 
-  Install as a Houdini package: run `python houdini/install.py` once, then
-  restart Houdini. The generated package adds this directory to HOUDINI_PATH
-  (which supplies this menu) and python3.11libs to sys.path via PYTHONPATH
-  (which supplies dsh_launcher; PYTHONPATH is version-proof: H21 is Python
-  3.11, H22 is Python 3.13). The menu is ADDED to the built-in menu bar; it
-  does not replace it. Re-run install.py after upgrading Houdini: the package
-  lives in the per-version pref dir (e.g. Documents/houdini22.0/packages).
+  Desktop installs the Houdini package for normal use. For development,
+  preview the checkout package with houdini/install.py and pass an explicit
+  isolated packages directory to register it. Houdini reads the package on
+  startup and imports dsh_launcher from the supplied PYTHONPATH.
 
   The shortcut activates official DSH Desktop and selects this Houdini target.
   It never owns a separate Host or browser window.

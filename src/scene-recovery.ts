@@ -32,39 +32,17 @@ export function recoveryMessage(value:RecoveryBinding) {
     +literalData(JSON.stringify(value))})
 }
 
-export async function observeSavedProject(ctx:Context,agent:Agent,directory:string,hipPath:string,signal:AbortSignal,hipIsNew=false,scene?:{scene_id?:unknown;scene_epoch?:unknown}) {
-  const current=agent.session.header.cwd
-  const normalize=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
-  const observed=projectedExecutorState(ctx,agent.session).project
-  signal.throwIfAborted()
-  // SessionHeader.cwd identifies the native creation project. A HIP Save As
-  // changes neither that identity nor the sandbox grant. Only use native cd
-  // within the original project; an external HIP remains an explicit path.
-  const relative=current?path.relative(normalize(current),normalize(directory)):undefined
-  const inside=relative!==undefined&&!relative.startsWith('..'+path.sep)&&relative!=='..'&&!path.isAbsolute(relative)
-  const working=ctx.get('workingDirectory') as {get(session:any):string;set(agent:any,directory:string,signal:AbortSignal):Promise<string>}|undefined
-  if(inside&&working&&normalize(working.get(agent.session))!==normalize(directory))await working.set(agent,directory,signal)
-  if(observed?.hipPath&&normalize(observed.hipPath)===normalize(hipPath))return
-  const sceneIdentity=scene&&typeof scene.scene_id==='string'?{scene_id:scene.scene_id}:{}
-  const epoch=scene&&typeof scene.scene_epoch==='string'?{scene_epoch:scene.scene_epoch}:{}
-  recordHoudiniContext(agent,houdiniSnapshot({name:'dsh-houdini:workspace-directory',text:
-    'The selected Houdini scene was saved at the observed HIP path. Native session project and file permissions remain unchanged. Use the actual HIP paths for project outputs; paths outside the original workspace require the native file permission flow. Earlier paths remain historical references.\n'
-    +literalData(JSON.stringify({previous_directory:current,directory:working?.get(agent.session)??current,hip_path:hipPath,
-      executor_id:projectedExecutorState(ctx,agent.session).identity,hip_is_new:hipIsNew,...sceneIdentity,...epoch}))}))
-  if(await ctx.sessions.flush(agent.session)!==true)throw new Error('工程保存观察尚未可靠记录。')
-}
-
 async function followSavedDirectory(ctx:Context,agent:Agent,signal:AbortSignal) {
   let state:ExecutorIdentityState
   try {state=projectedExecutorState(ctx,agent.session)}
   catch {return} // Unverified historical identity cannot authorize a cwd change.
-  const history=projectedExecutionFacts(ctx,agent.session),execution=history.anchor?.execution
+  const history=state.execution.current,execution=history.anchor?.execution
   // A scene-wide last-save marker also appears in other conversations' reads.
   // Only this conversation's successful Save As is authority to move its files.
   const producer=history.saveAs?.execution.owner_session===agent.id?history.saveAs:undefined
   const value=execution?.scene_recovery,saved=value?.successful_save
   const produced=producer?.execution?.scene_recovery
-  if(!producer||producer.execution.executor_id!==state.identity||!produced
+  if(!producer||state.directoryChangeSeq>=producer.eventSeq||producer.execution.executor_id!==state.identity||!produced
     ||produced.scene_id!==value?.scene_id||produced.scene_epoch!==value?.scene_epoch
     ||produced.checkpoint_id!==value?.checkpoint_id||produced.hip_path!==value?.hip_path)return
   if(!state.identity||execution?.executor_id!==state.identity||!value||!saved
@@ -73,7 +51,14 @@ async function followSavedDirectory(ctx:Context,agent:Agent,signal:AbortSignal) 
   if(state.selectedTarget&&state.selectedTarget.scene_id!==value.scene_id)return
   const normalize=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value)
   if(normalize(saved.hip_path)!==normalize(value.hip_path))return
-  await observeSavedProject(ctx,agent,path.dirname(value.hip_path),value.hip_path,signal,false,value)
+  const root=agent.session.header.cwd
+  if(!root)return
+  const directory=path.dirname(value.hip_path),relative=path.relative(root,directory)
+  if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))return
+  // Native cd records working-directory/change and notifies the conversation.
+  // Its sequence supersedes this receipt, including after a reload or a manual cd.
+  const working=ctx.get('workingDirectory')
+  if(working&&normalize(working.get(agent.session))!==normalize(directory))await working.set(agent,directory,signal)
 }
 
 export function installSceneRecovery(ctx:Context,connection:HoudiniConnection):void {

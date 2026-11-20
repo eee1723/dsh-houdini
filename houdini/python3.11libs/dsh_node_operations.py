@@ -410,10 +410,10 @@ def sop_set_output(node, render: bool = True,
     if output_index is not None:
         published = publish_output(n, output_index, allow_foreign)
         n = dsh_node_access._resolve(published['node'])
-    _display_flag(n, True)
+    display = _display_flag(n, True)
     if render:
         n.setRenderFlag(True)
-    return {'context': 'sop', 'node': n.path(), 'display': True, 'render': render,
+    return {'context': 'sop', 'node': n.path(), 'display': display['display'], 'render': bool(n.isRenderFlagSet()),
             'source': source.path(), 'public_output': published}
 
 

@@ -98,8 +98,8 @@ export class HoudiniToolRuntime {
     if (this.workspaceNotes.get(agent) === key) return value
     this.workspaceNotes.set(agent, key)
     const note = `workspace note: this session's workspace is "${cwd}"; this operation observed $HIP at "${hip}". `
-      + 'Anchor all Houdini outputs at $HIP. Render/screenshot images arrive as native image attachments; '
-      + 'A successful Save As performed by this conversation through scene_save_as follows the project directory at the next model step; selecting a scene or reading another save does not move the workspace. '
+      + 'Anchor all Houdini outputs at $HIP. Render and screenshot images arrive as native image attachments. '
+      + 'After this conversation saves inside its original project, its working directory can follow the save at the next step. A later native cd takes precedence. '
       + 'Do not write task outputs into the plugin repository.'
     return { ...value, advisory: value.advisory ? `${value.advisory}\n${note}` : note }
   }

@@ -44,8 +44,10 @@ async function atomicWrite(filename,text) {
   await fs.writeFile(temporary,text,{flag:'wx'})
   await fs.rename(temporary,filename)
 }
-async function writeManifest(directory,value) {
-  await atomicWrite(path.join(directory,manifestName),JSON.stringify(value,null,2)+'\n')
+async function writeManifest(directory,value,{exclusive=false}={}) {
+  const filename=path.join(directory,manifestName),json=JSON.stringify(value,null,2)+'\n'
+  if(exclusive)await fs.writeFile(filename,json,{flag:'wx'})
+  else await atomicWrite(filename,json)
   const rows=[['类别',value.kind],['批次',value.label],['版本',value.packageVersion],['DSH',value.dshVersion],
     ['Commit',value.commit],['工作树有未提交改动',value.dirty],['生成时间',value.createdAt],['完成时间',value.completedAt],
     ['结果',value.status],['隔离来源',value.isolation],['素材复用',value.reuse]]
@@ -74,8 +76,10 @@ async function newManifest({label,kind,isolation}) {
 /** Begin only an explicitly generated batch. Source identity is frozen before work starts. */
 export async function beginDirectory(directory,{label,kind='evidence',isolation='unknown'},{root=outputRoot}={}) {
   directory=path.resolve(directory);await directoryWithoutLink(directory)
+  if(kind==='release'&&(await fs.readdir(directory)).length)
+    throw Error('Release output already contains files. Select a fresh batch directory: '+directory)
   const value=await newManifest({label,kind,isolation})
-  await writeManifest(directory,value)
+  await writeManifest(directory,value,{exclusive:kind==='release'})
   if(within(root,directory))await writeIndex({root})
   return value
 }

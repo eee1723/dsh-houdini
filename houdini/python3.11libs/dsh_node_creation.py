@@ -563,6 +563,11 @@ def tab_create(
       不移动既有内容。已有所属Box的边界仍保持；间距由节点实际尺寸推导，
       见``_place_created_node``。
     """
+    return _create_tab_node(parent, type_name, name, inputs, parms, module_owns_rollback=False)
+
+
+def _create_tab_node(parent, type_name, name=None, inputs=None, parms=None, *, module_owns_rollback):
+    """A failed build_module restores its shared registration snapshot for all member nodes."""
     try:
         parent, ctx, latest, input_nodes = _prepare_tab_create(parent, type_name, inputs, parms)
     except Exception as error:
@@ -577,7 +582,7 @@ def tab_create(
         tool = None
 
     before = set(parent.children())
-    provenance = dsh_ownership.snapshot()
+    provenance = None if module_owns_rollback else dsh_ownership.snapshot()
     node: hou.Node | None = None
     try:
         if tool is not None and _tool_has_extra_init(tool):
@@ -612,7 +617,8 @@ def tab_create(
                 retire_destroyed_parent_boxes(parent_identities)
             except BaseException as restore_error:
                 restore_errors.append(str(restore_error))
-        dsh_ownership.restore(provenance)
+        if provenance is not None:
+            dsh_ownership.restore(provenance)
         raise dsh_errors.CheckpointError(str(error), {'ok': False, 'phase': 'apply_failure',
             'scene_writes': None, 'dispatched': True, 'created_node_count': len(partials),
             'restored': not restore_errors, 'restore_errors': restore_errors,

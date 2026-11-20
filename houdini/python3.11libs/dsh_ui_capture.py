@@ -345,7 +345,7 @@ def finish_ui_capture(state) -> dict:
     finally:
         cleanup = _close(state)
     if result is not None:
-        dsh_media_output.report_image(state['destination'])
+        dsh_media_output._report_rendered_image(state['destination'])
         result.update(user_state_restored=not cleanup, restore_errors=cleanup)
     if capture_error is not None or cleanup:
         evidence = result or _evidence(state)

@@ -8,9 +8,10 @@ import dsh_hou_helpers as h
 assert not hasattr(b,'run_review') and not hasattr(b,'_review_service')
 assert not hasattr(h,'_review_parameter_access')
 server=ThreadingHTTPServer(('127.0.0.1',0),b._Handler)
+server.bridge_token=b.secrets.token_hex(32)
 thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
 try:
- request=urllib.request.Request(f'http://127.0.0.1:{server.server_port}/review',data=b'{}',headers={'Content-Type':'application/json'})
+ request=urllib.request.Request(f'http://127.0.0.1:{server.server_port}/review',data=b'{}',headers={'Content-Type':'application/json','Authorization':'Bearer '+server.bridge_token})
  try: urllib.request.urlopen(request,timeout=3)
  except urllib.error.HTTPError as error: assert error.code==404,error.code
  else:raise AssertionError('retired review route still active')

@@ -83,6 +83,22 @@ def _name(prefix, value):
     return prefix + "_" + (suffix or "piece")
 
 
+def _instance_file(instances_path, project_root):
+    """Read the source once and keep in-project file references movable with the HIP."""
+    root = Path(project_root).resolve() if project_root else None
+    source = Path(instances_path)
+    if source.parts[:1] == ("$HIP",):
+        if root is None:
+            raise ValueError("$HIP requires a named project for the WFC instance file")
+        source = root.joinpath(*source.parts[1:])
+    path, data = _read_instances(source)
+    relative = root is not None and path.is_relative_to(root)
+    literal = (path.relative_to(root) if relative else path).as_posix()
+    # Houdini expands dollar signs and backtick expressions when evaluating a file parm.
+    literal = literal.replace("$", r"\$").replace("`", r"\`")
+    return path, data, ("$HIP/" + literal if relative else literal)
+
+
 def build_instance_network(parent, instances_path, prototypes=None, *, api):
     """Build points, or native packed Copy to Points when prototypes are given.
 
@@ -93,11 +109,11 @@ def build_instance_network(parent, instances_path, prototypes=None, *, api):
     """
     if not isinstance(api, dict):
         raise ValueError("Pass the houdini_exec namespace with api=globals()")
-    for verb in ("tab_create", "create_spare_parms", "set_parms", "verify_network", "sop_set_output"):
+    for verb in ("scene_info", "tab_create", "create_spare_parms", "set_parms", "verify_network", "sop_set_output"):
         if not callable(api.get(verb)):
             raise ValueError("Missing injected DSH verb: " + verb)
     create = api["tab_create"]
-    path, data = _read_instances(instances_path)
+    path, data, file_reference = _instance_file(instances_path, api["scene_info"]()["project_layout"]["project_root"])
     packed = []
     source = None
     if prototypes is not None:
@@ -117,9 +133,9 @@ def build_instance_network(parent, instances_path, prototypes=None, *, api):
                                         "pivot": "origin"}))
         source = packed[0] if len(packed) == 1 else create(parent, "merge", "PROTOTYPES", inputs=packed)
     layout = create(parent, "python", "WFC_POINTS", inputs=[source] if source is not None else None)
-    api["create_spare_parms"](layout, spec=[{
-        "type": "string", "name": "instances", "label": "Resolved WFC JSON",
-        "default": path.as_posix(),
+    api["create_spare_parms"](layout, layout=[{
+        "type": "string", "file": "any", "name": "instances", "label": "Resolved WFC JSON",
+        "default": file_reference,
     }])
     api["set_parms"](layout, {"python": _POINT_SOURCE, "maintainstate": False})
     if source is not None:

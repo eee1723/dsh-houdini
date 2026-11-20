@@ -11,6 +11,7 @@ import json
 import os
 import re
 import threading
+import tempfile
 import uuid
 from contextlib import contextmanager
 
@@ -35,14 +36,14 @@ def is_shared_executor():
     return _ACTIVE is not None and not _ACTIVE._closed
 
 
-def activate(root, executor_id, *, installation, version, port, runtime_id, hip, workbench=False, scene=None, runtime=None, helper=None):
+def activate(root, executor_id, *, installation, version, port, runtime_id, hip, workbench=False, scene=None, runtime=None, helper=None, bridge_token=None):
     """Explicit worker-side registration after the Bridge is listening."""
     global _ACTIVE
     if _ACTIVE is not None:
         raise RuntimeError('An executor registration is already active')
     item = ExecutorRegistration(root, executor_id, installation=installation, version=version, workbench=workbench, runtime=runtime, helper=helper)
     try:
-        item.publish(port, runtime_id, hip=hip, scene=scene)
+        item.publish(port, runtime_id, hip=hip, scene=scene, bridge_token=bridge_token)
     except BaseException:
         item.close()
         raise
@@ -151,6 +152,8 @@ class ExecutorRegistration:
         self._closed = False
         self._lease = FileLease(self.root / 'leases' / (self.executor_id + '.lock'))
         self._file = self.root / 'endpoints' / (self.executor_id + '.json')
+        self._credential_file = self.root / 'credentials' / (self.executor_id + '.json')
+        self._credential_target = None
         if self._file.exists():
             self._lease.close()
             raise RuntimeError('executor identity already recorded; new processes require a fresh identity')
@@ -224,7 +227,7 @@ class ExecutorRegistration:
             self._hip_display = _spelling(hip)
             self._writer_keys = keys
 
-    def publish(self, port, runtime_id, *, hip=None, scene=None):
+    def publish(self, port, runtime_id, *, hip=None, scene=None, bridge_token=None):
         """Publish an already listening Bridge, never close-and-rebind a probe port."""
         _identity(runtime_id)
         if type(port) is not int or not 1024 <= port <= 65535:
@@ -255,6 +258,23 @@ class ExecutorRegistration:
                 record['runtime'] = self.runtime
             if self.helper is not None:
                 record['helper'] = self.helper
+            target = (runtime_id, port)
+            if bridge_token is not None and self._credential_target != target:
+                if not isinstance(bridge_token, str) or not re.fullmatch('[0-9a-f]{64}', bridge_token):
+                    raise ValueError('Invalid Bridge credential')
+                # Keep the secret out of discovery, menu receipts and diagnostics.
+                directory = self._credential_file.parent
+                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+                fd, temporary = tempfile.mkstemp(dir=directory)
+                try:
+                    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                        json.dump({'runtime_id': runtime_id, 'port': port, 'token': bridge_token}, handle)
+                    os.replace(temporary, self._credential_file)
+                finally:
+                    Path(temporary).unlink(missing_ok=True)
+                self._credential_target = target
+            if self._credential_target == target:
+                record['bridge_auth'] = 'bearer-v1'
             atomic_json(self._file, record)
             self._port, self._runtime_id = port, runtime_id
             return record
@@ -358,6 +378,8 @@ class ExecutorRegistration:
                     if value.get('registration_id') != self._generation:
                         raise RuntimeError('registration changed; refusing to overwrite another generation')
                     atomic_json(self._file, {**value, 'state': 'disconnected'})
+                if self._credential_target is not None:
+                    self._credential_file.unlink(missing_ok=True)
             finally:
                 for lease in reversed(self._writers):
                     lease.close()

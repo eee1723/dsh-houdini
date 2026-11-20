@@ -70,11 +70,8 @@ _RAW_HOU_VERB_MAP = {
 }
 
 
-_NETWORK_BOX_MUTATORS = {
-    'addItem', 'addNode', 'removeItem', 'removeNode', 'removeAllItems', 'removeAllNodes', 'setComment', 'setColor',
-    'setAlpha', 'setAutoFit', 'setBounds', 'setMinimized',
-    'fitAroundContents', 'destroy',
-}
+_NETWORK_BOX_MUTATORS = {key.removeprefix('networkBox.') for key in _RAW_HOU_VERB_MAP
+                         if key.startswith('networkBox.')}
 
 _NETWORK_NOTE_MUTATORS = {
     'setText', 'setPosition', 'move', 'shiftPosition', 'setSize', 'resize', 'setBounds',
@@ -315,7 +312,7 @@ def _standard_module_resolver():
     return resolve
 
 
-def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
+def _callable_references(tree: ast.AST, standard_module) -> dict[int, tuple | None]:
     """One lexical provenance for Python, HOM and unknown callable references.
 
     Every binding in the lexical scope must prove the same value kind. This
@@ -329,7 +326,6 @@ def _callable_references(tree: ast.AST) -> dict[int, tuple | None]:
     literals = {ast.List: list, ast.Tuple: tuple, ast.Set: set, ast.Dict: dict,
                 ast.ListComp: list, ast.SetComp: set, ast.DictComp: dict, ast.JoinedStr: str}
     scopes, escaped, writes, classes, function_scopes = {}, set(), [], {}, {}
-    standard_module = _standard_module_resolver()
 
     def ordinary_class(node):
         # Only source-defined ordinary classes have Python's known method
@@ -953,18 +949,16 @@ def _referenced_methods(reference):
     return {reference[-1]} if reference[0] in ('hom_method', 'unknown_method') else set()
 
 
-def _raw_usage_from_tree(tree: ast.AST, callables=None) -> dict:
+def _raw_usage_from_tree(tree: ast.AST, callables, hip_calls) -> dict:
     """Describe raw HOM syntax and gate-relevant mutations for UI/auditing.
 
     This is structured execution evidence, not a source-code regex.  It shares
     the same covered/suspected mutation rules as the Raw Gate so the client can
     distinguish harmless reads, blocked writes and audited exemptions.
     """
-    callables = _callable_references(tree) if callables is None else callables
     parameter_writes = _parameter_write_calls(tree)
     box_writes = _network_box_mutation_calls(tree)
     note_writes = _network_note_mutation_calls(tree)
-    hip_calls = _hip_file_calls(tree)
     direct: dict[str, int] = {}
     covered: dict[str, int] = {}
     suspected: dict[str, int] = {}
@@ -1252,7 +1246,7 @@ def _hidden_execution_message(tree):
     return None
 
 
-def _unresolved_source_from_tree(tree, callables=None):
+def _unresolved_source_from_tree(tree, references, standard_module):
     """True when executed source can reach HOM outside the traced verb facade.
 
     Standard-library calls use the same lexical provenance as Raw Gate; method
@@ -1260,9 +1254,6 @@ def _unresolved_source_from_tree(tree, callables=None):
     imports, reflection and dynamic imports remain unresolved. The public verb
     facade stays allowed because its calls join the request-local tracer.
     """
-    if tree is None:
-        return False
-    standard_module = _standard_module_resolver()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1273,7 +1264,6 @@ def _unresolved_source_from_tree(tree, callables=None):
             root = (node.module or '').split('.')[0]
             if node.level or (root != 'dsh_hou_helpers' and standard_module(node.module or '') is None):
                 return True
-    references = _callable_references(tree) if callables is None else callables
     dynamic = {'getattr', 'setattr', 'delattr', 'eval', 'exec', 'compile', '__import__'}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -1307,12 +1297,19 @@ class CodeAnalysis:
         except SyntaxError as error:
             self.tree = None
             self.syntax_error = error
-        callables = _callable_references(self.tree) if self.tree is not None else None
-        self.raw_usage = _raw_usage_from_tree(self.tree, callables) if self.tree is not None else {}
-        self.unresolved_source = _unresolved_source_from_tree(self.tree, callables) if self.tree is not None else False
+            self.raw_usage = {}
+            self.unresolved_source = False
+            self._forbidden_hip = None
+            return
+        standard_module = _standard_module_resolver()
+        callables = _callable_references(self.tree, standard_module)
+        hip_calls = _hip_file_calls(self.tree)
+        self._forbidden_hip = _forbidden_hip_lifecycle_message(hip_calls)
+        self.raw_usage = _raw_usage_from_tree(self.tree, callables, hip_calls)
+        self.unresolved_source = _unresolved_source_from_tree(self.tree, callables, standard_module)
 
     def preflight(self, *, mutating_verbs, read_only, raw_gate, allow_raw):
-        error = _forbidden_hip_lifecycle_message(self) or _blocking_host_traversal_message(self)
+        error = self._forbidden_hip or _blocking_host_traversal_message(self)
         if error:
             return error, 'forbidden'
         if read_only or raw_gate:
@@ -1351,13 +1348,13 @@ def _raw_hou_advisory(code: str, verb_ledger: list) -> str | None:
     """Advisory text when code bypassed the verb vocabulary with raw hou calls."""
     if verb_ledger:
         return None
-    counts = _raw_hou_calls(code)
-    if not counts:
+    covered = _raw_usage_analysis(code).get('coveredMutations', [])
+    if not covered:
         return None
-    verbs = sorted({_RAW_HOU_VERB_MAP[key] for key in counts})
-    detail = ", ".join(f"{key}x{n}" for key, n in sorted(counts.items()))
+    verbs = sorted({item['verb'] for item in covered})
+    detail = ", ".join(f"{item['name']}x{item['count']}" for item in covered)
     return (
-        f"{sum(counts.values())} raw hou call(s) bypassed the verb vocabulary "
+        f"{sum(item['count'] for item in covered)} raw hou call(s) bypassed the verb vocabulary "
         f"({detail}). These are covered by verbs: {', '.join(verbs)}. "
         "Prefer the verbs next time — raw hou is the escape hatch for what the "
         "vocabulary does not cover."
@@ -1421,17 +1418,14 @@ def _hip_file_calls(tree):
             and (method := lifecycle_method(node.func)) is not None}
 
 
-def _forbidden_hip_lifecycle_message(code: str) -> str | None:
+def _forbidden_hip_lifecycle_message(hip_calls) -> str | None:
     """Reject known HIP replacement/reset calls before execution.
 
     Loading a HIP resets the scene/process lifecycle that owns this very bridge
     request: H21 GUI reproduction lost results/images and eventually restarted
     Houdini, so neither undo nor a Python ``finally`` can make it transactional.
     """
-    tree = _analysis(code).tree
-    if tree is None:
-        return None
-    for method in _hip_file_calls(tree).values():
+    for method in hip_calls.values():
         if method in ('load', 'clear'):
             return (
                 f"hou.hipFile.{method}() is forbidden inside dsh-houdini bridge exec: "
@@ -1562,24 +1556,21 @@ def _gate_message(code: str, allow_raw: str | None = None) -> str | None:
         return None  # 语法错误交给 exec 自己报
     # Gate and audit must classify the same operation; formerly these loops
     # drifted independently (notably hipFile.setName versus Node.setName).
-    usage = analysis.raw_usage
-    covered = {item['name']: item['count'] for item in usage['coveredMutations']}
-    mutating = {item['name']: item['count'] for item in usage['suspectedMutations']}
-    if not covered and not mutating:
-        return None
-    if not covered and allow_raw:
+    covered = analysis.raw_usage['coveredMutations']
+    mutating = analysis.raw_usage['suspectedMutations']
+    if not covered and (not mutating or allow_raw):
         return None
     lines = [
         "raw-hou gate: blocked BEFORE execution (the verb vocabulary is the "
         "primary interface; raw hou is gated)."
     ]
     if covered:
-        pairs = ", ".join(f"{a} -> {_RAW_HOU_VERB_MAP[a]}" for a in sorted(covered))
+        pairs = ", ".join(f"{item['name']} -> {item['verb']}" for item in covered)
         lines.append(f"verb-covered raw call(s): {pairs} — use the verbs instead.")
     if mutating:
         lines.append(
             "possibly scene-mutating raw call(s) with unresolved method origin and no direct verb: "
-            + ", ".join(sorted(mutating)) + "."
+            + ", ".join(item['name'] for item in mutating) + "."
         )
     if covered:
         lines.append(

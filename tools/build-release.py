@@ -166,28 +166,50 @@ def package_staged(args, npm, output, inventory, work):
     print("Preparing verified tutorial media distribution", flush=True)
     media = stage_video_runtime(plugin / "runtime/video", work / "media", config,
                                 cache=args.media_cache, prepared=args.media_runtime, distribution=True)
-    packed = json.loads(run([npm, "pack", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache", "--pack-destination", output], cwd=plugin, capture=True))[0]
-    packed_files = {row["path"] for row in packed["files"]}
-    if not {"runtime/video/ffmpeg/bin/ffmpeg.exe", "runtime/video/ffmpeg/bin/ffprobe.exe"}.issubset(packed_files):
-        raise RuntimeError("Plugin package omitted the required tutorial media executables")
-    artifact = output / packed["filename"]
-    with artifact.open("rb") as stream:
-        sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-    result = {"kind": "dsh-plugin-bundle", "version": package["version"],
-              "requiresDsh": package["engines"]["dsh"], "runtimeOwnership": "host",
-              "file": str(artifact), "integrity": packed["integrity"], "sha256": sha256,
-              "installUrl": "https://github.com/eee1723/dsh-houdini/releases/download/v"
-                  + package["version"] + "/" + packed["filename"],
-              "platform": {"os": "win32", "cpu": "x64"},
-              "mediaVersion": media["version"], "mediaLicense": media["license"]}
-    (output / "release-manifest.json").write_text(json.dumps({**result, "file": artifact.name}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (output / "SHA256SUMS.txt").write_text(sha256 + "  " + artifact.name + "\n", encoding="ascii")
+    # Use the output filesystem even when it is on a different drive. Each
+    # final name appears with complete bytes; readers discover the manifest last.
+    with tempfile.TemporaryDirectory(prefix=".assembling-", dir=output) as directory:
+        staging = Path(directory)
+        packed = json.loads(run([npm, "pack", "--ignore-scripts", "--json", "--cache", ROOT / ".npm-cache",
+                                 "--pack-destination", staging], cwd=plugin, capture=True))[0]
+        packed_files = {row["path"] for row in packed["files"]}
+        if not {"runtime/video/ffmpeg/bin/ffmpeg.exe", "runtime/video/ffmpeg/bin/ffprobe.exe"}.issubset(packed_files):
+            raise RuntimeError("Plugin package omitted the required tutorial media executables")
+        artifact = staging / packed["filename"]
+        with artifact.open("rb") as stream:
+            sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+        result = {"kind": "dsh-plugin-bundle", "version": package["version"],
+                  "requiresDsh": package["engines"]["dsh"], "runtimeOwnership": "host",
+                  "file": artifact.name, "integrity": packed["integrity"], "sha256": sha256,
+                  "installUrl": "https://github.com/eee1723/dsh-houdini/releases/download/v"
+                      + package["version"] + "/" + artifact.name,
+                  "platform": {"os": "win32", "cpu": "x64"},
+                  "mediaVersion": media["version"], "mediaLicense": media["license"]}
+        checksum = staging / "SHA256SUMS.txt"
+        checksum.write_text(sha256 + "  " + artifact.name + "\n", encoding="ascii")
+        manifest = staging / "release-manifest.json"
+        manifest.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        published = []
+        try:
+            for source in (artifact, checksum, manifest):
+                target = output / source.name
+                if os.name == "nt":
+                    source.rename(target)
+                else:
+                    os.link(source, target)
+                published.append(target)
+        except BaseException:
+            for target in published:
+                target.unlink()
+            raise
+    result["file"] = str(output / artifact.name)
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+    return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, help="Explicit output directory; default allocates a new versioned batch under tools/out/releases")
+    parser.add_argument("--output", type=Path, help="New or empty output directory; default allocates a batch under tools/out/releases")
     parser.add_argument("--media-cache", type=Path, help="Reuse verified media source/compiler downloads")
     parser.add_argument("--media-runtime", type=Path, help="Reuse a source-complete media runtime after inventory/input verification")
     build(parser.parse_args())

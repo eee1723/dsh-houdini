@@ -53,13 +53,15 @@ export function apply(ctx){
   let nativeSelection=false,ptcSelection=false
   let snapshotSha,setupValue,setupRun,readsBeforeSetupRead,peerResult,sourceJob,sourceRun,sourceBefore
   let liveOffline=false
-  const record={schema:1,executor_id:'b'.repeat(32),registration_id:'c'.repeat(32),runtime_id:'a'.repeat(32),
+  const record={schema:1,bridge_auth:'bearer-v1',executor_id:'b'.repeat(32),registration_id:'c'.repeat(32),runtime_id:'a'.repeat(32),
     installation:config.root,bridge_url:'http://127.0.0.1:'+config.bridgePort,houdini_version:config.houdiniVersion,
     pid:process.pid,state:'registered',task_id:null,hip_path:path.join(workspace,'unused-fixture.hip'),
     workbench:true,scene_id:'d'.repeat(32),scene_epoch:'e'.repeat(32),hip_is_new:true,workspace_path:workspace,
     runtime:{hfs,python,pythonVersion:config.pythonVersion,executable:hython}}
   const recordFile=path.join(config.executorRegistry,'endpoints',record.executor_id+'.json')
-  fs.mkdirSync(path.dirname(recordFile),{recursive:true});fs.writeFileSync(recordFile,JSON.stringify(record))
+  const registered=writeBridgeCredential(config.executorRegistry,record,fixtureToken).then(()=>{
+    fs.mkdirSync(path.dirname(recordFile),{recursive:true});fs.writeFileSync(recordFile,JSON.stringify(record))
+  })
   const layout=JSON.parse(fs.readFileSync(new URL('../../houdini/project-layout.json',import.meta.url),'utf8'))
   const evidence=()=>({requests,checks,runtimeReads,images,runs,leadId,childId,peerResult})
   const report=value=>{fs.writeFileSync(output+'.tmp',JSON.stringify(value,null,2));fs.renameSync(output+'.tmp',output)}
@@ -137,6 +139,7 @@ export function apply(ctx){
   // Only metadata discovery is a fixture. Production preset registration,
   // connection resolution and tool execution remain untouched and inherited.
   const server=http.createServer((req,res)=>{
+    if(req.headers.authorization!=='Bearer '+fixtureToken){res.writeHead(401);res.end();return}
     runtimeReads.push({method:req.method,path:req.url})
     res.setHeader('content-type','application/json')
     if(liveOffline){res.writeHead(503);res.end(JSON.stringify({error:'Live Houdini is deliberately unavailable for every independent run'}));return}
@@ -149,7 +152,7 @@ export function apply(ctx){
     if(req.url==='/context'){res.end(JSON.stringify({ok:true,result:{hip_path:'unused-fixture.hip',hip_is_new:true,frame:1,selection:[]}}));return}
     res.writeHead(500);res.end(JSON.stringify({error:'Fixture refuses all live execution requests'}))
   })
-  const ready=new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.bridgePort,'127.0.0.1',resolve)})
+  const ready=Promise.all([registered,new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.bridgePort,'127.0.0.1',resolve)})])
   const presentation=fixturePresentation(ctx)
   ctx.on('agent/created',({agent})=>{sessions.add(agent.id);sessionRefs.set(agent.id,agent.session)})
   class Driver extends LlmAdapter{
@@ -429,3 +432,4 @@ export function apply(ctx){
     }catch(error){await fail(error)}
   });return()=>server.close()})
 }
+import {fixtureToken,writeBridgeCredential} from './fixture-bridge.mjs'

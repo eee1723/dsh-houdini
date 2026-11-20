@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import contextlib
+import contextvars
+import hashlib
 import time
 import hou
 from dsh_project_paths import directory_for_hip as _project_directory
@@ -12,6 +14,19 @@ import dsh_scene
 
 
 _PRODUCED_IMAGES: list = []
+MEDIA_MAX_BYTES = 64 * 1024 * 1024
+_OUTPUT_FINGERPRINTS = contextvars.ContextVar('dsh_output_fingerprints', default=None)
+
+
+@contextlib.contextmanager
+def capture_output_fingerprints():
+    """Only the live HTTP transport retains fingerprints for repeatable attachment reads."""
+    entries = {}
+    token = _OUTPUT_FINGERPRINTS.set(entries)
+    try:
+        yield entries
+    finally:
+        _OUTPUT_FINGERPRINTS.reset(token)
 
 
 @contextlib.contextmanager
@@ -45,6 +60,34 @@ def report_image(path: str) -> str:
     if os.path.splitext(p)[1].lower() in _IMAGE_EXTS and p not in _PRODUCED_IMAGES:
         _PRODUCED_IMAGES.append(p)
     return p
+
+
+def _report_rendered_image(path):
+    """The renderer or screenshot writer has just verified this specific output."""
+    p = report_image(path)
+    fingerprints = _OUTPUT_FINGERPRINTS.get()
+    if fingerprints is None or os.path.splitext(p)[1].lower() not in _IMAGE_EXTS:
+        return
+    # Keep the render outcome even if the image is unreadable, oversized, or
+    # changes while its digest is taken. No attachment can be issued for it.
+    fingerprints.pop(p, None)
+    try:
+        with open(p, 'rb') as source:
+            size = os.fstat(source.fileno()).st_size
+            if not 0 < size <= MEDIA_MAX_BYTES:
+                return
+            digest = hashlib.sha256()
+            remaining = size
+            while remaining:
+                block = source.read(min(remaining, 1024 * 1024))
+                if not block:
+                    return
+                digest.update(block)
+                remaining -= len(block)
+            if not source.read(1):
+                fingerprints[p] = (size, digest.hexdigest())
+    except OSError:
+        pass
 
 
 def _literal_houdini_path(path: str) -> str:

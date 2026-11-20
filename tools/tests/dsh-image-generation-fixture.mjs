@@ -36,12 +36,12 @@ const layout=JSON.parse(fs.readFileSync(new URL('../../houdini/project-layout.js
 const portable=value=>value.replaceAll('\\','/')
 const canonical=value=>portable(path.resolve(value)).toLowerCase()
 
-export function apply(ctx) {
+export async function apply(ctx) {
   const output=process.env.DSH_IMAGE_FIXTURE_OUT, workspace=process.env.DSH_IMAGE_FIXTURE_WORKSPACE
   const base=process.env.DSH_HOUDINI_BRIDGE_URL, secret='fixture-only-'+randomUUID()
   const projects={B:process.env.DSH_IMAGE_FIXTURE_PROJECT_B,C:process.env.DSH_IMAGE_FIXTURE_PROJECT_C}
   const hipPath=project=>portable(path.join(projects[project],'owned-'+project+'.hip'))
-  const target=mediaTarget(ctx,{runtimeId:'a'.repeat(32),hip:hipPath('B'),workspace,houdiniVersion:'22.0.368'})
+  const target=await mediaTarget(ctx,{runtimeId:'a'.repeat(32),hip:hipPath('B'),workspace,houdiniVersion:'22.0.368'})
   const sourceRelative=layout.directories.reference_downloaded.path+'/source.png'
   const requests=[], checks=[], providerReads=[], artifacts=[], bridgeReads=[]
   let failure, steps=0, hipProject='B', explicitBridgeReads
@@ -49,6 +49,9 @@ export function apply(ctx) {
   const fail=error=>{failure??=String(error.stack||error);report({ok:false,error:failure,requests,checks,steps})}
   const server=http.createServer(async(req,res)=>{
     try {
+      if((req.url==='/health'||req.url==='/context')&&!target.accepts(req)){
+        res.writeHead(401);res.end('{}');return
+      }
       if(req.url==='/context') {
         const root=portable(projects[hipProject]),hip=hipPath(hipProject)
         bridgeReads.push({route:req.url,hip,providerRequests:requests.length})

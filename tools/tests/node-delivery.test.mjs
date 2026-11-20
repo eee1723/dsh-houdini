@@ -6,7 +6,8 @@ import path from 'node:path'
 import http from 'node:http'
 import {Context} from '@deepseek-ai/cordis'
 import {remoteMethods} from '@deepseek-ai/dsh-typert-protocol'
-import {HoudiniBridge} from '../../lib/bridge.js'
+import {randomBytes} from 'node:crypto'
+import {pairedBridge,writeBridgeCredential} from './fixture-bridge.mjs'
 import {ExecutorBinding,recordedExecutorIdentity} from '../../lib/executor-binding.js'
 import {ExecutorDirectory,ExecutorRouter} from '../../lib/executor-routing.js'
 import {HoudiniFrontend} from '../../lib/frontend-host.js'
@@ -24,6 +25,7 @@ process.env.DSH_HOME=path.join(directory,'home')
 const endpoints=path.join(directory,'endpoints')
 await fs.mkdir(endpoints)
 const servers=[],records=[],agents=[],execs=[],reads=[],events=new Map(),scopes=[]
+const tokens=[]
 let refuseNavigation=false
 const native=(value,callId='deliver-call')=>({type:'tool/result',seq:20,
   data:{turn:1,message:{source:{kind:'tool',callId},isError:false},meta:{canonical:value}}})
@@ -33,6 +35,8 @@ const nested=(value,callId='nested-deliver-call')=>({type:'tool/ptc-dispatch',se
 const clone=value=>JSON.parse(JSON.stringify(value))
 try {
   for(let i=0;i<2;i++) {
+    const token=randomBytes(32).toString('hex')
+    tokens.push(token)
     const executor=String(i+1).repeat(32),runtime=String(i+3).repeat(32),task='node-task-'+i
     const scene=String(i+5).repeat(32),epoch=String(i+7).repeat(32)
     const hip=path.join(directory,task+' "参数".hip')
@@ -46,6 +50,7 @@ try {
       let text='';for await(const chunk of req)text+=chunk
       const body=text?JSON.parse(text):{}
       if(req.headers['x-dsh-houdini-executor']!==executor) {res.writeHead(409);res.end('{}');return}
+      if(req.headers.authorization!=='Bearer '+token){res.writeHead(401);res.end('{}');return}
       if(req.url==='/health'||req.url==='/requests/prepare') {
         res.end(JSON.stringify({ok:true,executorId:executor,runtimeId:runtime,sceneEpoch:epoch,houVersion:'22.0.368',
           executionContractVersion:version,verbCatalog:{hash},requestRef:runtime+'.'+'a'.repeat(32)}));return
@@ -66,10 +71,11 @@ try {
     servers.push(server)
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
     const record={schema:1,executor_id:executor,registration_id:String(i+7).repeat(32),runtime_id:runtime,
-      installation:directory,bridge_url:'http://127.0.0.1:'+server.address().port,
+      installation:directory,bridge_auth:'bearer-v1',bridge_url:'http://127.0.0.1:'+server.address().port,
       houdini_version:'22.0.368',pid:300+i,state:'registered',task_id:task,hip_path:hip,
       workbench:true,scene_id:scene,scene_epoch:epoch,hip_is_new:false,workspace_path:directory}
     records.push(record)
+    await writeBridgeCredential(directory,record,token)
     await fs.writeFile(path.join(endpoints,executor+'.json'),JSON.stringify(record))
     await new ExecutorBinding(session=>foldExecutorBinding(session.snapshotEvents())).select(session,{executor_id:executor,runtime_id:runtime,scene_epoch:epoch,scene_id:scene,
       registration_id:record.registration_id,hip_path:hip,hip_is_new:false,workspace_path:directory})
@@ -186,7 +192,7 @@ try {
   // The launcher single-executor mode reuses its existing Bridge, without a discovery fallback.
   await scopes[0].dispose()
   const single=await agents[0].ctx.plugin({apply(ctx){installNodeDeliveryNavigation(ctx,
-    new HoudiniBridge(records[0].bridge_url,2000,records[0].executor_id))}})
+    pairedBridge(records[0].bridge_url,2000,records[0].executor_id,undefined,undefined,tokens[0]))}})
   scopes[0]=single
   assert.equal((await frontend.openNode(coordinates(0),signal)).id,'5'.repeat(32))
   const retained=agents[0].ctx.get('houdiniNodeDelivery')

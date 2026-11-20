@@ -4,6 +4,8 @@ import json
 import sys
 import tempfile
 import uuid
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'houdini/python3.11libs'))
@@ -75,14 +77,20 @@ with tempfile.TemporaryDirectory(prefix='dsh-executor-history-') as raw:
     from dsh_executor_registry import active_registration
     hip = directory / 'published.hip'
     hip.write_bytes(b'fixture-only')
-    published = publish_registration(directory / 'menu-registry', {
-        'hip': str(hip), 'version': '22.0.368', 'executor_id': uuid.uuid4().hex,
-        'runtime_id': uuid.uuid4().hex, 'port': 18765, 'installation': str(ROOT),
-        'runtime': runtime, 'helper': helper,
-    })
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    with patch.dict(sys.modules, dsh_bridge=SimpleNamespace(registration_credential=lambda *_: token)):
+        published = publish_registration(directory / 'menu-registry', {
+            'hip': str(hip), 'version': '22.0.368', 'executor_id': uuid.uuid4().hex,
+            'runtime_id': uuid.uuid4().hex, 'port': 18765, 'installation': str(ROOT),
+            'runtime': runtime, 'helper': helper,
+        })
+    secret_file = directory / 'menu-registry/credentials' / (published['executor_id'] + '.json')
     try:
+        assert published['bridge_auth'] == 'bearer-v1' and token not in json.dumps(published)
+        assert json.loads(secret_file.read_text()) == {'runtime_id': published['runtime_id'], 'port':18765, 'token':token}
         assert published['helper'] == helper
         assert read_candidates(directory / 'menu-registry', installation=ROOT)[0]['helper'] == helper
     finally:
         active_registration().close()
+    assert not secret_file.exists()
 print('executor discovery preserves retired evidence and budgets registered targets separately')

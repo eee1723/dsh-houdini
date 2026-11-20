@@ -39,7 +39,7 @@ Houdini侧Package/helper在插件启用或更新加载后由同一安装路径�
 
 Houdini模式的「置顶」只控制当前官方Desktop所属窗口，离开该模式恢复进入前的窗口层级。当前公开客户端没有窗口置顶合同，因此使用Windows窄适配：Host只能定位自己的Desktop父进程及窗口，不接受浏览器提供PID或窗口句柄；复用官方安装已有的Koffi，不带另一份Electron。窗口身份不明确时不操作，插件重载/卸载恢复自己的变更。退出条件是官方提供等价窗口接口，届时替换该适配。
 
-模型与账户由DSH原生接口及用户选择的提供方管理；可选的第三方模型插件独立安装、升级和授权，不进入Houdini发行依赖。Houdini不维护订阅登录、账户数据库或授权迁移。Houdini侧仅保留接入、组件维护和离线诊断小窗口。完整会话诊断仍由Desktop提供，本端离线报告只包含明确的组件与连接事实。
+模型与账户由 DSH 原生接口及用户选择的提供方管理。Houdini 侧提供接入、组件维护和离线诊断窗口。完整会话诊断由 Desktop 提供，本端离线报告只包含组件与连接事实。
 
 ## 职责分层
 
@@ -170,8 +170,7 @@ HDA交付开发检查由[tools/hda-delivery-check.py](../tools/hda-delivery-chec
 | [gen-verb-contract.mjs](../tools/gen-verb-contract.mjs) | 从tool-design生成Host动词名称、摘要、hash与执行版本，构建及docs:check共同校验 |
 | [build-release.py](../tools/build-release.py)、[build-video-runtime.py](../tools/build-video-runtime.py) | 标准插件与私有媒体发行装配；[runtime.json](../deployment/runtime.json)分别维护固定构建输入和源码分发范围，构建记录与实际交付清单保留各自事实 |
 
-默认配置在src/index.ts：bridgeUrl为loopback 8765、requestTimeoutMs为120000、
-automaticContext默认开启。超时不取消已开始的HOM修改，重试前回读状态。
+正式入口在本机回环地址申请动态端口，Host 使用所选现场的登记连接。手动 Python `start()` 的默认端口是 8765。Host 请求默认超时 120 秒，自动现场上下文默认开启。发生超时后通过原请求回执查回执行状态。
 
 提示词按唯一职责分层，避免同一规则在多处漂移：preset persona维护身份、质量/总成本目标、任务推进、观察判断与交付表达；
 插件guidance只维护每次工具调用都必须可见的执行硬边界和领域路由；tool schema/verb docstring维护精确参数与返回；

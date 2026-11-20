@@ -56,7 +56,7 @@
 
 从未保存的现场创建对话时，新工作区命名为「临时工作区 N」，不把会随保存变化的场景状态作为永久工作区名称。已有工作区名称保留，可沿DSH原生入口明确重命名；显示名称不改变目录、文件权限或当前现场。
 
-成功Save As继续当前现场并观察实际新路径，原生会话创建目录、日志位置和权限保持。原项目内的当前文件目录可用原生cd更新，跨项目文件范围使用宿主权限机制。读取其他对话的保存事实不改变本对话目录。原生GUI另存更新工程位置，工作区使用DSH现有目录入口明确选择，避免多对话时猜测迁移对象。该目录功能与选择、只读查看及节点恢复独立，失败应说明实际文件范围，不能回退为历史自动匹配。
+成功 Save As 后，原项目内的文件目录可沿宿主原生 cd 跟随本对话的保存回执。更新的目录选择优先，重开对话也沿用这个顺序。跨项目路径使用宿主文件权限机制。原生 GUI 另存或其他对话保存只更新现场事实；工作区仍由用户在 DSH 中选择。
 
 ### 从Desktop打开工程
 
@@ -115,6 +115,6 @@ H21/H22的便签和网络框没有自身userData，父网络metadata仅保存其
 
 实现：[选择控制器](../src/executor-controller.ts)、[路由](../src/executor-routing.ts)、[原生选择投影](../src/executor-identity-projection.ts)、[调用级目标及历史查回](../src/tool-runtime.ts)、[权限恢复](../src/scene-recovery.ts)、[Bridge](../houdini/python3.11libs/dsh_bridge.py)、[登记与写预留](../houdini/python3.11libs/dsh_executor_registry.py)、[节点归属](../houdini/python3.11libs/dsh_ownership.py)。
 
-直接回归：[选择投影](../tools/tests/executor-identity-projection.test.mjs)、[路由](../tools/tests/executor-routing.test.mjs)、[工作台入口](../tools/tests/workbench-association.test.mjs)、[工程组件](../tools/tests/executor-picker.test.mjs)、[请求查回](../tools/tests/request-recovery.test.mjs)、[现场代际](../tools/tests/dsh-binding-loop.test.py)、[编辑项保存恢复](../tools/tests/dsh-note-recovery.test.py)。真实组合入口见[开发规范](development.md)。
+直接回归：[选择投影](../tools/tests/executor-identity-projection.test.mjs)、[路由](../tools/tests/executor-routing.test.mjs)、[工作台入口](../tools/tests/workbench-association.test.mjs)、[工程组件](../tools/tests/executor-picker.test.mjs)、[请求查回](../tools/tests/request-recovery.test.mjs)、[双现场连接与代际切换](../tools/tests/dsh-multi-executor.test.py)、[编辑项保存恢复](../tools/tests/dsh-note-recovery.test.py)。真实组合入口见[开发规范](development.md)。
 
 验收覆盖多窗口先登记、未绑定新对话、明确选择/取消、已执行对话换目标、切换侧栏保持各自目标、只读不抢作者、写入忙碌拒绝、同路径重载及排队期间切HIP、另存、断开重开和旧请求查回。H21/H22隔离运行、真实DSH前端选中任务、原生/嵌套回执和UI颜色分别核对；源码、构建、发行包和用户live不能互相代替。

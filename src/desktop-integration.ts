@@ -12,7 +12,7 @@ import {desktopPaths} from './desktop-paths.js'
 import type {ExecutorController} from './executor-controller.js'
 import {HoudiniBridge} from './bridge.js'
 import {projectedExecutorState} from './executor-identity-projection.js'
-import {targetMatchesRecord,targetSnapshot,type ExecutorRecord} from './executor-routing.js'
+import {registeredCredential,targetMatchesRecord,targetSnapshot,type ExecutorRecord} from './executor-routing.js'
 import {acquireDesktopLease,processStarted as systemProcessStarted} from './desktop-process.js'
 import {ComponentInstallation,type ComponentUpdate} from './component-installation.js'
 import {scrubbedParentEnv} from '@deepseek-ai/dsh-subprocess'
@@ -323,7 +323,8 @@ export class DesktopIntegration {
         componentUpdate:ComponentUpdate|undefined
       const process=record.state==='registered'?await this.registeredProcessState(record):'exited'
       if(record.state==='registered'&&process!=='exited'&&process!=='reused')try {
-        const bridge=new HoudiniBridge(record.bridge_url,3000,record.executor_id,this.lifetime.signal)
+        const bridge=new HoudiniBridge(record.bridge_url,3000,record.executor_id,this.lifetime.signal,undefined,
+          registeredCredential(this.paths.registry,record))
         const health=await bridge.observeExecutor(AbortSignal.any([this.lifetime.signal,AbortSignal.timeout(3000)]))
         status=health.runtimeId===record.runtime_id&&health.sceneEpoch===record.scene_epoch?'online':'changed'
         contractVersion=health.executionContractVersion

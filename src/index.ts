@@ -52,15 +52,15 @@ const GUIDANCE: PromptSection = {
   name: 'dsh-houdini:guidance',
   order: 150,
   text: [
-    'Houdini tool routing:\nPrefer houdini_inspect queries for supported observations; query receipts name native evaluation, and Python code running outside the instrumented verb facade keeps unverified effects. Use houdini_exec for batched edits and checks, and houdini_job_submit for long work tracked by DSH jobs. Use job_output/job_kill for those native jobs. Use houdini_request for the original execution, job result or interrupted observation, houdini_resource for retained material or installed SideFX help, and houdini_capabilities for the declared image input capability and image recovery. For a model image use render_view on the explicit SOP; it makes an offscreen viewport preview with an independent camera. When the existing UI itself is the subject, use houdini_ui_list followed by houdini_ui_screenshot with an exact visible target. Live HOM uses one main-thread queue. The explicitly selected scene is the operation target; inspect it after a target change. Selecting a scene grants neither node ownership nor permission to replay earlier work.',
+    'Operate on the explicitly selected scene. Use houdini_inspect queries for observations and houdini_exec for edits and checks. Live Houdini uses one main-thread queue and one active author. Other authors can use houdini_isolated with declared inputs. Reinspect the target after switching. Foreign edits require a user-identified target and change.',
     '',
-    'Execution and discovery:\nCompose the verbs below through exec/job code or a file script. Use known calls directly. For unfamiliar inputs, read verb_help(name) or request detail="full" for related names together. Use verb_help() for a directory with purposes and access modes when choosing among operations. Use node_info(parent, type_name) for types available in that parent. Batch related operations and name the output to check. Raw hou is a read/low-level escape hatch; Raw Gate and runtime ownership apply. Foreign edits require the user to identify the intended change. Use DSH file tools for source files, the script entry for execution, and persistent render services for repeated render_view work.',
+    'Use known verbs directly. Discover unfamiliar signatures with verb_help(name) and available node types with node_info(parent, type_name). Batch related changes and name the output to check. Raw hou is for reads and low-level operations without a matching verb. For task scripts use the script directory returned by scene_info().project_layout when available, pass its actual path to collaborators, and execute through the script argument.',
     '',
     `Current catalog: ${VERB_CATALOG_SUMMARY}`,
     '',
-    'Results and recovery:\nExecution, checks, restoration and files are separate facts; unsupported or unobserved properties remain unverified. Read failed facts and retained details before deciding the next action. HTTP timeout neither cancels native work nor proves a crash. Recover an uncertain original request before retrying; houdini_request reads receipts without the HOM queue, while scene/UI queries share that queue. job_kill requests cancellation; running HOM may finish normally. DSH suppresses automatic completion notices after a model-requested kill: use job_output(wait=true) when the original result is still needed. Undo covers only stated scene effects. Native image attachments and pixel checks do not establish visual understanding.',
+    'Use houdini_job_submit for long live operations. DSH job_output observes the native job. job_kill requests cancellation and suppresses its automatic completion notice. Use job_output(wait=true) to collect the actual outcome. After a timeout, retrieve the original Bridge receipt with houdini_request before deciding whether any work remains. Queued or running operations may still execute. Undo covers only the stated scene effects.',
     '',
-    'Domain knowledge and independent work:\nLoad the applicable skill for SOP, COP, HDA/tools, controls, rigging, Solaris, tutorials or network handoff. DSH owns planning, teammates, files and jobs. The selected live scene has one active author; Team scopes and disjoint paths do not grant another session write access. For independent builders or saved-HIP computation, load houdini-isolated-execution and use houdini_isolated; the live author integrates and observes consumers. Independent success is scoped to its inputs and checks, not later edits or overall quality. Use actual HIP paths and returned artifacts; scene_info().project_layout discovers project directory roles. Do not migrate or clean directories implicitly.',
+    'Use render_view on the explicit output SOP for an offscreen model preview. Use houdini_ui_list and houdini_ui_screenshot for questions about the existing visible interface. houdini_capabilities reports the image channel. Retrieve original live images with houdini_request and archived results or installed SideFX help with houdini_resource.',
   ].join('\n'),
 }
 
@@ -73,7 +73,9 @@ export function apply(ctx: Context, config: Config) {
   // A missing/unloaded Desktop service never falls back to an ambient port.
   const explicitFixed=Boolean(config.bridgeUrl&&fixedTarget&&!targets&&!config.executorRegistry)
   if(explicitFixed)installFixedTargetContext(ctx,fixedTarget!)
-  const connection = explicitFixed ? new HoudiniBridge(config.bridgeUrl!,config.requestTimeoutMs,fixedTarget)
+  const fixedToken=explicitFixed?process.env.DSH_HOUDINI_BRIDGE_TOKEN:undefined
+  const connection = explicitFixed ? new HoudiniBridge(config.bridgeUrl!,config.requestTimeoutMs,fixedTarget,undefined,undefined,
+    fixedToken?async()=>fixedToken:undefined)
     : sharedExecutorConnection(ctx,registry)
   installSceneRecovery(ctx,connection)
   registerHoudiniTools(ctx, connection)

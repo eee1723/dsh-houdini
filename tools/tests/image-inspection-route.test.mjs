@@ -6,12 +6,12 @@ import path from 'node:path';
 import {attachImages,imageBlocks,visualCapability} from '../../lib/image-output.js';
 import {registerHoudiniTools} from '../../lib/tools.js';
 const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-native-images-'));
-const value={ok:true,stdout:'',stderr:'',images:[
+const requestRef='a'.repeat(32)+'.'+'b'.repeat(32)
+const value={ok:true,stdout:'',stderr:'',requestReceipt:{request_ref:requestRef,status:'done'},images:[
   'C:/project/dsh-artifacts/checks/run-a/a.png',
   'C:/project/dsh-artifacts/checks/run-a/b.png',
 ]};
 let fetched=0,saved=0,sceneCalls=0;const deferred=[];
-const requestRef='a'.repeat(32)+'.'+'b'.repeat(32)
 const imageSession=Object.assign(fixtureSession('image-session',{cwd}),{requestHeader:()=>({config:{provider:'active',model:'native'}})})
 const exec={agent:{id:'image-session',model:{current:()=>({provider:'active',model:'native'})},options:{provider:'old',model:'wrong'},session:imageSession},callId:'image-call',signal:new AbortController().signal};
 const refs=[];
@@ -21,11 +21,16 @@ const ctx=await fixtureProjectionContext({on(){},get:n=>n==='attachments'?attach
 const pendingRoute=await visualCapability({...exec,agent:{...exec.agent,
   model:{current:()=>({provider:'next-step',model:'pending'})}}},ctx);
 assert.equal(pendingRoute.status,'available','an in-flight tool uses its recorded request, not a later pending model selection');
-const bridge={forRuntime(runtimeId){assert.equal(runtimeId,'a'.repeat(32));return this},async fetchMedia(_p,_signal,cap){fetched++;assert(cap>0);return Buffer.from('image')},async exec(){sceneCalls++;return value},async hipDir(){return cwd},
+const mediaReads=[];
+const bridge={forRuntime(runtimeId){assert.equal(runtimeId,'a'.repeat(32));return this},async fetchMedia(ref,_signal,cap){
+  assert.deepEqual(ref,{requestRef,ownerSession:'image-session',index:ref.index});assert([0,1].includes(ref.index));
+  fetched++;mediaReads.push(ref.index);assert(cap>0);return Buffer.from('image')
+},async exec(){sceneCalls++;return value},async hipDir(){return cwd},
  async requestStatus(){return {ok:true,stdout:'',stderr:'',requestReceipt:{request_ref:requestRef,runtime_id:'a'.repeat(32),status:'job_submitted',jobId:'abcdef123456'}}},
  async jobStatus(){return {...value,jobId:'abcdef123456',status:'done'}}};
 try{
  const result=await attachImages(value,exec,bridge,ctx);
+ assert.deepEqual(mediaReads,[0,1],'original request coordinates select each output image');
  assert.equal(result.media,undefined);assert.equal(imageBlocks(result).length,2);assert.deepEqual(fs.readdirSync(cwd),[],'no workspace media copy');
  assert.deepEqual(imageBlocks(result).map(b=>b.attachment),refs);
  assert(result.imageAttachments.every(i=>i.semantic_status==='unverified'),'transport is not semantic verification');

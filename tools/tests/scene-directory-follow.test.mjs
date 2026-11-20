@@ -25,8 +25,9 @@ async function fixture(value,available=true,saveAs=true){
  let service,effective=old
  installSceneRecovery(await fixtureProjectionContext({provide:(_name,value)=>{service=value},sessions:{flush:async()=>true},get:name=>
   name==='workspaceRegistry'?{relocateSession(){throw Error('native session metadata must never move')}}:
-  name==='workingDirectory'&&available?{get:()=>effective,set:async(agent,cwd)=>{moves.push({id:agent.id,cwd});effective=cwd;return cwd}}:undefined}),bridge)
- return {moves,session,run:()=>service.followDirectory(agent,signal,true)}
+  name==='workingDirectory'&&available?{get:()=>effective,set:async(agent,cwd)=>{moves.push({id:agent.id,cwd});cd(cwd);return cwd}}:undefined}),bridge)
+ function cd(cwd){effective=cwd;base.append('working-directory/change',{cwd})}
+ return {moves,session,cd,cwd:()=>effective,run:()=>service.followDirectory(agent,signal,true)}
 }
 for(const value of [
  {...original,successful_save:null},
@@ -59,4 +60,12 @@ inside.session.append('tool/result',{message:{source:{callId:'late-earlier-save'
 await inside.run();await inside.run()
 assert.deepEqual(inside.moves,[{id:'follow-test',cwd:path.dirname(nested)}],'a late earlier Save As receipt does not supersede the latest verified save')
 assert.equal(inside.session.header.cwd,old)
+const scripts=path.join(old,'scripts')
+inside.cd(scripts)
+await inside.run()
+assert.equal(inside.cwd(),scripts,'a later native cd supersedes the consumed Save As')
+const intervening=await fixture({...original,hip_path:nested,successful_save:{checkpoint_id:checkpoint,hip_path:nested}})
+intervening.cd(scripts)
+await intervening.run()
+assert.equal(intervening.cwd(),scripts,'a user cd after the receipt and before the first follow takes precedence')
 console.log('HIP Save As: verified scene facts, native subdirectory cd, immutable original project and no cross-root permission change passed')

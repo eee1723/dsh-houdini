@@ -279,4 +279,16 @@ error, _ = helper.preflight(mutating_verbs=set(), read_only=False, raw_gate=True
                            allow_raw='Inspected build_power.Part.add only appends build_module specs; no raw HOM')
 assert error is None, error
 
+# A file program and its invocation share one set of HIP aliases for admission and reporting.
+script = "from hou import hipFile as scene\nsave = scene.save\nreset = scene.clear"
+save_program = analysis.CodeAnalysis(script, entry="save()")
+assert save_program.raw_usage['coveredMutations'] == [{'name': 'hipFile.save', 'count': 1, 'verb': 'scene_save'}]
+for read_only, status in ((False, 'blocked'), (True, 'read_only_blocked')):
+    error, actual = save_program.preflight(mutating_verbs=set(), read_only=read_only, raw_gate=True, allow_raw='fixture')
+    assert actual == status and 'hipFile.save' in error
+reset_program = analysis.CodeAnalysis(script, entry="reset()")
+for gate in (False, True):
+    error, status = reset_program.preflight(mutating_verbs=set(), read_only=False, raw_gate=gate, allow_raw='fixture')
+    assert status == 'forbidden' and 'hou.hipFile.clear()' in error
+
 print('pure Raw Gate ownership counterexamples passed')

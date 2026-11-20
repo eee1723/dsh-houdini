@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import {HoudiniBridge} from '../../lib/bridge.js'
+import {pairedBridge,fixtureToken} from './fixture-bridge.mjs'
 import {EXPECTED_EXECUTION_CONTRACT_VERSION as version,EXPECTED_VERB_CATALOG_HASH as hash} from '../../lib/generated-verb-contract.js'
 
 const executor='a'.repeat(32),runtime='b'.repeat(32),owner={sessionId:'navigation-task',callId:'navigation-click'}
@@ -9,6 +9,7 @@ let issued=0
 const server=http.createServer(async(request,response)=>{
   response.setHeader('content-type','application/json')
   assert.equal(request.headers['x-dsh-houdini-executor'],executor)
+  assert.equal(request.headers.authorization,'Bearer '+fixtureToken)
   let raw='';for await(const chunk of request)raw+=chunk
   const body=JSON.parse(raw);requests.push({path:request.url,body})
   assert.equal(body.owner_session,owner.sessionId)
@@ -41,7 +42,7 @@ const waitQueued=async()=>{
 try {
   for(const unload of [false,true]) {
     const interaction=new AbortController(),lifetime=new AbortController()
-    const bridge=new HoudiniBridge(url,2000,executor,lifetime.signal)
+    const bridge=pairedBridge(url,2000,executor,lifetime.signal)
     const call=bridge.navigateNode({id:'c'.repeat(32)},'E:/工程/自行车 "交付".hip',owner,interaction.signal)
     const rejected=assert.rejects(call,/failed|aborted|cancelled/i)
     await waitQueued()
@@ -52,7 +53,7 @@ try {
     assert.equal(requests.at(-1).path,'/nodes/cancel')
   }
   const before=requests.length,aborted=new AbortController();aborted.abort()
-  await assert.rejects(new HoudiniBridge(url,2000,executor).navigateNode(
+  await assert.rejects(pairedBridge(url,2000,executor).navigateNode(
     {id:'c'.repeat(32)},'E:/asset.hip',owner,aborted.signal))
   assert.equal(requests.length,before,'already cancelled navigation submits no HTTP request')
   assert.equal(requests.filter(request=>request.path==='/nodes/cancel').length,2)

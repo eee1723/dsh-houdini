@@ -110,7 +110,7 @@ class Requests(unittest.TestCase):
         self.assertEqual(self.registry.status(first, self.owner)['status'], 'unknown')
         with self.assertRaisesRegex(ValueError, 'consumed or unknown'):
             self.registry.reserve(first, self.owner, {'code': 'x', 'owner_call': '0'})
-        self.assertEqual(self.registry.bytes, sum(record['bytes'] for record in self.registry.records.values()))
+        self.assertEqual(self.registry.bytes, sum(len(data) for _, data in self.registry._payloads.values()))
         self.assertEqual(len(self.registry._tickets), 0)
 
     def test_active_capacity_recovers_without_restarting(self):
@@ -173,6 +173,23 @@ class Requests(unittest.TestCase):
         self.assertFalse(self.registry.running(refused), 'a late worker cannot claim a cancelled request')
         self.registry.complete(refused, {'must_not_replace': True})
         self.assertEqual(self.registry.status(refused, self.owner)['status'], 'not_executed')
+
+    def test_job_body_shares_receipt_budget_and_expires_from_completion(self):
+        registry = RequestRegistry('a' * 32, result_bytes=42, retention=10)
+        with patch('dsh_requests.time.monotonic', return_value=0) as clock:
+            ref = self.admit(registry, {'request_kind': 'job_submit'})
+            registry.complete(ref, {'jobId': 'a'})
+            clock.return_value = 20
+            registry.store_job_result('a', {'text': 'x' * 20})
+            registry.finish_job(ref)
+            self.assertEqual(registry.status(ref, self.owner)['status'], 'result_expired')
+            self.assertEqual(json.loads(registry.job_result_bytes('a')), {'text': 'x' * 20})
+            registry.complete(self.admit(registry), {'next': 'y' * 20})
+            self.assertIsNone(registry.job_result_bytes('a'))
+            self.assertTrue(registry.status(ref, self.owner)['job_finished'])
+            clock.return_value = 40
+            registry.expire_results()
+            self.assertEqual(registry.bytes, 0)
 
     def test_result_with_non_ascii_text_and_lone_surrogate_can_complete(self):
         ref = self.admit()
