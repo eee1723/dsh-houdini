@@ -73,7 +73,7 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 自动发现与候选交付
 
-本机定时任务调用 [版本发现](../tools/check-dsh-updates.mjs)，读取官方 Windows x64 的 stable、nightly 更新清单、GitHub 的 DSH Releases 和 npm 的完整发布时间表。命令 `node tools/check-dsh-updates.mjs --since <开始监测的 ISO 时间>` 输出未列入当前验证清单的版本、各来源与安装包摘要。固定起点可补查两次运行之间的多个版本和旧分支的新发行。任一来源读取失败会在 `errors` 中留下原因，仍返回其余来源的发现。GitHub 或 npm 先发时先做可运行的检查，保留待获取 Desktop 的版本。
+本机定时任务调用 [版本发现](../tools/check-dsh-updates.mjs)，读取官方 Windows x64 的 stable、nightly 更新清单、GitHub 的 DSH Releases 和 npm 的完整发布时间表。命令 `node tools/check-dsh-updates.mjs --since <开始监测的 ISO 时间>` 输出未列入当前验证清单的版本、各来源与安装包摘要。从上次完整扫描向前重叠一天；第一次使用启用时间。先保存发现和未完成项，再推进扫描时间。GitHub 的公开 Atom 源覆盖当前窗口时直接采用；较长离线窗口补读完整 Releases 列表。这样能发现两次运行之间的多个版本和旧分支的新发行。任一来源读取失败会在 `errors` 中留下原因，仍返回其余来源的发现。GitHub 或 npm 先发时先做可运行的检查，保留待获取 Desktop 的版本。
 
 1. 从明确的 main 提交建立独立工作树。在候选分支选择开发依赖、Node 版本及暂定的宿主范围，更新开发夹具、锁文件与安装指引。检查 npm、Git 标签和尚待确认的候选，选用未发布的插件版本。同一批拟支持的宿主共用一个冻结包。已有用户工作树、Desktop 安装和真实工程均不作为测试环境。
 2. 使用官方更新清单的 SHA-512 核对安装器，在独立目录解包并核对实际宿主。通道已前移时查找该精确版本的官方 Windows 发行物并核对身份。在自有资料运行构建、文档门、受影响回归，以及 `dsh-host-smoke.test.py --runtime-cache <精确夹具> --dsh-version <新版本> --context-loop`。保留宿主默认模式，检查 Houdini 作用域和原生、嵌套工具的真实回执。

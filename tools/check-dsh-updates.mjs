@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises'
 import {pathToFileURL} from 'node:url'
 import {parseArgs} from 'node:util'
 import {load as parseYaml} from 'js-yaml'
+import {SaxesParser} from 'saxes'
 import semver from 'semver'
 
 const registry = 'https://registry.npmjs.org/@deepseek-ai%2fdsh'
@@ -26,6 +27,54 @@ async function githubReleases() {
         rows.push({version: release.tag_name.slice(5), date: release.published_at, url: release.html_url})
     }
     if (!response.headers.get('link')?.includes('rel="next"')) return rows
+  }
+}
+
+// The public Atom endpoint also works when a shared IP has exhausted its API quota.
+// Only accept a complete polling window from the limited feed; use Releases for backfill.
+export function parseReleaseFeed(xml) {
+  const rows = [], parser = new SaxesParser()
+  let entry, depth = 0, readingDate = false
+  parser.on('opentag', tag => {
+    if (!entry) {
+      if (tag.name === 'entry') { entry = {date: '', url: ''}; depth = 0 }
+      return
+    }
+    depth++
+    if (depth !== 1) return
+    readingDate = tag.name === 'updated'
+    if (tag.name === 'link' && tag.attributes.rel === 'alternate') entry.url = tag.attributes.href
+  })
+  parser.on('text', value => { if (readingDate) entry.date += value })
+  parser.on('closetag', () => {
+    if (!entry) return
+    if (depth === 0) {
+      if (!entry.url || !Number.isFinite(Date.parse(entry.date))) throw Error('Incomplete GitHub release entry')
+      const tag = new URL(entry.url).pathname.split('/').pop()
+      rows.push({...entry, version: tag.startsWith('dsh-v') ? tag.slice(5) : undefined})
+      entry = undefined
+    } else {
+      if (depth === 1) readingDate = false
+      depth--
+    }
+  })
+  parser.write(xml).close()
+  if (!rows.length) throw Error('Empty GitHub release feed')
+  return rows
+}
+
+async function readGithub(since, errors) {
+  let recent
+  try {
+    const response = await request('https://github.com/deepseek-ai/deepseek-harness/releases.atom')
+    recent = parseReleaseFeed(await response.text())
+    if (recent.some(row => Date.parse(row.date) < Date.parse(since))) return recent
+  } catch { /* Fall through to the complete release history. */ }
+  try { return await githubReleases() }
+  catch (error) {
+    if (!recent) throw error
+    errors.githubHistory = error.message
+    return recent
   }
 }
 
@@ -66,9 +115,10 @@ async function main() {
   const {values} = parseArgs({options: {since: {type: 'string'}}})
   if (!values.since || !Number.isFinite(Date.parse(values.since))) throw Error('Usage: node tools/check-dsh-updates.mjs --since <ISO timestamp>')
   const policy = JSON.parse(await readFile(new URL('../dsh-runtime-compatibility.json', import.meta.url), 'utf8'))
-  const readers = {github: githubReleases, npm: npmReleases,
-    ...Object.fromEntries(channels.map(name => [name, () => desktopRelease(name)]))}
+  const checkedAt = new Date().toISOString()
   const sources = {}, errors = {}
+  const readers = {github: () => readGithub(values.since, errors), npm: npmReleases,
+    ...Object.fromEntries(channels.map(name => [name, () => desktopRelease(name)]))}
   await Promise.all(Object.entries(readers).map(async ([name, read]) => {
     try { sources[name] = await read() }
     catch (error) { errors[name] = error.message }
@@ -76,7 +126,7 @@ async function main() {
   const verified = new Set(policy.releases.map(row => row.dshVersion))
   const targets = collectTargets(sources, values.since, verified)
   const desktop = Object.fromEntries(channels.filter(name => sources[name]).map(name => [name, sources[name][0].version]))
-  console.log(JSON.stringify({since: values.since, desktop, targets, errors}, null, 2))
+  console.log(JSON.stringify({since: values.since, checkedAt, desktop, targets, errors}, null, 2))
   if (Object.keys(errors).length) process.exitCode = 1
 }
 

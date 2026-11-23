@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {collectTargets} from '../check-dsh-updates.mjs'
+import {collectTargets, parseReleaseFeed} from '../check-dsh-updates.mjs'
 
 const old = '2026-10-01T00:00:00Z', since = '2026-11-01T00:00:00Z', recent = '2026-11-03T12:00:00Z'
 const sources = {
@@ -16,4 +16,10 @@ assert.deepEqual(Object.keys(targets[1].sources), ['github'], 'An upstream-only 
 assert.equal(targets[2].sources.nightly.sha512, 'nightly-digest')
 assert.deepEqual(collectTargets(sources, '2026-12-01T00:00:00Z', new Set()), [])
 assert.throws(() => collectTargets(sources, 'invalid', new Set()), /timestamp/)
+const atom = parseReleaseFeed(`<feed><updated>${recent}</updated><entry>
+  <updated>${old}</updated><link rel="alternate" href="https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2"/>
+  <content type="html">&lt;entry&gt;other release&lt;/entry&gt;</content></entry></feed>`)
+assert.equal(atom[0].version, '0.2.2')
+assert.equal(atom[0].date, old, 'Use the release entry date, not the feed update time')
+assert.throws(() => parseReleaseFeed('<feed/>'), /Empty GitHub/)
 console.log('DSH discovery preserves backports, intermediate and upstream-only releases and coalesces channel evidence')
