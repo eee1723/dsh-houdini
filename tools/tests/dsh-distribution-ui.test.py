@@ -57,6 +57,7 @@ parser.add_argument('--remote-only',action='store_true',help='Directly validate 
 parser.add_argument('--local-only',action='store_true',help='Verify native local installation, direct tutorial settings and credential storage; no model inference')
 parser.add_argument('--remote-url',help='Install this actual HTTPS tarball URL through the native remote UI stage')
 parser.add_argument('--npm',action='store_true',help='Install the frozen artifact name@version through the native package-name UI')
+parser.add_argument('--market-index',help='With --npm, install the version recommended by the native Discover card for this public index URL')
 parser.add_argument('--npm-unversioned',action='store_true',help='With --npm, type the bare package name while still requiring the frozen artifact version and bytes')
 parser.add_argument('--registry',help='Use only this registry in the owned profile (requires --npm)')
 parser.add_argument('--timeout',type=int,default=240)
@@ -84,6 +85,8 @@ if args.npm and (not args.remote_only or args.remote_url):
     parser.error('--npm requires --remote-only and cannot use --remote-url')
 if args.npm_unversioned and not args.npm:
     parser.error('--npm-unversioned requires --npm')
+if args.market_index and (not args.npm or args.npm_unversioned):
+    parser.error('--market-index requires an exact --npm remote installation')
 if args.registry:
     registry_source=urllib.parse.urlsplit(args.registry)
     if not (args.npm or args.migration_from) or registry_source.scheme!='https' or not registry_source.hostname:
@@ -585,7 +588,7 @@ try:
         birth=_process_started(process.pid);assert birth;owned.append((process.pid,birth))
         endpoint=endpoints();capture_children()
         settings={'artifact':str(copied),'remoteInstallSpec':remote_spec,'npmSpec':npm_spec,'expectedVersion':package['version'],'expectedRegistry':args.registry,
-            'appPackage':str(app_package),'expectedPackaged':not bool(unpacked),
+            'appPackage':str(app_package),'expectedPackaged':not bool(unpacked),'marketIndex':args.market_index,
             'asrEndpoint':asr_endpoint,'sentinel':sentinel,
             'remoteOnly':mode in ['remote','update','migration-before','migration-after'],'expectedPid':process.pid,'timeoutMs':args.timeout*1000,'output':str(stage/'ui-result.json'),**endpoint}
         if previous_artifact:settings.update(updateFromVersion=previous_package['version'],updateRegistry=base,expectedRegistry=base,brokenVersion=broken_version,

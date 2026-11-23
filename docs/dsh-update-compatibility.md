@@ -73,9 +73,9 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 ### 0.2.2 接口边界
 
-当前插件直接使用 [官方 0.2.2-rc.5](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.5) 的运行接口，宿主、运行依赖和开发夹具精确对齐。实际资格范围由兼容清单维护，剩余验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)。
+开发夹具使用[官方 0.2.3-alpha.2](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.3-alpha.2)及其 Node 24.22.3、Cordis 4.2.0-alpha.1 和 Schemastery 3.20.0-alpha.1。正式包使用 Desktop 提供的依赖，按同包在两代宿主的验证声明 peer 范围。alpha 的嵌套工具在持续运行的 REPL 中执行；跨版本消费测试使用两代宿主都提供的标准输出。实际资格范围由兼容清单维护，剩余验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)。
 
-从 [rc.4](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.4) 到 [rc.5](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.5)，异常模型回复、桌面 LiveShare 和搜索路由均由宿主处理。插件不注册第二套搜索工具或改写提供方。DSH 原生准入支持 semver 范围，显式 `engines.dsh` 优先于 peer 回退判断；锁定开发依赖本身不要求用户也锁版。当前发行仍只声明经过实际消费方验证的版本，不将一次通过外推至未知 RC。多个组合通过时可并列声明，不必为每个宿主分别构建插件。
+从 [rc.4](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.4) 到 [rc.5](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.5)，异常模型回复、桌面 LiveShare 和搜索路由均由宿主处理。插件不注册第二套搜索工具或改写提供方。DSH 原生准入支持 semver 范围，显式 `engines.dsh` 优先于 peer 回退判断；锁定开发依赖本身不要求用户也锁版。宿主计算范围时包含预发布版本。开放下界或通配符会接纳尚未核对的下一版 alpha；去掉 engines 后还会回退到 DSH peer 依赖。发行范围取实际验证过的集合，安装时由「发现」根据每个已发布包的声明选择。多个组合通过时可并列声明，不必为每个宿主分别构建插件。
 
 rc.3 的实验性 DeepSeek 会话导入及 Windows 应用内更新由宿主负责。Houdini 现场仍由当前对话的原生模式、显式选择和 Bridge 回执确定。导入文本不会赋予节点归属或现场权限。从 rc.1 跨过 [rc.2](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.2) 时，原生日志格式维持 v4，宿主支持批量写事件；插件继续使用公开的 `appendPluginRecord`。宿主处理新版工具错误和 PTC 调用限额，插件按原生回执与 Bridge 终态分别追踪。rc.2 调整的浮层定位接口适用于引用宿主定位 API 的组件；Houdini 工程菜单使用自身的定位和键盘逻辑。
 

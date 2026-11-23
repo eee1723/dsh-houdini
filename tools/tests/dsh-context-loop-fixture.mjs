@@ -646,6 +646,9 @@ export function apply(ctx) {
         ]
         if (step === finalStep) { yield* textChunks('Context fixture completed.'); return }
         const [name,args] = calls[step]
+        // Both official executors capture stdout. Alpha uses a persistent REPL and
+        // rejects top-level return, so give each scripted tool call its own scope.
+        if(name==='run_code')args.code='console.log(JSON.stringify(await (async () => {'+args.code+'})()))'
         if(scriptFixture&&(step===scriptStart+2||step===scriptStart+3))scriptRejectedCalls.set(step,bridgeCalls.length)
         presentation.after('context-'+step,calls[step+1]?.[0])
         assert(options.tools.some(tool => tool.name === name),'tool must come from the actual preset: '+name)

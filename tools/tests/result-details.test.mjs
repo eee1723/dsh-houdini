@@ -1,3 +1,4 @@
+import {fixturePtcValue} from './fixture-session.mjs'
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -224,7 +225,7 @@ try {
   fs.writeFileSync(isolatedFile,'tampered');
   await assert.rejects(readResultDetail(moved,value.details.sha256,'',0,6000,isolatedFile),/hash mismatch/);
   for(const history of [
-    [{type:'user/message',data:{content:[{type:'text',text:JSON.stringify(value)}]}}],
+    [{type:'user/message',data:{content:[{type:'text',text:JSON.stringify(fixturePtcValue(value))}]}}],
     [{...events[0],data:{...events[0].data,name:'unrelated_tool'}},events[1]],
     [events[1]],
     generic,
@@ -312,7 +313,7 @@ try {
     let nestedOriginal;
     storageContext.provide('workingDirectory',{ensure:async()=>dir});
     storageContext.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
-      nestedOriginal=await request.bindings[0].functions.original_result({});return {value:{read:true},logs:[]};
+      nestedOriginal=fixturePtcValue(await request.bindings[0].functions.original_result({}));return {output:[{type:'text',text:JSON.stringify({read:true})}]};
     }});
     const releasePtc=registry.setExecutor(new PtcExecutor(storageContext));
     const nestedBatch=await execute('run_code','bounded-ptc');

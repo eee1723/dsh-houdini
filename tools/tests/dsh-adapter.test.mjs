@@ -1,5 +1,5 @@
 import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
-import {fixtureProjectionContext} from './fixture-session.mjs'
+import {fixtureProjectionContext,fixturePtcValue} from './fixture-session.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {Context} from '@deepseek-ai/cordis'
@@ -85,8 +85,8 @@ ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async r
     : String(request.program).includes('houdini_ui_screenshot')
     ? await request.bindings[0].functions.houdini_ui_screenshot({target:'ui:qt-fixture'})
     : await request.bindings[0].functions.houdini_exec({code:'__result__ = "nested"'})
-  ptcBindingValue=value
-  return {value,logs:[]}
+  ptcBindingValue=fixturePtcValue(value)
+  return {output:[{type:'text',text:JSON.stringify(fixturePtcValue(value))}]}
 }})
 const signal=new AbortController().signal
 function logNative(callId,name,args,result) {
@@ -220,8 +220,8 @@ let spillExecuted=0
 registerHoudiniTools(spillCtx,{async exec(){spillExecuted++;return structuredClone(largeReceipt)}})
 let immediateSpillValue
 spillCtx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
-  immediateSpillValue=await request.bindings[0].functions.houdini_exec({code:'fixture'})
-  return {value:immediateSpillValue,logs:[]}
+  immediateSpillValue=fixturePtcValue(await request.bindings[0].functions.houdini_exec({code:'fixture'}))
+  return {output:[{type:'text',text:JSON.stringify(immediateSpillValue)}]}
 }})
 spillSession.append('turn/start',{turn:1})
 spillSession.append('step/start',{turn:1,step:1})

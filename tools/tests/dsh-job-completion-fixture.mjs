@@ -10,6 +10,7 @@ import {pathToFileURL} from 'node:url';
 const root=path.resolve(import.meta.dirname,'../..'),runtime=path.resolve(process.argv[2]??root);
 const require=createRequire(path.join(runtime,'package.json'));
 const load=name=>import(pathToFileURL(require.resolve('@deepseek-ai/'+name)).href);
+const {PtcInspectableValue}=await load('dsh-ptc-runtime');
 const target=JSON.parse(fs.readFileSync(path.join(runtime,'node_modules/@deepseek-ai/dsh/package.json'),'utf8')).version;
 assert(JSON.parse(fs.readFileSync(path.join(root,'dsh-runtime-compatibility.json'),'utf8')).releases.some(row=>row.dshVersion===target),'test an explicitly supported official runtime');
 const [{Context},{default:SystemPrompt},{default:ToolRuntime},{default:AgentRegistry},{default:LocalJobs},ToolJobs,
@@ -173,7 +174,12 @@ try {
   await ctx.plugin(SpillPolicy,{maxInlineTokens:100});
   const nested=await start();nested.finish('done',payload);await settled(nested.id,selected.owner.id);
   let nestedJobId=nested.id;
-  ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,release(){},async run(request){return {value:await request.bindings[0].functions.job_output({job_id:nestedJobId}),logs:[]}}});
+  ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,release(){},async run(request){
+    const binding=await request.bindings[0].functions.job_output({job_id:nestedJobId});
+    if(!PtcInspectableValue)return {value:binding,logs:[]};
+    const value=binding instanceof PtcInspectableValue?binding.value:binding;
+    return {output:[{type:'text',text:JSON.stringify(value)}]};
+  }});
   const nestedResult=await call(selected.owner,'run_code',{code:'return await tools.job_output({job_id:"fixture"})',description:'Read native Houdini job',workingDirectory:root});
   assert.equal(nestedResult.isError,false,JSON.stringify(nestedResult));
   const dispatch=selected.owner.session.snapshotEvents().findLast(event=>event.type==='tool/ptc-dispatch'&&event.data.name==='job_output');

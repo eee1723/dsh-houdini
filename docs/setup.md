@@ -1,6 +1,6 @@
 # 安装与使用
 
-dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.13** 精确支持 **DSH 0.2.2-rc.5**。DSH 0.2.2-rc.3 用户使用插件 0.1.12；DSH 0.2.2-rc.1 用户可继续使用插件 0.1.11，DSH 0.2.1-rc.3 / 0.2.1-rc.5 用户使用 0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
+dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64**。本版 **0.1.14** 支持 **DSH 0.2.3-alpha.2** 和 **0.2.2-rc.5**。DSH 0.2.2-rc.3 用户使用插件 0.1.12；DSH 0.2.2-rc.1 用户可继续使用插件 0.1.11，DSH 0.2.1-rc.3 / 0.2.1-rc.5 用户使用 0.1.6，升级插件前须先安装兼容宿主。按实际所选发行包的engines.dsh安装，不放宽旧包声明来强制加载，精确范围与验证边界见[兼容清单](../dsh-runtime-compatibility.json)。Houdini侧支持21.0/22.0，实测构建为21.0.440和22.0.368。产品使用同一份DSH原生会话，不另启动Qt聊天窗口或私有Host。
 
 ## 普通安装
 
@@ -12,22 +12,22 @@ dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64*
 https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
 ```
 
-索引保留各版正式安装包的宿主要求。没有兼容候选时，请查看发行说明，等待相应宿主通过验证。已经按 npm 包名安装的用户可在已安装插件的详情页检查更新。旧版 Desktop 如果没有「发现」，按本页开头的版本对照，在「添加插件」中填写精确包名。
+索引保留各版正式安装包的宿主要求。没有兼容候选时，请查看发行说明，等待相应宿主通过验证。已经按 npm 包名安装 0.1.13、升级到 alpha.2 后看到“不兼容”的用户，可在插件详情的版本区点击「重新检查」，选择 0.1.14 更新并启用。保存工程后，重开需要加载新组件的 Houdini 窗口。旧版 Desktop 如果没有「发现」，按本页开头的版本对照，在「添加插件」中填写精确包名。
 
 ### 按精确版本安装
 
-官方 Windows x64 的 [开发更新通道](https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml) 已提供 [DSH 0.2.2-rc.5 安装包](https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.2-rc.5-win-x64.exe)。安装插件前，在 Desktop 的设置中核对实际 DSH 版本。
+官方 Windows x64 的 [开发更新通道](https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml) 提供 [DSH 0.2.3-alpha.2 安装包](https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.3-alpha.2-win-x64.exe)。安装插件前，在 Desktop 的设置中核对实际 DSH 版本。
 
-0.1.13 可从 [npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.13)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.13) 获取同一份包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中选择 npm 或 npmmirror，填写精确包名：
+0.1.14 可从 [npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.14)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.14) 获取同一份包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中选择 npm 或 npmmirror，填写精确包名：
 
 ```text
-dsh-houdini@0.1.13
+dsh-houdini@0.1.14
 ```
 
 也可使用 GitHub 完整地址，或下载 `.tgz` 后填写文件的本地绝对路径。地址和文件安装的后续替换沿下文原生管理流程。
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.13/dsh-houdini-0.1.13.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.14/dsh-houdini-0.1.14.tgz
 ```
 
 按包名安装时，先确认所选源提供目标版本及兼容的 `engines.dsh`，再填写精确包名。包名来源可使用宿主原生版本选择和更新。

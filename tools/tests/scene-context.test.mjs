@@ -163,7 +163,7 @@ assert.equal(await queued.observe(queueAgent),newest,
 const inboxContext=new Context()
 new SessionStore(inboxContext)
 await fixtureProjectionContext(inboxContext)
-new SystemPrompt(inboxContext,{})
+await inboxContext.plugin(SystemPrompt,{}).await()
 const inboxTools=new ToolsService(inboxContext,{})
 inboxTools.setExecutor(new NativeToolExecutor(inboxContext))
 inboxContext.provide('llm',{})
@@ -206,6 +206,7 @@ try {
   agent.steer(user('next-steering','wake the saved follow-up'))
   await agent.whenIdle()
   assert.equal(pending(),0,'all native claimed observations leave the pending store')
+  assert.ok(lastObserved,JSON.stringify(agent.session.snapshotEvents().slice(-6)))
   assert.equal(data({text:lastObserved}).user_message_id,saved.id)
   assert.equal(data({text:lastObserved}).observation.result.frame,savedArrival,
     'a queued follow-up retains its original observation after newer steering and turns')

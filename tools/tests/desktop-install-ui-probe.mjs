@@ -160,11 +160,38 @@ async function directMigrationLatest(before){
  report.otherModesAndDefaultPreserved=true
 }
 async function plugins(){await click(button('/^(插件|Plugins)$/'),'Native Plugins navigation')}
+const installedTab=`[...document.querySelectorAll('[role=tab]')].find(e=>/^(已安装|Installed)$/.test(e.textContent.trim()))`
+async function chooseMarketVersion(){
+ const modal="[...document.querySelectorAll('[role=dialog]')].at(-1)"
+ await click(`document.querySelector('[data-plugin-package="@deepseek-ai/dsh-experimental-plugin-market-bundle"] [role=switch]')`,'Enable experimental plugin index')
+ // Enabling the bundle can reload the client after its tab first appears.
+ await until(async()=>{
+  if(await evaluate(`!!document.querySelector('[data-plugin-tab="discover"]')`))return true
+  await click(button('/^(发现|Discover)$/'),'Open Discover')
+  return false
+ },'Discover tab after activation')
+ await click(button('/^(添加索引源|Add index source)$/i'),'Add index source')
+ await click(`document.querySelector('input[placeholder="https://example.com/index.json"]')`,'Index address')
+ await cdp.call('Input.insertText',{text:config.marketIndex})
+ await click(button('/^(添加|Add)$/',modal),'Save index address')
+ await until(async()=>await evaluate(`!!document.querySelector('[data-market-entry="dsh-houdini"]')`),'Houdini listing from configured index')
+ const close=`document.querySelector('[role=dialog] button[aria-label="关闭"],[role=dialog] button[aria-label="Close"]')`
+ if(await evaluate(`!!(${close})`))await click(close,'Close index sources')
+ const card=`document.querySelector('[data-market-entry="dsh-houdini"]')`
+ const listing=await evaluate(`${card}.innerText`)
+ assert(listing.includes(config.expectedVersion),'Unexpected native recommendation: '+listing)
+ await click(button('/^(安装|Install)$/',card),'Install recommended version')
+ await until(`${modal}?.innerText.includes(${JSON.stringify(config.expectedVersion)})`,'Confirm the recommended version')
+ report.marketRecommendation={index:config.marketIndex,version:config.expectedVersion,listing}
+}
 async function install(spec,label,enable){
  await plugins()
- await click(button('/^(添加插件|Add plugin)$/'),'Native Add plugin')
- await click(`document.querySelector('input[aria-label="包名或地址"],input[aria-label="Package name or address"]')`,'Native package spec input')
- await cdp.call('Input.insertText',{text:spec})
+ if(config.marketIndex)await chooseMarketVersion()
+ else {
+  await click(button('/^(添加插件|Add plugin)$/'),'Native Add plugin')
+  await click(`document.querySelector('input[aria-label="包名或地址"],input[aria-label="Package name or address"]')`,'Native package spec input')
+  await cdp.call('Input.insertText',{text:spec})
+ }
  await shot(label+'-spec')
  await click(button('/^(安装|Install)$/',`[...document.querySelectorAll('[role=dialog]')].at(-1)`),'Native install submit')
  await shot(label+'-submitted')
@@ -177,6 +204,9 @@ async function install(spec,label,enable){
   }
   const current=await bundle()
   if(!current?.installed||current.version!==config.expectedVersion)return false
+  if(config.marketIndex&&await evaluate(`!!document.querySelector('[data-plugin-tab="discover"]')&&!document.querySelector('[role=dialog]')`)){
+   await click(installedTab,'Open installed plugin after Discover installation')
+  }
   return evaluate(`(()=>{
    const ready=(${button('/^(立即启用|Enable now)$/')});if(ready&&!ready.disabled&&ready.getBoundingClientRect().width)return true;
    const dialog=[...document.querySelectorAll('[role=dialog]')].some(e=>e.getBoundingClientRect().width);
@@ -196,6 +226,7 @@ async function install(spec,label,enable){
   report[label].enableEntry=immediate?'installation-result':'installed-plugin-switch'
   await until(async()=>{const row=await bundle();return row?.enabled},label+' enabled bundle')
   await until(async()=>{const roster=await rpc('agentPresets/list');return roster.presets.some(row=>row.id==='houdini'&&!row.broken)},'actual Houdini preset after Native enable')
+  if(config.marketIndex)await click(installedTab,'View enabled plugin in Installed')
   await until(switchState(true),'native installed switch reflects enabled state')
   report[label].enabledByUi=true
  }else{

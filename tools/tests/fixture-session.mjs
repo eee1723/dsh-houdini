@@ -1,3 +1,4 @@
+import {PtcInspectableValue} from '@deepseek-ai/dsh-ptc-runtime'
 // Detached fixture sessions for tests and smoke runners.
 // Header schema version is read from the library's own creation default so
 // fixtures cannot drift when DSH bumps the session format.
@@ -31,4 +32,9 @@ export function fixtureSession(id, meta = {}) {
     ...(meta.cwd === undefined ? {} : {cwd: meta.cwd}),
     ...(meta.agentPreset === undefined ? {} : {agentPreset: meta.agentPreset}),
   })
+}
+
+// Mirror the official Node worker's program-facing value for in-process PTC tests.
+export function fixturePtcValue(binding) {
+  return binding instanceof PtcInspectableValue ? binding.value : binding
 }

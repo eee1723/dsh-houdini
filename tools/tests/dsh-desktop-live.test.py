@@ -198,11 +198,11 @@ def scenario(hfs,action):
             assert isinstance(observed['activeRequests'],int) and isinstance(observed['activeJobs'],int),observed
             assert observed['busy']==bool(observed['activeRequests'] or observed['activeJobs']),observed
             source=directory/'bridge-check.mjs'
-            source.write_text('import fs from "node:fs";import {HoudiniBridge} from '+json.dumps((installed/'lib/bridge.js').as_uri())
-                +';import * as routing from '+json.dumps((installed/'lib/executor-routing.js').as_uri())+''';
+            source.write_text('import fs from "node:fs";import {HoudiniBridge,registeredCredential} from '+json.dumps((installed/'lib/bridge.js').as_uri())
+                +''';
 const config=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const bridge=new HoudiniBridge(config.record.bridge_url,45000,config.target.executor_id,undefined,{runtimeId:config.target.runtime_id,sceneEpoch:config.target.scene_epoch},
-  config.record.bridge_auth ? routing.registeredCredential(config.registry,config.record) : undefined);
+  config.record.bridge_auth ? registeredCredential(config.registry,config.record) : undefined);
 const code="import os,threading,dsh_bridge\\n__result__={'version':hou.applicationVersionString(),'hip':hou.hipFile.path(),'new':hou.hipFile.isNewFile(),'ui':hou.isUIAvailable(),'hfs':hou.getenv('HFS'),'pid':os.getpid(),'main_thread':threading.get_ident()==dsh_bridge._HOU_THREAD_ID,'bridge_file':dsh_bridge.__file__}";
 const result=await bridge.exec(code,{sessionId:config.sessionId,callId:'desktop-live-read'},AbortSignal.timeout(45000),undefined,true);
 fs.writeFileSync(process.argv[3],JSON.stringify(result,null,2));if(result.ok!==true)process.exitCode=1;

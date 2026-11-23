@@ -14,18 +14,18 @@ https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
 
 旧版 Desktop 没有「发现」时，按下方对照使用精确包名。
 
-**Windows x64 · DSH 0.2.2-rc.5 · Houdini 21.0 / 22.0**。先在 Desktop 设置中查看宿主版本：仍使用 rc.3 时选插件 **0.1.12**，rc.1 选 **0.1.11**。[宿主下载与旧版对照](docs/setup.md)
+**Windows x64 · DSH 0.2.3-alpha.2 / 0.2.2-rc.5 · Houdini 21.0 / 22.0**。先在 Desktop 设置中查看宿主版本：仍使用 rc.3 时选插件 **0.1.12**，rc.1 选 **0.1.11**。[宿主下载与旧版对照](docs/setup.md)
 
 1. 在 Desktop 打开 **插件 → 添加插件**，选择 npm 官方源或大陆镜像 npmmirror，粘贴包名，安装后点击 **立即启用**：
 
 ```text
-dsh-houdini@0.1.13
+dsh-houdini@0.1.14
 ```
 
 2. 也可在同一输入框粘贴 GitHub 安装包地址，或先下载该文件，再填写本地绝对路径。不要选 Source code。三个渠道提供同一份安装包。
 
 ```text
-https://github.com/eee1723/dsh-houdini/releases/download/v0.1.13/dsh-houdini-0.1.13.tgz
+https://github.com/eee1723/dsh-houdini/releases/download/v0.1.14/dsh-houdini-0.1.14.tgz
 ```
 
 3. 新建 **Houdini 模式**对话，选择已打开的工程；也可在 Houdini 选择 **DSH-Houdini → Open Workspace** 回到同一对话。更新插件后先保存，再重开需要加载新组件的 Houdini 窗口。

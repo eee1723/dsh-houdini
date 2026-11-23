@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "preferredVersion": "0.2.2-rc.5",
+  "preferredVersion": "0.2.3-alpha.2",
   "host": "official-dsh-desktop",
   "runtimeOwnership": "host",
   "releases": [
@@ -19,6 +19,18 @@
       "pendingVerification": [
         "End-user current profile upgrade, system dsh:// activation, real providers and existing user Houdini scenes",
         "Packaged Desktop application update/protocol lifecycle; isolated development-carrier plugin checks do not establish those OS integrations"
+      ]
+    },
+    {
+      "dshVersion": "0.2.3-alpha.2",
+      "verificationStatus": "official-desktop-plugin-verified",
+      "verifiedOn": [
+        "Official Windows x64 Desktop 0.2.3-alpha.2 with bundled Node 24.22.3",
+        "Native registry update from 0.1.13 in an owned profile, plugin activation and root client with scoped Houdini tools",
+        "Installed helper and main-thread scene editing on Houdini 21.0.440 and 22.0.368; native and nested receipt observation in the official agent loop"
+      ],
+      "pendingVerification": [
+        "Existing end-user profiles, system dsh:// activation, real model accounts and user scenes"
       ]
     }
   ]

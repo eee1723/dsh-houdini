@@ -1,5 +1,5 @@
 import {foldExecutorBinding} from '../../lib/executor-identity-projection.js'
-import {fixtureProjectionContext} from './fixture-session.mjs'
+import {fixtureProjectionContext,fixturePtcValue} from './fixture-session.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -79,7 +79,7 @@ let executed=0
 registerHoudiniTools(ctx,{targetExecutorId:executorId,async exec(){executed++;return structuredClone(receipt)}})
 ctx.provide('ptcRuntime',{language:'typescript',resolve:request=>request,async run(request){
   const value=await request.bindings[0].functions.houdini_exec({code:'__result__=deliver_nodes(...)'})
-  return {value,logs:[]}
+  return {output:[{type:'text',text:JSON.stringify(fixturePtcValue(value))}]}
 }})
 const signal=new AbortController().signal
 session.append('turn/start',{turn:1})

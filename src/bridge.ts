@@ -4,6 +4,10 @@
  * The bridge runs inside Houdini's own Python, where the `hou` module lives;
  * this client is the only channel the plugin uses to reach it.
  */
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import type {ExecutorRecord} from './executor-routing.js'
+
 /** Bridge wire JSON is independent of DSH's version-specific type re-exports. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 export interface StructuredQuery {
@@ -14,6 +18,23 @@ export interface StructuredQuery {
 }
 import { EXPECTED_EXECUTION_CONTRACT_VERSION, EXPECTED_VERB_CATALOG_HASH, EXPECTED_VERB_NAMES } from './generated-verb-contract.js'
 import {isExecutionContractCompatible} from './component-compatibility.js'
+
+/** The discovery record is public to the UI. Only a Bridge client reads its private credential. */
+export function registeredCredential(root:string,record:Pick<ExecutorRecord,'executor_id'|'runtime_id'|'bridge_auth'|'bridge_url'>):(()=>Promise<string>)|undefined {
+  if(record.bridge_auth===undefined)return undefined // Earlier helpers support read-only compatibility checks.
+  if(record.bridge_auth!=='bearer-v1'||!/^[0-9a-f]{32}$/.test(record.executor_id))throw Error('Unsupported Houdini Bridge authentication')
+  let loaded:Promise<string>|undefined
+  const read=async()=>{
+    const file=path.join(root,'credentials',record.executor_id+'.json')
+    const stat=await fs.lstat(file)
+    if(!stat.isFile()||stat.size>512)throw Error('Invalid Houdini Bridge credential file')
+    const value=JSON.parse(await fs.readFile(file,'utf8'))
+    if(value?.runtime_id!==record.runtime_id||value.port!==Number(new URL(record.bridge_url).port)
+      ||typeof value.token!=='string'||!/^[a-f0-9]{64}$/.test(value.token))throw Error('Houdini Bridge credential belongs to a different runtime')
+    return value.token as string
+  }
+  return ()=>loaded??=read().catch(()=>{throw Error('无法读取所选 Houdini 当前连接的凭据，请从该窗口重新连接。')})
+}
 
 /** Result envelope returned by the bridge for `/exec` and job status polls. */
 export interface ExecResult {

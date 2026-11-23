@@ -390,11 +390,11 @@ def verify_real_houdini(installed,workspace_id):
     birth=_process_started(record['pid']);assert birth is not None
     assert ready['result']['sessionId']==session['sessionId']
     checker=fixture/'check-houdini.mjs'
-    checker.write_text('import fs from "node:fs";import assert from "node:assert/strict";import {HoudiniBridge} from '+json.dumps((installed/'lib/bridge.js').as_uri())
-        +';import * as routing from '+json.dumps((installed/'lib/executor-routing.js').as_uri())+''';
+    checker.write_text('import fs from "node:fs";import assert from "node:assert/strict";import {HoudiniBridge,registeredCredential} from '+json.dumps((installed/'lib/bridge.js').as_uri())
+        +''';
 const input=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),signal=AbortSignal.timeout(45000);
 const bridge=new HoudiniBridge(input.record.bridge_url,45000,input.target.executor_id,undefined,{runtimeId:input.target.runtime_id,sceneEpoch:input.target.scene_epoch},
-  input.record.bridge_auth ? routing.registeredCredential(input.registry,input.record) : undefined);
+  input.record.bridge_auth ? registeredCredential(input.registry,input.record) : undefined);
 const health=await bridge.observeExecutor(signal);
 await bridge.claimWriter(input.sessionId,input.record.registration_id,input.record.hip_path,signal);
 const code="import os,sys,threading,dsh_bridge,dsh_launcher,dsh_desktop_client,dsh_workbench_entry\\n__result__={'version':hou.applicationVersionString(),'hip':hou.hipFile.path(),'new':hou.hipFile.isNewFile(),'hfs':hou.getenv('HFS'),'pid':os.getpid(),'mainThread':threading.get_ident()==dsh_bridge._HOU_THREAD_ID,'bridgeFile':dsh_bridge.__file__,'pythonPath':list(sys.path),'loadedFiles':{'launcher':dsh_launcher.__file__,'desktopClient':dsh_desktop_client.__file__,'entry':dsh_workbench_entry.__file__}}";

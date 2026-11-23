@@ -46,7 +46,7 @@ async function run(){
   const ctx=new Context()
   new SessionStore(ctx)
   await fixtureProjectionContext(ctx)
-  new SystemPrompt(ctx,{})
+  await ctx.plugin(SystemPrompt,{}).await()
   const tools=new ToolsService(ctx,{})
   tools.setExecutor(new NativeToolExecutor(ctx))
   const llm=new LlmRuntime(ctx)

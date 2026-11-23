@@ -16,7 +16,7 @@ const canonical={ok:true,result:{kind:'houdini/node-delivery-v1',nodes:nodes.map
 canonical.verbs=[{verb:'present_nodes',ok:true,result:canonical.result}];
 canonical.result={entries:canonical.result};
 const artifacts=frontendArtifacts(events,[{tool:'houdini_exec',canonical}],options);
-assert.deepEqual(artifacts.files,[{path:'C:/task/model.hip',resolvedPath:'C:/task/model.hip',name:'model.hip',resourceAddress:'dsh-resource://file/session/trial/model.hip'}]);
+assert.deepEqual(artifacts.files,[{path:'C:/task/model.hip',resolvedPath:'C:/task/model.hip',name:'model.hip',resourceAddress:'dsh-resource://file/session/trial/C:/task/model.hip'}]);
 assert.equal(files(['relative/model.hip'])[0].resolvedPath,'C:/task/relative/model.hip');
 assert.deepEqual(artifacts.nodes,nodes);
 assert.deepEqual(artifacts.uiCaptures,[]);
