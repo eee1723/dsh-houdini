@@ -22,7 +22,7 @@ https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
 dsh-houdini@0.1.14
 ```
 
-2. 也可在同一输入框粘贴 GitHub 安装包地址，或先下载该文件，再填写本地绝对路径。不要选 Source code。三个渠道提供同一份安装包。
+2. 如果包名或索引还没有列出适配版本，可在同一输入框粘贴该版的 GitHub 安装包地址，也可先下载文件，再填写本地绝对路径。请选择完整 .tgz。
 
 ```text
 https://github.com/eee1723/dsh-houdini/releases/download/v0.1.14/dsh-houdini-0.1.14.tgz

@@ -22,7 +22,7 @@ If your Desktop has no Discover tab, use the exact package for your DSH version 
 dsh-houdini@0.1.14
 ```
 
-2. Alternatively, paste the GitHub package URL into the same field, or download that file and enter its absolute path. Do not use the source archive. All three channels serve the same tarball.
+2. Alternatively, paste the GitHub package URL into the same field, or download that file and enter its absolute path. Use the complete .tgz. This URL also works while a registry or the discovery index is catching up.
 
 ```text
 https://github.com/eee1723/dsh-houdini/releases/download/v0.1.14/dsh-houdini-0.1.14.tgz

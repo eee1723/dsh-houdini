@@ -18,7 +18,7 @@ https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
 
 官方 Windows x64 的 [开发更新通道](https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml) 提供 [DSH 0.2.3-alpha.2 安装包](https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.3-alpha.2-win-x64.exe)。安装插件前，在 Desktop 的设置中核对实际 DSH 版本。
 
-0.1.14 可从 [npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.14)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.14) 获取同一份包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中选择 npm 或 npmmirror，填写精确包名：
+[GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.14) 提供 0.1.14 的完整插件包，内含 Houdini 和媒体资源。[npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.14)和[大陆镜像](https://npmmirror.com/package/dsh-houdini)按精确版本分发同一份文件。若所选源或「发现」尚未列出此版，可直接使用下方的 GitHub 完整包地址。在 Desktop 的「插件 → 添加插件」中选择 npm 或 npmmirror，填写精确包名：
 
 ```text
 dsh-houdini@0.1.14
