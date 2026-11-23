@@ -8,6 +8,16 @@
       "homepage": "https://github.com/eee1723/dsh-houdini",
       "versions": [
         {
+          "version": "0.1.14",
+          "publishTimestamp": 1795414649,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.2-rc.5 || 0.2.3-alpha.2"
+          }
+        },
+        {
           "version": "0.1.13",
           "publishTimestamp": 1795074341,
           "source": {
