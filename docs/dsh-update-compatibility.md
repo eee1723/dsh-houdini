@@ -71,6 +71,16 @@ Windows窗口置顶是[插件窄适配](../src/desktop-window.ts)，仅处理Hos
 
 涉及文件/持久化时核对未修改官方读取器的重开与原值。涉及执行边界才选择必要的 H21/H22 HOM 回归，不因移除 Qt 壳机械重跑全部模型质量评测。用户现场实际加载与源码验证分开报告。
 
+### 自动发现与候选交付
+
+本机定时任务调用 [版本发现](../tools/check-dsh-updates.mjs)，读取官方 Windows x64 的 stable、nightly 更新清单、GitHub 的 DSH Releases 和 npm 的完整发布时间表。命令 `node tools/check-dsh-updates.mjs --since <开始监测的 ISO 时间>` 输出未列入当前验证清单的版本、各来源与安装包摘要。固定起点可补查两次运行之间的多个版本和旧分支的新发行。任一来源读取失败会在 `errors` 中留下原因，仍返回其余来源的发现。GitHub 或 npm 先发时先做可运行的检查，保留待获取 Desktop 的版本。
+
+1. 从明确的 main 提交建立独立工作树。在候选分支选择开发依赖、Node 版本及暂定的宿主范围，更新开发夹具、锁文件与安装指引。检查 npm、Git 标签和尚待确认的候选，选用未发布的插件版本。同一批拟支持的宿主共用一个冻结包。已有用户工作树、Desktop 安装和真实工程均不作为测试环境。
+2. 使用官方更新清单的 SHA-512 核对安装器，在独立目录解包并核对实际宿主。通道已前移时查找该精确版本的官方 Windows 发行物并核对身份。在自有资料运行构建、文档门、受影响回归，以及 `dsh-host-smoke.test.py --runtime-cache <精确夹具> --dsh-version <新版本> --context-loop`。保留宿主默认模式，检查 Houdini 作用域和原生、嵌套工具的真实回执。
+3. 在候选提交上用 [发行构建器](../tools/build-release.py) 生成完整 tgz、发行清单和校验和。对包内声明的每个宿主，在 H21 与 H22 分别运行 [安装与现场验证](../tools/tests/dsh-packaged-plugin-install.test.py)，传入 `--artifact`、`--desktop-root`、`--expected-dsh`、`--hfs`、`--editor-smoke`。测试从运行中 Host 取得实际版本。用[原生更新检查](../tools/tests/dsh-distribution-ui.test.py)逐个验证新宿主从上一正式包更新；传入原包、摘要、原宿主及目标宿主的隔离开发载体。各命令输出自有资料目录，保存其中的 `result.json` 与失败日志。安装器、网络和许可证错误按环境故障处理。
+4. 使用 [候选发布说明生成器](../tools/prepare-compatibility-candidate.py) 传入 `--artifact <tgz>`、每个新宿主的 `--target <版本>`、每次实测的 `--install-report <result.json>` 和每个新宿主的 `--update-report <result.json>`。可用 `--note` 补充经过核实的用户可见变化。它核对同包 SHA-256、实测矩阵和原生升级，生成 `release-notes.md`。维护者收到包、说明、源码提交与摘要后，按[发行流程](development.md#发行操作与信任配置)确认要公开的具体候选。
+5. 同一宿主、官方安装包摘要、源码提交已有结果时沿用原证据。暂缺 Desktop、网络中断等保留待复查；新输入或源码修复后重测。失败报告写明阶段、宿主、预期与实测值、第一条相关错误、日志路径、可复现命令，以及证据指向的源码文件或上游接口。证据还不足以定位时标明下一项验证。
+
 ### 0.2.2 接口边界
 
 开发夹具使用[官方 0.2.3-alpha.2](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.3-alpha.2)及其 Node 24.22.3、Cordis 4.2.0-alpha.1 和 Schemastery 3.20.0-alpha.1。正式包使用 Desktop 提供的依赖，按同包在两代宿主的验证声明 peer 范围。alpha 的嵌套工具在持续运行的 REPL 中执行；跨版本消费测试使用两代宿主都提供的标准输出。实际资格范围由兼容清单维护，剩余验收见[交接](handoff.md#h-06-官方dsh共存与插件边界)。

@@ -32,6 +32,7 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--artifact',required=True,type=Path)
 parser.add_argument('--npm',action='store_true',help='Install the frozen artifact name@version from the public npm registry')
 parser.add_argument('--desktop-root',type=Path,default=Path('D:/dshdesktop'))
+parser.add_argument('--expected-dsh',help='Require this exact DSH runtime in the installed Host composition')
 parser.add_argument('--hfs',type=Path,help='Also verify the installed tarball with one owned real Houdini GUI')
 parser.add_argument('--legacy-components',action='store_true',help='Seed owned legacy entry/data fixtures before automatic component preparation (requires --hfs)')
 parser.add_argument('--startup-discovery',action='store_true',help='Ordinary no-ticket GUI A/B startup and reselect B from the original native browser conversation')
@@ -628,6 +629,10 @@ with log.open('wb') as output:
             time.sleep(.2)
         facts=json.loads(facts_file.read_text(encoding='utf-8'))
         assert 'error' not in facts,facts
+        runtime_release=facts['graph'].get('release') if isinstance(facts['graph'],dict) else None
+        if args.expected_dsh:
+            observed=(runtime_release or {}).get('version')
+            assert observed==args.expected_dsh,f"Expected DSH {args.expected_dsh}, installed Host reported {observed} from {desktop}"
         installed=Path(facts['root']).resolve(strict=True)
         assert installed.is_relative_to(fixture),'Plugin must be installed into the owned data/store tree'
         # Owned evidence may live inside the checkout. Compare file identity,
@@ -719,7 +724,7 @@ with log.open('wb') as output:
             modeIds=[row['id'] for row in presets],rootClientCount=1,prepareBridgeOtherModeRefused=True,
             mediaRoot=str(media),mediaVersion=metadata['ffmpeg']['version'],mediaProbes=probes,
             mediaInventoryFiles=len(provenance['files']),mediaSourceReferences=sorted(references),
-            runtimeRelease=facts['graph'].get('release') if isinstance(facts['graph'],dict) else None)
+            runtimeRelease=runtime_release)
     finally:
         runtime.stop_owned(process);process.wait(timeout=15)
 assert {str(file):digest(file) for file in immutable}==baseline,'Native Desktop immutable installation changed'
