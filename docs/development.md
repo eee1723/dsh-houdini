@@ -350,6 +350,8 @@ handoff 是唯一滚动交接入口，只保留下一次接续仍需完成的动
 
 ### 发行操作与信任配置
 
+「发现」读取主分支的 [固定插件索引](../market/index.json)。npm 和大陆镜像可安装后运行 `node tools/update-plugin-index.mjs <插件版本>`，将变更提交至 main，然后检查公开 HTTPS 地址和目标宿主的推荐版本。生成器从 npm 已发布包读取 `engines.dsh`、发布时间和版本，跳过已弃用版本及非插件占位包。旧宿主仍能找到对应的历史版本。源码打标签和构建候选包时均不提前加入索引。
+
 代码推送只运行源码CI；[手动候选构建](../.github/workflows/desktop-plugin.yml)接受现有branch、commit或tag，只以只读仓库权限构建并保存短期Actions产物，不创建tag、Draft/正式Release或发布npm。公开分发须在发行验证通过后，作为维护者明确授权的单独操作执行，不能由main push或候选构建隐式完成。
 
 每次正式发行在同一批次完成 GitHub Release、npm 官方源的 `latest` 与 npmmirror 同步。三个渠道均须核对精确版本、实际下载内容和安装入口，全部通过后才算发行完成。详细命令与渠道检查复用[构建与生成](#构建与生成)；账号登录及平台要求的二次验证由维护者完成。

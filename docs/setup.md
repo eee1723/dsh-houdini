@@ -4,6 +4,18 @@ dsh-houdini 是官方 DeepSeek Harness Desktop 的插件，面向 **Windows x64*
 
 ## 普通安装
 
+### 让 Desktop 选择兼容版本
+
+进入「插件 → 实验性插件」，启用「自定义插件索引」。在「发现 → 添加索引源」粘贴下面的固定地址。随后搜索 DSH-Houdini，打开卡片，确认推荐版本、npm 来源，再安装并启用。每个 Desktop 资料空间添加一次即可。
+
+```text
+https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
+```
+
+索引保留各版正式安装包的宿主要求。没有兼容候选时，请查看发行说明，等待相应宿主通过验证。已经按 npm 包名安装的用户可在已安装插件的详情页检查更新。旧版 Desktop 如果没有「发现」，按本页开头的版本对照，在「添加插件」中填写精确包名。
+
+### 按精确版本安装
+
 官方 Windows x64 的 [开发更新通道](https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml) 已提供 [DSH 0.2.2-rc.5 安装包](https://download.deepseek.com/dsh-desk/bin/win-x64/deepseek-harness-0.2.2-rc.5-win-x64.exe)。安装插件前，在 Desktop 的设置中核对实际 DSH 版本。
 
 0.1.13 可从 [npm 官方源](https://www.npmjs.com/package/dsh-houdini/v/0.1.13)、[大陆镜像](https://npmmirror.com/package/dsh-houdini)和 [GitHub Release](https://github.com/eee1723/dsh-houdini/releases/tag/v0.1.13) 获取同一份包含 Houdini 和媒体资源的完整插件包。在 Desktop 的「插件 → 添加插件」中选择 npm 或 npmmirror，填写精确包名：

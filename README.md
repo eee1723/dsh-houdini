@@ -6,6 +6,14 @@
 
 ## 安装与更新
 
+推荐在 Desktop 的 **插件 → 实验性插件** 启用 **自定义插件索引**，进入 **发现 → 添加索引源**，粘贴下方地址。这一步每个资料空间只需做一次。搜索 **DSH-Houdini**，安装卡片为当前 DSH 推荐的版本并启用。没有匹配版本时可在详情查看兼容范围。
+
+```text
+https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
+```
+
+旧版 Desktop 没有「发现」时，按下方对照使用精确包名。
+
 **Windows x64 · DSH 0.2.2-rc.5 · Houdini 21.0 / 22.0**。先在 Desktop 设置中查看宿主版本：仍使用 rc.3 时选插件 **0.1.12**，rc.1 选 **0.1.11**。[宿主下载与旧版对照](docs/setup.md)
 
 1. 在 Desktop 打开 **插件 → 添加插件**，选择 npm 官方源或大陆镜像 npmmirror，粘贴包名，安装后点击 **立即启用**：

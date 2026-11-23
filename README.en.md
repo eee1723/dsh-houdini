@@ -6,6 +6,14 @@ Use natural language in DeepSeek Harness Desktop to build and revise a real Houd
 
 ## Install or update
 
+In Desktop, enable **Custom plugin indexes** under **Plugins → Experimental plugins**. In **Discover → Add index source**, paste the address below once per profile. Find **DSH-Houdini**, install the version recommended for your DSH, then enable it. The version list shows which releases accept your host.
+
+```text
+https://raw.githubusercontent.com/eee1723/dsh-houdini/main/market/index.json
+```
+
+If your Desktop has no Discover tab, use the exact package for your DSH version below.
+
 **Windows x64 · DSH 0.2.2-rc.5 · Houdini 21.0 / 22.0**. Check your Desktop version first. On rc.3, use plugin **0.1.12**; on rc.1, use **0.1.11**.
 
 1. In Desktop, open **Plugins → Add plugin**, choose the official npm registry or npmmirror, paste the package name, install and enable:

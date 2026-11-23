@@ -1,0 +1,73 @@
+{
+  "format": 1,
+  "title": "DSH-Houdini",
+  "plugins": [
+    {
+      "name": "dsh-houdini",
+      "title": "DSH-Houdini",
+      "homepage": "https://github.com/eee1723/dsh-houdini",
+      "versions": [
+        {
+          "version": "0.1.13",
+          "publishTimestamp": 1795074341,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.2-rc.5"
+          }
+        },
+        {
+          "version": "0.1.12",
+          "publishTimestamp": 1794645777,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.2-rc.3"
+          }
+        },
+        {
+          "version": "0.1.11",
+          "publishTimestamp": 1794469558,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.2-rc.1"
+          }
+        },
+        {
+          "version": "0.1.7",
+          "publishTimestamp": 1793937203,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.2-rc.1"
+          }
+        },
+        {
+          "version": "0.1.8",
+          "publishTimestamp": 1793936256,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.2-rc.1"
+          }
+        },
+        {
+          "version": "0.1.6",
+          "publishTimestamp": 1793602709,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": "0.2.1-rc.3 || 0.2.1-rc.5"
+          }
+        }
+      ]
+    }
+  ]
+}
